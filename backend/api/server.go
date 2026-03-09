@@ -13,6 +13,7 @@ import (
 	"github.com/khiemnd777/legal_api/core/ingest"
 	"github.com/khiemnd777/legal_api/core/retrieval"
 	"github.com/khiemnd777/legal_api/infra"
+	"github.com/khiemnd777/legal_api/observability"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -23,12 +24,14 @@ type Server struct {
 	Store       *infra.Store
 	Storage     *infra.Storage
 	Embedder    *embedding.Client
+	Qdrant      *infra.QdrantClient
 	Retriever   *retrieval.Service
 	Answer      *answer.Client
 	AdminAPIKey string
 	Tones       map[string]string
 	Ingest      *ingest.Service
 	Logger      *slog.Logger
+	TraceRepo   observability.TraceRepository
 }
 
 func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, adminAPIKey string, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config) *Server {
@@ -45,17 +48,20 @@ func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.C
 		Store:       store,
 		Storage:     storage,
 		Embedder:    embedder,
+		Qdrant:      qdrant,
 		Retriever:   retriever,
 		Answer:      ans,
 		AdminAPIKey: adminAPIKey,
 		Tones:       tones,
 		Ingest:      ingestSvc,
 		Logger:      logger,
+		TraceRepo:   observability.NewSQLTraceRepository(store.DB),
 	}
 }
 
 func (s *Server) RegisterRoutes() {
-	h := NewHandler(s.Store, s.Storage, s.Retriever, s.Answer, s.Tones, s.Ingest, s.Logger)
+	h := NewHandler(s.Store, s.Storage, s.Retriever, s.Answer, s.Tones, s.Ingest, s.Logger, s.TraceRepo)
+	traceMiddleware := answerTraceMiddleware(s.Logger)
 	s.App.Post("/doc-types", h.CreateDocType)
 	s.App.Get("/doc-types", h.ListDocTypes)
 	s.App.Put("/doc-types/:id/form", h.UpdateDocTypeForm)
@@ -69,8 +75,9 @@ func (s *Server) RegisterRoutes() {
 	s.App.Delete("/ingest-jobs/:id", h.DeleteIngestJob)
 	s.App.Post("/document-versions/:id/ingest", h.EnqueueIngest)
 	s.App.Post("/search", h.Search)
-	s.App.Post("/answer", h.Answer)
-	s.App.Post("/answer/stream", h.AnswerStream)
+	s.App.Get("/health", s.Health)
+	s.App.Post("/answer", traceMiddleware, h.Answer)
+	s.App.Post("/answer/stream", traceMiddleware, h.AnswerStream)
 
 	adminGroup := s.App.Group("/admin", adminAuthMiddleware(s.AdminAPIKey))
 	guardRepo := repository.NewGuardPolicyRepository(s.Store)
@@ -86,12 +93,36 @@ func (s *Server) RegisterRoutes() {
 		s.Retriever.InvalidateRuntimeConfigCache()
 	}
 	retrievalConfigHandler := adminapi.NewRetrievalConfigHandler(retrievalCfgSvc, onRetrievalConfigChanged)
-	adminapi.RegisterRoutes(adminGroup, guardHandler, promptHandler, retrievalConfigHandler)
+	answerTraceHandler := adminapi.NewAIAnswerTraceHandler(s.TraceRepo)
+	adminapi.RegisterRoutes(adminGroup, guardHandler, promptHandler, retrievalConfigHandler, answerTraceHandler)
 }
 
 func (s *Server) Start(ctx context.Context, addr string) error {
 	s.RegisterRoutes()
 	return s.App.Listen(addr)
+}
+
+func (s *Server) Health(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	status := fiber.Map{
+		"postgres": "ok",
+		"qdrant":   "ok",
+		"openai":   "ok",
+	}
+	httpStatus := fiber.StatusOK
+	if err := s.Store.Ping(ctx); err != nil {
+		status["postgres"] = "error"
+		httpStatus = fiber.StatusServiceUnavailable
+	}
+	if err := s.Qdrant.HealthCheck(ctx); err != nil {
+		status["qdrant"] = "error"
+		httpStatus = fiber.StatusServiceUnavailable
+	}
+	if err := s.Answer.HealthCheck(ctx); err != nil {
+		status["openai"] = "error"
+		httpStatus = fiber.StatusServiceUnavailable
+	}
+	return c.Status(httpStatus).JSON(status)
 }
 
 func adminAuthMiddleware(adminKey string) fiber.Handler {

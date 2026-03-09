@@ -16,6 +16,7 @@ import (
 
 	"github.com/khiemnd777/legal_api/domain"
 	"github.com/khiemnd777/legal_api/infra"
+	"github.com/khiemnd777/legal_api/observability"
 )
 
 type Service struct {
@@ -237,7 +238,25 @@ func (s *Service) Search(ctx context.Context, query string, opts SearchOptions) 
 		RetrievalLatencyMS:       time.Since(started).Milliseconds(),
 		RerankLatencyMS:          rerankLatency.Milliseconds(),
 	}
-	s.logger().Info("retrieval_observability", slog.Any("event", event))
+	if recorder := observability.RecorderFromContext(ctx); recorder != nil {
+		recorder.OnRetrieval(qu.NormalizedQuery, plan.Filters, pickResultChunkIDs(limited, false))
+	}
+	observability.LogInfo(ctx, s.logger(), "retrieval", "retrieval completed", map[string]interface{}{
+		"original_query":              event.OriginalQuery,
+		"normalized_query":            event.NormalizedQuery,
+		"legal_domain":                event.LegalDomain,
+		"legal_topic":                 event.LegalTopic,
+		"intent":                      event.Intent,
+		"applied_filters":             event.AppliedFilters,
+		"top_k":                       event.TopK,
+		"initial_vector_hits":         event.InitialVectorHits,
+		"reranked_results":            event.RerankedResults,
+		"final_selected_chunk_ids":    event.FinalSelectedChunkIDs,
+		"adjacent_expanded_chunk_ids": event.AdjacentExpandedChunkIDs,
+		"prompt_context_chunk_count":  event.PromptContextChunkCount,
+		"retrieval_latency_ms":        event.RetrievalLatencyMS,
+		"rerank_latency_ms":           event.RerankLatencyMS,
+	})
 
 	return limited, nil
 }

@@ -17,19 +17,21 @@ import (
 	"github.com/khiemnd777/legal_api/core/schema"
 	"github.com/khiemnd777/legal_api/domain"
 	"github.com/khiemnd777/legal_api/infra"
+	"github.com/khiemnd777/legal_api/observability"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
 
 type Handler struct {
-	Store     *infra.Store
+	Store     handlerStore
 	Storage   *infra.Storage
-	Retriever *retrieval.Service
+	Retriever retriever
 	AnswerCli *answer.Client
 	Tones     map[string]string
 	IngestSvc *ingest.Service
 	Logger    *slog.Logger
+	TraceRepo observability.TraceRepository
 
 	runtimeCfgMu       sync.RWMutex
 	runtimeCfg         runtimeAnswerConfig
@@ -38,7 +40,7 @@ type Handler struct {
 	runtimeCfgTTL      time.Duration
 }
 
-func NewHandler(store *infra.Store, storage *infra.Storage, retriever *retrieval.Service, ans *answer.Client, tones map[string]string, ingestSvc *ingest.Service, logger *slog.Logger) *Handler {
+func NewHandler(store handlerStore, storage *infra.Storage, retriever retriever, ans *answer.Client, tones map[string]string, ingestSvc *ingest.Service, logger *slog.Logger, traceRepo observability.TraceRepository) *Handler {
 	return &Handler{
 		Store:         store,
 		Storage:       storage,
@@ -47,6 +49,7 @@ func NewHandler(store *infra.Store, storage *infra.Storage, retriever *retrieval
 		Tones:         tones,
 		IngestSvc:     ingestSvc,
 		Logger:        logger,
+		TraceRepo:     traceRepo,
 		runtimeCfgTTL: 30 * time.Second,
 	}
 }
@@ -501,6 +504,7 @@ func (h *Handler) Search(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Answer(c *fiber.Ctx) error {
+	started := time.Now()
 	var req answerRequest
 	if err := c.BodyParser(&req); err != nil {
 		return respondError(c, 400, "invalid_request", "invalid json", err.Error())
@@ -509,10 +513,15 @@ func (h *Handler) Answer(c *fiber.Ctx) error {
 	if question == "" {
 		return respondError(c, 400, "validation", "question is required", nil)
 	}
-	ctx := c.Context()
+	ctx := c.UserContext()
+	ctx, traceSvc, traceID, err := h.startAnswerTrace(ctx, "answer", question)
+	if err != nil {
+		return respondError(c, 500, "trace_error", "failed to create answer trace", err.Error())
+	}
 	_ = h.Store.LogQuery(ctx, question)
 	runtimeCfg, err := h.loadRuntimeAnswerConfig(ctx, filters.Tone)
 	if err != nil {
+		traceSvc.OnError(err, traceLatency(started))
 		return respondError(c, 500, "config_error", "failed to load answer runtime config", err.Error())
 	}
 	results, err := h.Retriever.Search(ctx, question, retrieval.SearchOptions{
@@ -524,11 +533,20 @@ func (h *Handler) Answer(c *fiber.Ctx) error {
 		ArticleNumber:   filters.ArticleNumber,
 	})
 	if err != nil {
+		traceSvc.OnError(err, traceLatency(started))
 		return respondError(c, 500, "search_error", "failed to search", err.Error())
 	}
+	traceSvc.OnRetrieval(retrieval.UnderstandQuery(question).NormalizedQuery, map[string]interface{}{
+		"legal_domain":     filters.Domain,
+		"document_type":    filters.DocType,
+		"effective_status": filters.EffectiveStatus,
+		"document_number":  filters.DocumentNumber,
+		"article_number":   filters.ArticleNumber,
+	}, traceChunkIDs(results))
 	decision := evaluateGuardPolicy(runtimeCfg.Policy, results)
 	if !decision.Allow {
-		return c.JSON(fiber.Map{"answer": decision.Message, "citations": []answer.Citation{}})
+		traceSvc.OnResponse(decision.Message, true, traceLatency(started))
+		return c.JSON(fiber.Map{"answer": decision.Message, "citations": []answer.Citation{}, "trace_id": traceID})
 	}
 	sources := buildAnswerSources(results)
 	ansSvc := &answer.Service{
@@ -539,10 +557,14 @@ func (h *Handler) Answer(c *fiber.Ctx) error {
 		MaxTokens:    runtimeCfg.Prompt.MaxTokens,
 		Retry:        runtimeCfg.Prompt.Retry,
 	}
+	traceSvc.OnPromptSnapshot(ansSvc.PromptSnapshot(question, sources))
+	traceSvc.OnLLMCall(h.AnswerCli.Model, runtimeCfg.Prompt.Temperature, runtimeCfg.Prompt.MaxTokens, runtimeCfg.Prompt.Retry)
 	ans, err := ansSvc.Generate(ctx, question, sources)
 	if err != nil {
+		traceSvc.OnError(err, traceLatency(started))
 		return respondError(c, 500, "answer_error", "failed to generate answer", err.Error())
 	}
 	_ = h.Store.LogAnswer(ctx, question, ans)
-	return c.JSON(fiber.Map{"answer": ans, "citations": citationsFromSources(sources)})
+	traceSvc.OnResponse(ans, true, traceLatency(started))
+	return c.JSON(fiber.Map{"answer": ans, "citations": citationsFromSources(sources), "trace_id": traceID})
 }

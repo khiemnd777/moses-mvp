@@ -21,12 +21,7 @@ type Source struct {
 }
 
 func (s *Service) Generate(ctx context.Context, question string, sources []Source) (string, error) {
-	prompt := buildPrompt(question, sources)
-	msgs := []message{
-		{Role: "system", Content: s.SystemPrompt},
-		{Role: "system", Content: s.Tone},
-		{Role: "user", Content: prompt},
-	}
+	msgs := s.BuildMessages(question, sources)
 	retryCount := s.Retry
 	if retryCount < 0 {
 		retryCount = 0
@@ -43,6 +38,23 @@ func (s *Service) Generate(ctx context.Context, question string, sources []Sourc
 		lastErr = err
 	}
 	return "", lastErr
+}
+
+func (s *Service) BuildMessages(question string, sources []Source) []message {
+	prompt := buildPrompt(question, sources)
+	return []message{
+		{Role: "system", Content: s.SystemPrompt},
+		{Role: "system", Content: s.Tone},
+		{Role: "user", Content: prompt},
+	}
+}
+
+func (s *Service) PromptSnapshot(question string, sources []Source) string {
+	return strings.TrimSpace(strings.Join([]string{
+		"System Prompt:\n" + strings.TrimSpace(s.SystemPrompt),
+		"Tone Prompt:\n" + strings.TrimSpace(s.Tone),
+		"User Query and Context:\n" + strings.TrimSpace(buildPrompt(question, sources)),
+	}, "\n\n"))
 }
 
 func buildPrompt(question string, sources []Source) string {

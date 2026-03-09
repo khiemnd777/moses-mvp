@@ -23,6 +23,7 @@ import (
 
 func main() {
 	logger := logging.New()
+	slog.SetDefault(logger)
 	cfgPath := os.Getenv("CONFIG_PATH")
 	if cfgPath == "" {
 		cfgPath = "config/config.yaml"

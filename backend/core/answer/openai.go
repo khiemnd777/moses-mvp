@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/khiemnd777/legal_api/observability"
 )
 
 type Client struct {
@@ -63,6 +65,7 @@ func (c *Client) Answer(ctx context.Context, messages []message, cfg CompletionC
 	if c.APIKey == "" {
 		return "", errors.New("openai api key is required")
 	}
+	started := time.Now()
 	payload := chatRequest{Model: c.Model, Messages: messages}
 	if cfg.Temperature >= 0 {
 		t := cfg.Temperature
@@ -83,12 +86,24 @@ func (c *Client) Answer(ctx context.Context, messages []message, cfg CompletionC
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		observability.LogError(ctx, nil, "openai", "openai completion failed", map[string]interface{}{
+			"model":      c.Model,
+			"latency_ms": time.Since(started).Milliseconds(),
+			"error":      err.Error(),
+		})
 		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", formatOpenAIError("openai chat request failed", resp.StatusCode, body)
+		err := formatOpenAIError("openai chat request failed", resp.StatusCode, body)
+		observability.LogError(ctx, nil, "openai", "openai completion failed", map[string]interface{}{
+			"model":       c.Model,
+			"status_code": resp.StatusCode,
+			"latency_ms":  time.Since(started).Milliseconds(),
+			"error":       err.Error(),
+		})
+		return "", err
 	}
 	var out chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -97,7 +112,32 @@ func (c *Client) Answer(ctx context.Context, messages []message, cfg CompletionC
 	if len(out.Choices) == 0 {
 		return "", errors.New("no chat choices")
 	}
+	observability.LogInfo(ctx, nil, "openai", "openai completion succeeded", map[string]interface{}{
+		"model":      c.Model,
+		"latency_ms": time.Since(started).Milliseconds(),
+	})
 	return out.Choices[0].Message.Content, nil
+}
+
+func (c *Client) HealthCheck(ctx context.Context) error {
+	if c.APIKey == "" {
+		return errors.New("openai api key is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/v1/models", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return formatOpenAIError("openai health check failed", resp.StatusCode, body)
+	}
+	return nil
 }
 
 func formatOpenAIError(prefix string, status int, body []byte) error {

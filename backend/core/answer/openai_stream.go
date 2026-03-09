@@ -9,6 +9,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/khiemnd777/legal_api/observability"
 )
 
 type chatStreamRequest struct {
@@ -32,6 +35,7 @@ func (c *Client) StreamAnswer(ctx context.Context, messages []message, cfg Compl
 	if c.APIKey == "" {
 		return errors.New("openai api key is required")
 	}
+	started := time.Now()
 	payload := chatStreamRequest{Model: c.Model, Messages: messages, Stream: true}
 	if cfg.Temperature >= 0 {
 		t := cfg.Temperature
@@ -53,11 +57,23 @@ func (c *Client) StreamAnswer(ctx context.Context, messages []message, cfg Compl
 	req.Header.Set("Accept", "text/event-stream")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		observability.LogError(ctx, nil, "openai", "openai stream failed", map[string]interface{}{
+			"model":      c.Model,
+			"latency_ms": time.Since(started).Milliseconds(),
+			"error":      err.Error(),
+		})
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return errors.New("openai chat stream request failed")
+		err := errors.New("openai chat stream request failed")
+		observability.LogError(ctx, nil, "openai", "openai stream failed", map[string]interface{}{
+			"model":       c.Model,
+			"status_code": resp.StatusCode,
+			"latency_ms":  time.Since(started).Milliseconds(),
+			"error":       err.Error(),
+		})
+		return err
 	}
 	reader := bufio.NewReader(resp.Body)
 	for {
@@ -77,6 +93,10 @@ func (c *Client) StreamAnswer(ctx context.Context, messages []message, cfg Compl
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
+			observability.LogInfo(ctx, nil, "openai", "openai stream succeeded", map[string]interface{}{
+				"model":      c.Model,
+				"latency_ms": time.Since(started).Milliseconds(),
+			})
 			return nil
 		}
 		var chunk chatStreamResponse

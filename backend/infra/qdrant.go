@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 )
@@ -268,6 +269,23 @@ func (c *QdrantClient) Delete(ctx context.Context, ids []string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		return errors.New("qdrant delete failed")
+	}
+	return nil
+}
+
+func (c *QdrantClient) HealthCheck(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL+"/collections", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return errors.New("qdrant health check failed: " + string(body))
 	}
 	return nil
 }

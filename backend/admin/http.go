@@ -25,6 +25,7 @@ func RegisterRoutes(
 	guardHandler *GuardPolicyHandler,
 	promptHandler *PromptHandler,
 	retrievalConfigHandler *RetrievalConfigHandler,
+	answerTraceHandler *AIAnswerTraceHandler,
 ) {
 	group.Get("/ai/guard-policies", guardHandler.List)
 	group.Get("/ai/guard-policies/:id", guardHandler.Get)
@@ -46,4 +47,7 @@ func RegisterRoutes(
 	group.Delete("/ai/retrieval-configs/:id", retrievalConfigHandler.Delete)
 	group.Post("/ai/retrieval-configs/:id/enable", retrievalConfigHandler.Enable)
 	group.Post("/ai/retrieval-configs/:id/disable", retrievalConfigHandler.Disable)
+
+	group.Get("/ai/answer-traces", answerTraceHandler.List)
+	group.Get("/ai/answer-traces/:traceID", answerTraceHandler.Get)
 }

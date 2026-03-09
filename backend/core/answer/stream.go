@@ -43,12 +43,7 @@ type StreamHandler interface {
 }
 
 func (s *Service) Stream(ctx context.Context, question string, sources []Source, handler StreamHandler) error {
-	prompt := buildPrompt(question, sources)
-	msgs := []message{
-		{Role: "system", Content: s.SystemPrompt},
-		{Role: "system", Content: s.Tone},
-		{Role: "user", Content: prompt},
-	}
+	msgs := s.BuildMessages(question, sources)
 	retryCount := s.Retry
 	if retryCount < 0 {
 		retryCount = 0
