@@ -4,3 +4,4 @@ backend/data/postgres/
 backend/data/qdrant/
 backend/data/uploads/
 frontend/dist/
+backend/vendor/
