@@ -1,2 +1,5 @@
 .DS_Store
 **/config.yaml
+backend/data/postgres/
+backend/data/qdrant/
+frontend/dist/
