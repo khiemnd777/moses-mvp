@@ -644,13 +644,15 @@ LIMIT 1
 
 func (s *Store) GetActiveAIRetrievalConfig(ctx context.Context) (domain.AIRetrievalConfig, error) {
 	var cfg domain.AIRetrievalConfig
-	var weightsRaw []byte
-	var metadataDefaultsRaw []byte
 	var preferredRaw []byte
+	var legalDomainRaw []byte
 	query := `
-SELECT id, name, enabled, default_top_k, rerank_enabled, rerank_weights,
-       adjacent_chunk_window, max_context_chunks, max_context_chars, candidate_multiplier,
-       metadata_filter_defaults, preferred_doc_types_by_domain, created_at, updated_at
+SELECT id, name, enabled, default_top_k,
+       rerank_enabled, rerank_vector_weight, rerank_keyword_weight, rerank_metadata_weight, rerank_article_weight,
+       adjacent_chunk_enabled, adjacent_chunk_window,
+       max_context_chunks, max_context_chars,
+       default_effective_status, preferred_doc_types_json, legal_domain_defaults_json,
+       created_at, updated_at
 FROM ai_retrieval_configs
 WHERE enabled = TRUE
 ORDER BY updated_at DESC, created_at DESC
@@ -662,33 +664,34 @@ LIMIT 1
 		&cfg.Enabled,
 		&cfg.DefaultTopK,
 		&cfg.RerankEnabled,
-		&weightsRaw,
+		&cfg.RerankVectorWeight,
+		&cfg.RerankKeywordWeight,
+		&cfg.RerankMetadataWeight,
+		&cfg.RerankArticleWeight,
+		&cfg.AdjacentChunkEnabled,
 		&cfg.AdjacentChunkWindow,
 		&cfg.MaxContextChunks,
 		&cfg.MaxContextChars,
-		&cfg.CandidateMultiplier,
-		&metadataDefaultsRaw,
+		&cfg.DefaultEffectiveStatus,
 		&preferredRaw,
+		&legalDomainRaw,
 		&cfg.CreatedAt,
 		&cfg.UpdatedAt,
 	)
 	if err != nil {
 		return cfg, err
 	}
-	if len(weightsRaw) > 0 {
-		_ = json.Unmarshal(weightsRaw, &cfg.RerankWeights)
-	}
-	if len(metadataDefaultsRaw) > 0 {
-		_ = json.Unmarshal(metadataDefaultsRaw, &cfg.MetadataFilterDefaults)
-	}
 	if len(preferredRaw) > 0 {
-		_ = json.Unmarshal(preferredRaw, &cfg.PreferredDocTypesByDomain)
+		_ = json.Unmarshal(preferredRaw, &cfg.PreferredDocTypes)
 	}
-	if cfg.MetadataFilterDefaults == nil {
-		cfg.MetadataFilterDefaults = map[string]interface{}{}
+	if len(legalDomainRaw) > 0 {
+		_ = json.Unmarshal(legalDomainRaw, &cfg.LegalDomainDefaultsJSON)
 	}
-	if cfg.PreferredDocTypesByDomain == nil {
-		cfg.PreferredDocTypesByDomain = map[string][]string{}
+	if cfg.PreferredDocTypes == nil {
+		cfg.PreferredDocTypes = []string{}
+	}
+	if cfg.LegalDomainDefaultsJSON == nil {
+		cfg.LegalDomainDefaultsJSON = map[string]interface{}{}
 	}
 	return cfg, nil
 }
@@ -781,19 +784,15 @@ ON CONFLICT (name) DO NOTHING
 		return err
 	}
 
-	retrievalWeights := domain.AIRetrievalRerankWeights{
-		Vector:   0.55,
-		Keyword:  0.25,
-		Metadata: 0.15,
-		Article:  0.05,
-	}
-	weightsJSON, _ := json.Marshal(retrievalWeights)
-	defaultMetadataFilters, _ := json.Marshal(map[string]interface{}{
-		"effective_status": "active",
-	})
-	preferredDocTypes, _ := json.Marshal(map[string][]string{
-		"marriage_family": {"law", "resolution", "decree"},
-		"civil":           {"law", "decree"},
+	preferredDocTypes, _ := json.Marshal([]string{"law", "resolution", "decree"})
+	legalDomainDefaults, _ := json.Marshal(map[string]interface{}{
+		"marriage_family": map[string]interface{}{
+			"top_k":               6,
+			"preferred_doc_types": []string{"law", "resolution"},
+		},
+		"criminal_law": map[string]interface{}{
+			"top_k": 8,
+		},
 	})
 	_, err = s.DB.ExecContext(ctx, `
 INSERT INTO ai_retrieval_configs (
@@ -801,28 +800,36 @@ INSERT INTO ai_retrieval_configs (
 	enabled,
 	default_top_k,
 	rerank_enabled,
-	rerank_weights,
+	rerank_vector_weight,
+	rerank_keyword_weight,
+	rerank_metadata_weight,
+	rerank_article_weight,
+	adjacent_chunk_enabled,
 	adjacent_chunk_window,
 	max_context_chunks,
 	max_context_chars,
-	candidate_multiplier,
-	metadata_filter_defaults,
-	preferred_doc_types_by_domain
+	default_effective_status,
+	preferred_doc_types_json,
+	legal_domain_defaults_json
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 ON CONFLICT (name) DO NOTHING
 `,
 		"default_legal_retrieval_config",
 		true,
 		5,
 		true,
-		weightsJSON,
+		0.55,
+		0.25,
+		0.15,
+		0.05,
+		true,
 		1,
 		12,
 		12000,
-		3,
-		defaultMetadataFilters,
+		"active",
 		preferredDocTypes,
+		legalDomainDefaults,
 	)
 	return err
 }

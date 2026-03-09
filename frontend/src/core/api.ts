@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
   AIGuardPolicy,
   AIPrompt,
+  AIRetrievalConfig,
   ChatFilters,
   DocType,
   DocTypeForm,
@@ -157,6 +158,43 @@ export const deleteAIPrompt = async (id: string) => {
 export const testAIPrompt = async (payload: { prompt_id: string; query: string; top_k?: number }) => {
   const { data } = await api.post('/admin/ai/prompts/test', payload);
   return data as { answer: string; citations?: unknown[] };
+};
+
+export const listAIRetrievalConfigs = async () => {
+  const { data } = await api.get('/admin/ai/retrieval-configs');
+  return (data?.items || []) as AIRetrievalConfig[];
+};
+
+export const getAIRetrievalConfig = async (id: string) => {
+  const { data } = await api.get(`/admin/ai/retrieval-configs/${id}`);
+  return data as AIRetrievalConfig;
+};
+
+export const createAIRetrievalConfig = async (payload: Omit<AIRetrievalConfig, 'id' | 'created_at' | 'updated_at'>) => {
+  const { data } = await api.post('/admin/ai/retrieval-configs', payload);
+  return data as AIRetrievalConfig;
+};
+
+export const updateAIRetrievalConfig = async (
+  id: string,
+  payload: Omit<AIRetrievalConfig, 'id' | 'created_at' | 'updated_at'>
+) => {
+  const { data } = await api.put(`/admin/ai/retrieval-configs/${id}`, payload);
+  return data as AIRetrievalConfig;
+};
+
+export const enableAIRetrievalConfig = async (id: string) => {
+  const { data } = await api.post(`/admin/ai/retrieval-configs/${id}/enable`);
+  return data as AIRetrievalConfig;
+};
+
+export const disableAIRetrievalConfig = async (id: string) => {
+  const { data } = await api.post(`/admin/ai/retrieval-configs/${id}/disable`);
+  return data as AIRetrievalConfig;
+};
+
+export const deleteAIRetrievalConfig = async (id: string) => {
+  await api.delete(`/admin/ai/retrieval-configs/${id}`);
 };
 
 export default api;

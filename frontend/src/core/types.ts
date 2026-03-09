@@ -114,3 +114,24 @@ export type AIPrompt = {
   created_at?: string;
   updated_at?: string;
 };
+
+export type AIRetrievalConfig = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  default_top_k: number;
+  rerank_enabled: boolean;
+  rerank_vector_weight: number;
+  rerank_keyword_weight: number;
+  rerank_metadata_weight: number;
+  rerank_article_weight: number;
+  adjacent_chunk_enabled: boolean;
+  adjacent_chunk_window: number;
+  max_context_chunks: number;
+  max_context_chars: number;
+  default_effective_status: string;
+  preferred_doc_types_json: string[];
+  legal_domain_defaults_json: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+};

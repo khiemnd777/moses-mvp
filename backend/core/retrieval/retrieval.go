@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/khiemnd777/legal_api/domain"
@@ -22,6 +23,12 @@ type Service struct {
 	Qdrant *infra.QdrantClient
 	Embed  Embedder
 	Logger *slog.Logger
+
+	cfgMu       sync.RWMutex
+	cfgCache    runtimeConfig
+	cfgLoadedAt time.Time
+	cfgReady    bool
+	cfgTTL      time.Duration
 }
 
 type Embedder interface {
@@ -94,15 +101,22 @@ type Result struct {
 }
 
 type runtimeConfig struct {
-	DefaultTopK         int
-	RerankEnabled       bool
-	AdjacentChunkWindow int
-	MaxContextChunks    int
-	MaxContextChars     int
-	CandidateMultiplier int
-	MetadataDefaults    map[string]interface{}
-	PreferredByDomain   map[string][]string
-	RerankWeights       rerankWeights
+	DefaultTopK            int
+	DefaultEffectiveStatus string
+	RerankEnabled          bool
+	RerankWeights          rerankWeights
+	AdjacentChunkEnabled   bool
+	AdjacentChunkWindow    int
+	MaxContextChunks       int
+	MaxContextChars        int
+	CandidateMultiplier    int
+	PreferredDocTypes      []string
+	DomainDefaults         map[string]domainRuntimeDefault
+}
+
+type domainRuntimeDefault struct {
+	TopK              int
+	PreferredDocTypes []string
 }
 
 type rerankWeights struct {
@@ -199,13 +213,11 @@ func (s *Service) Search(ctx context.Context, query string, opts SearchOptions) 
 		selected = append(selected, toResult(c, false))
 	}
 
-	expanded := []Result{}
 	if plan.ExpandAdjacent && plan.AdjacentWindow > 0 && len(selected) > 0 {
-		expanded, err = s.expandAdjacent(ctx, selected, plan.AdjacentWindow)
+		selected, err = s.expandAdjacent(ctx, selected, plan.AdjacentWindow)
 		if err != nil {
 			return nil, err
 		}
-		selected = expanded
 	}
 
 	limited, assembly := applyContextLimits(selected, cfg.MaxContextChunks, cfg.MaxContextChars)
@@ -244,12 +256,10 @@ func UnderstandQuery(query string) QueryUnderstandingResult {
 		result.LegalTopic = "divorce"
 		result.Intent = "legal_procedure_advice"
 	}
-	if result.LegalDomain == "" {
-		if strings.Contains(normalized, "hop dong") {
-			result.LegalDomain = "civil"
-			result.LegalTopic = "contract"
-			result.Intent = "legal_rights_obligations"
-		}
+	if result.LegalDomain == "" && strings.Contains(normalized, "hop dong") {
+		result.LegalDomain = "civil"
+		result.LegalTopic = "contract"
+		result.Intent = "legal_rights_obligations"
 	}
 	if result.Intent == "" {
 		if strings.Contains(normalized, "thu tuc") || strings.Contains(normalized, "ho so") {
@@ -278,7 +288,6 @@ func UnderstandQuery(query string) QueryUnderstandingResult {
 	if result.LegalDomain != "" {
 		result.Filters["legal_domain"] = result.LegalDomain
 	}
-	result.Filters["effective_status"] = "active"
 	return result
 }
 
@@ -290,6 +299,7 @@ func BuildRetrievalPlan(qu QueryUnderstandingResult, opts SearchOptions, cfg run
 	if topK <= 0 {
 		topK = 5
 	}
+
 	queryText := qu.NormalizedQuery
 	if queryText == "" {
 		queryText = normalizeQuery(qu.OriginalQuery)
@@ -297,6 +307,7 @@ func BuildRetrievalPlan(qu QueryUnderstandingResult, opts SearchOptions, cfg run
 	if queryText == "" {
 		queryText = strings.TrimSpace(qu.OriginalQuery)
 	}
+
 	filters := copyMap(qu.Filters)
 	if v := strings.TrimSpace(strings.ToLower(opts.Domain)); v != "" {
 		filters["legal_domain"] = v
@@ -313,14 +324,20 @@ func BuildRetrievalPlan(qu QueryUnderstandingResult, opts SearchOptions, cfg run
 	if v := strings.TrimSpace(opts.ArticleNumber); v != "" {
 		filters["article_number"] = v
 	}
-	for k, v := range cfg.MetadataDefaults {
-		if _, exists := filters[k]; !exists {
-			filters[k] = v
-		}
+	if pickString(filters, "effective_status") == "" {
+		filters["effective_status"] = cfg.DefaultEffectiveStatus
 	}
-	preferred := []string{}
+
+	preferred := append([]string{}, cfg.PreferredDocTypes...)
 	if domainName := pickString(filters, "legal_domain"); domainName != "" {
-		preferred = append(preferred, cfg.PreferredByDomain[domainName]...)
+		if domainCfg, ok := cfg.DomainDefaults[domainName]; ok {
+			if domainCfg.TopK > 0 {
+				topK = domainCfg.TopK
+			}
+			if len(domainCfg.PreferredDocTypes) > 0 {
+				preferred = domainCfg.PreferredDocTypes
+			}
+		}
 	}
 	if v := pickString(filters, "document_type"); v != "" {
 		preferred = []string{v}
@@ -331,7 +348,7 @@ func BuildRetrievalPlan(qu QueryUnderstandingResult, opts SearchOptions, cfg run
 		Filters:            filters,
 		PreferredDocTypes:  dedupeStrings(preferred),
 		TopK:               topK,
-		ExpandAdjacent:     cfg.AdjacentChunkWindow > 0,
+		ExpandAdjacent:     cfg.AdjacentChunkEnabled && cfg.AdjacentChunkWindow > 0,
 		AdjacentWindow:     max(0, cfg.AdjacentChunkWindow),
 		Rerank:             cfg.RerankEnabled,
 		CandidatePoolLimit: max(topK, topK*max(1, cfg.CandidateMultiplier)),
@@ -366,20 +383,15 @@ func rerankCandidates(candidates []RetrievalCandidate, qu QueryUnderstandingResu
 }
 
 func (s *Service) expandAdjacent(ctx context.Context, selected []Result, window int) ([]Result, error) {
-	type anchor struct {
-		versionID string
-		indices   []int
-	}
 	byVersion := map[string]map[int]struct{}{}
 	for _, r := range selected {
 		if _, ok := byVersion[r.VersionID]; !ok {
 			byVersion[r.VersionID] = map[int]struct{}{}
 		}
 		for idx := r.ChunkIndex - window; idx <= r.ChunkIndex+window; idx++ {
-			if idx < 0 {
-				continue
+			if idx >= 0 {
+				byVersion[r.VersionID][idx] = struct{}{}
 			}
-			byVersion[r.VersionID][idx] = struct{}{}
 		}
 	}
 
@@ -410,12 +422,14 @@ func (s *Service) expandAdjacent(ctx context.Context, selected []Result, window 
 	seen := map[string]struct{}{}
 	for _, base := range selected {
 		neighbors := make([]Result, 0, 2*window+1)
-		for idx := base.ChunkIndex - window; idx <= base.ChunkIndex+window; idx++ {
-			for _, r := range adjacentByID {
-				if r.VersionID == base.VersionID && r.ChunkIndex == idx {
-					neighbors = append(neighbors, r)
-				}
+		for _, r := range adjacentByID {
+			if r.VersionID != base.VersionID {
+				continue
 			}
+			if r.ChunkIndex < base.ChunkIndex-window || r.ChunkIndex > base.ChunkIndex+window {
+				continue
+			}
+			neighbors = append(neighbors, r)
 		}
 		sort.SliceStable(neighbors, func(i, j int) bool {
 			return neighbors[i].ChunkIndex < neighbors[j].ChunkIndex
@@ -493,65 +507,72 @@ func toResult(candidate RetrievalCandidate, isAdjacent bool) Result {
 }
 
 func (s *Service) loadRuntimeConfig(ctx context.Context) runtimeConfig {
+	ttl := s.cfgTTL
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	s.cfgMu.RLock()
+	if s.cfgReady && time.Since(s.cfgLoadedAt) <= ttl {
+		cached := s.cfgCache
+		s.cfgMu.RUnlock()
+		return cached
+	}
+	s.cfgMu.RUnlock()
+
 	cfg := defaultRuntimeConfig()
 	dbCfg, err := s.Store.GetActiveAIRetrievalConfig(ctx)
-	if err != nil {
+	if err == nil {
+		if dbCfg.DefaultTopK > 0 {
+			cfg.DefaultTopK = dbCfg.DefaultTopK
+		}
+		if v := strings.TrimSpace(dbCfg.DefaultEffectiveStatus); v != "" {
+			cfg.DefaultEffectiveStatus = strings.ToLower(v)
+		}
+		cfg.RerankEnabled = dbCfg.RerankEnabled
+		cfg.AdjacentChunkEnabled = dbCfg.AdjacentChunkEnabled
+		if dbCfg.AdjacentChunkWindow >= 0 {
+			cfg.AdjacentChunkWindow = dbCfg.AdjacentChunkWindow
+		}
+		if dbCfg.MaxContextChunks > 0 {
+			cfg.MaxContextChunks = dbCfg.MaxContextChunks
+		}
+		if dbCfg.MaxContextChars > 0 {
+			cfg.MaxContextChars = dbCfg.MaxContextChars
+		}
+		cfg.RerankWeights = rerankWeights{
+			Vector:   dbCfg.RerankVectorWeight,
+			Keyword:  dbCfg.RerankKeywordWeight,
+			Metadata: dbCfg.RerankMetadataWeight,
+			Article:  dbCfg.RerankArticleWeight,
+		}
+		cfg.PreferredDocTypes = dedupeStrings(dbCfg.PreferredDocTypes)
+		cfg.DomainDefaults = parseDomainDefaults(dbCfg.LegalDomainDefaultsJSON)
+	} else {
 		s.logger().Warn("use_default_retrieval_config", slog.String("error", err.Error()))
-		return cfg
 	}
-	if dbCfg.DefaultTopK > 0 {
-		cfg.DefaultTopK = dbCfg.DefaultTopK
-	}
-	cfg.RerankEnabled = dbCfg.RerankEnabled
-	if dbCfg.AdjacentChunkWindow >= 0 {
-		cfg.AdjacentChunkWindow = dbCfg.AdjacentChunkWindow
-	}
-	if dbCfg.MaxContextChunks > 0 {
-		cfg.MaxContextChunks = dbCfg.MaxContextChunks
-	}
-	if dbCfg.MaxContextChars > 0 {
-		cfg.MaxContextChars = dbCfg.MaxContextChars
-	}
-	if dbCfg.CandidateMultiplier > 0 {
-		cfg.CandidateMultiplier = dbCfg.CandidateMultiplier
-	}
-	if len(dbCfg.MetadataFilterDefaults) > 0 {
-		cfg.MetadataDefaults = dbCfg.MetadataFilterDefaults
-	}
-	if len(dbCfg.PreferredDocTypesByDomain) > 0 {
-		cfg.PreferredByDomain = dbCfg.PreferredDocTypesByDomain
-	}
-	if w := dbCfg.RerankWeights; w.Vector > 0 || w.Keyword > 0 || w.Metadata > 0 || w.Article > 0 {
-		if w.Vector > 0 {
-			cfg.RerankWeights.Vector = w.Vector
-		}
-		if w.Keyword > 0 {
-			cfg.RerankWeights.Keyword = w.Keyword
-		}
-		if w.Metadata > 0 {
-			cfg.RerankWeights.Metadata = w.Metadata
-		}
-		if w.Article > 0 {
-			cfg.RerankWeights.Article = w.Article
-		}
-	}
+
+	s.cfgMu.Lock()
+	s.cfgCache = cfg
+	s.cfgLoadedAt = time.Now()
+	s.cfgReady = true
+	s.cfgMu.Unlock()
 	return cfg
 }
 
 func defaultRuntimeConfig() runtimeConfig {
 	return runtimeConfig{
-		DefaultTopK:         5,
-		RerankEnabled:       true,
-		AdjacentChunkWindow: 1,
-		MaxContextChunks:    12,
-		MaxContextChars:     12000,
-		CandidateMultiplier: 3,
-		MetadataDefaults: map[string]interface{}{
-			"effective_status": "active",
-		},
-		PreferredByDomain: map[string][]string{
-			"marriage_family": {"law", "resolution", "decree"},
-			"civil":           {"law", "decree"},
+		DefaultTopK:            5,
+		DefaultEffectiveStatus: "active",
+		RerankEnabled:          true,
+		AdjacentChunkEnabled:   true,
+		AdjacentChunkWindow:    1,
+		MaxContextChunks:       12,
+		MaxContextChars:        12000,
+		CandidateMultiplier:    3,
+		PreferredDocTypes:      []string{"law", "resolution", "decree"},
+		DomainDefaults: map[string]domainRuntimeDefault{
+			"marriage_family": {TopK: 6, PreferredDocTypes: []string{"law", "resolution"}},
+			"criminal_law":    {TopK: 8, PreferredDocTypes: []string{"law", "decree"}},
 		},
 		RerankWeights: rerankWeights{
 			Vector:   0.55,
@@ -560,6 +581,52 @@ func defaultRuntimeConfig() runtimeConfig {
 			Article:  0.05,
 		},
 	}
+}
+
+func (s *Service) InvalidateRuntimeConfigCache() {
+	s.cfgMu.Lock()
+	s.cfgReady = false
+	s.cfgLoadedAt = time.Time{}
+	s.cfgCache = runtimeConfig{}
+	s.cfgMu.Unlock()
+}
+
+func parseDomainDefaults(raw map[string]interface{}) map[string]domainRuntimeDefault {
+	out := map[string]domainRuntimeDefault{}
+	for domainKey, value := range raw {
+		domainKey = strings.TrimSpace(strings.ToLower(domainKey))
+		if domainKey == "" {
+			continue
+		}
+		cfgMap, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		item := domainRuntimeDefault{}
+		if topK := toInt(cfgMap["top_k"]); topK > 0 {
+			item.TopK = topK
+		}
+		item.PreferredDocTypes = asStringSlice(cfgMap["preferred_doc_types"])
+		out[domainKey] = item
+	}
+	return out
+}
+
+func toInt(v interface{}) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case int64:
+		return int(x)
+	case float64:
+		return int(x)
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(x))
+		if err == nil {
+			return n
+		}
+	}
+	return 0
 }
 
 func metadataMatchScore(meta map[string]interface{}, filters map[string]interface{}) float64 {
@@ -611,11 +678,7 @@ func lexicalOverlapScore(queryTokens, textTokens map[string]struct{}) float64 {
 			inter++
 		}
 	}
-	denom := len(queryTokens)
-	if denom == 0 {
-		return 0
-	}
-	return float64(inter) / float64(denom)
+	return float64(inter) / float64(len(queryTokens))
 }
 
 func tokenize(s string) map[string]struct{} {
@@ -650,13 +713,10 @@ func normalizeQuery(q string) string {
 	q = replacer.Replace(q)
 	re := regexp.MustCompile(`[^a-z0-9\s]+`)
 	q = re.ReplaceAllString(q, " ")
-	q = strings.Join(strings.Fields(q), " ")
-	return q
+	return strings.Join(strings.Fields(q), " ")
 }
 
-func extractYear(text, pattern string) int {
-	return extractInt(text, pattern)
-}
+func extractYear(text, pattern string) int { return extractInt(text, pattern) }
 
 func extractInt(text, pattern string) int {
 	re := regexp.MustCompile(pattern)

@@ -7,6 +7,7 @@ import IngestJobsPage from '@/features/admin/IngestJobsPage';
 import PlaygroundPage from '@/features/admin/PlaygroundPage';
 import GuardPoliciesPage from '@/features/admin/ai/GuardPoliciesPage';
 import PromptsPage from '@/features/admin/ai/PromptsPage';
+import RetrievalConfigsPage from '@/features/admin/ai/RetrievalConfigsPage';
 
 const App = () => {
   return (
@@ -32,6 +33,7 @@ const App = () => {
             <Route path="ingest-jobs" element={<IngestJobsPage />} />
             <Route path="ai/guard-policies" element={<GuardPoliciesPage />} />
             <Route path="ai/prompts" element={<PromptsPage />} />
+            <Route path="ai/retrieval-configs" element={<RetrievalConfigsPage />} />
             {/* <Route path="playground" element={<PlaygroundPage />} /> */}
           </Route>
         </Routes>

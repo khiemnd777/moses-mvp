@@ -19,6 +19,9 @@ const AdminLayout = () => {
         <NavLink to="/admin/ai/prompts" className={({ isActive }) => (isActive ? 'active' : '')}>
           AI Prompts
         </NavLink>
+        <NavLink to="/admin/ai/retrieval-configs" className={({ isActive }) => (isActive ? 'active' : '')}>
+          AI Retrieval Configs
+        </NavLink>
         {/* <NavLink to="/admin/playground" className={({ isActive }) => (isActive ? 'active' : '')}>
           Playground
         </NavLink> */}

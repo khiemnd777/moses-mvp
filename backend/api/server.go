@@ -75,12 +75,18 @@ func (s *Server) RegisterRoutes() {
 	adminGroup := s.App.Group("/admin", adminAuthMiddleware(s.AdminAPIKey))
 	guardRepo := repository.NewGuardPolicyRepository(s.Store)
 	promptRepo := repository.NewPromptRepository(s.Store)
+	retrievalCfgRepo := repository.NewRetrievalConfigRepository(s.Store)
 	guardSvc := adminservice.NewGuardPolicyService(guardRepo)
 	promptSvc := adminservice.NewPromptService(promptRepo)
+	retrievalCfgSvc := adminservice.NewRetrievalConfigService(retrievalCfgRepo)
 	guardHandler := adminapi.NewGuardPolicyHandler(guardSvc, h.InvalidateRuntimeAnswerConfigCache)
 	defaultTone := s.Tones[defaultToneKey]
 	promptHandler := adminapi.NewPromptHandler(promptSvc, s.Retriever, s.Answer, defaultTone, h.InvalidateRuntimeAnswerConfigCache)
-	adminapi.RegisterRoutes(adminGroup, guardHandler, promptHandler)
+	onRetrievalConfigChanged := func() {
+		s.Retriever.InvalidateRuntimeConfigCache()
+	}
+	retrievalConfigHandler := adminapi.NewRetrievalConfigHandler(retrievalCfgSvc, onRetrievalConfigChanged)
+	adminapi.RegisterRoutes(adminGroup, guardHandler, promptHandler, retrievalConfigHandler)
 }
 
 func (s *Server) Start(ctx context.Context, addr string) error {

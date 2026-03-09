@@ -105,26 +105,23 @@ type AIPrompt struct {
 	UpdatedAt    time.Time
 }
 
-type AIRetrievalRerankWeights struct {
-	Vector   float64 `json:"vector"`
-	Keyword  float64 `json:"keyword"`
-	Metadata float64 `json:"metadata"`
-	Article  float64 `json:"article"`
-}
-
 type AIRetrievalConfig struct {
-	ID                        string
-	Name                      string
-	Enabled                   bool
-	DefaultTopK               int
-	RerankEnabled             bool
-	RerankWeights             AIRetrievalRerankWeights
-	AdjacentChunkWindow       int
-	MaxContextChunks          int
-	MaxContextChars           int
-	CandidateMultiplier       int
-	MetadataFilterDefaults    map[string]interface{}
-	PreferredDocTypesByDomain map[string][]string
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+	ID                      string                 `json:"id"`
+	Name                    string                 `json:"name"`
+	Enabled                 bool                   `json:"enabled"`
+	DefaultTopK             int                    `json:"default_top_k"`
+	RerankEnabled           bool                   `json:"rerank_enabled"`
+	RerankVectorWeight      float64                `json:"rerank_vector_weight"`
+	RerankKeywordWeight     float64                `json:"rerank_keyword_weight"`
+	RerankMetadataWeight    float64                `json:"rerank_metadata_weight"`
+	RerankArticleWeight     float64                `json:"rerank_article_weight"`
+	AdjacentChunkEnabled    bool                   `json:"adjacent_chunk_enabled"`
+	AdjacentChunkWindow     int                    `json:"adjacent_chunk_window"`
+	MaxContextChunks        int                    `json:"max_context_chunks"`
+	MaxContextChars         int                    `json:"max_context_chars"`
+	DefaultEffectiveStatus  string                 `json:"default_effective_status"`
+	PreferredDocTypes       []string               `json:"preferred_doc_types_json"`
+	LegalDomainDefaultsJSON map[string]interface{} `json:"legal_domain_defaults_json"`
+	CreatedAt               time.Time              `json:"created_at"`
+	UpdatedAt               time.Time              `json:"updated_at"`
 }
