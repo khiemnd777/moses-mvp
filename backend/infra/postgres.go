@@ -564,6 +564,53 @@ func (s *Store) LogAnswer(ctx context.Context, q, a string) error {
 	return err
 }
 
+func (s *Store) GetActiveAIGuardPolicy(ctx context.Context) (domain.AIGuardPolicy, error) {
+	var policy domain.AIGuardPolicy
+	query := `
+SELECT id, name, enabled, min_retrieved_chunks, min_similarity_score, on_empty_retrieval, on_low_confidence, created_at, updated_at
+FROM ai_guard_policies
+WHERE enabled = TRUE
+ORDER BY updated_at DESC, created_at DESC
+LIMIT 1
+`
+	err := s.DB.QueryRowContext(ctx, query).Scan(
+		&policy.ID,
+		&policy.Name,
+		&policy.Enabled,
+		&policy.MinRetrievedChunks,
+		&policy.MinSimilarityScore,
+		&policy.OnEmptyRetrieval,
+		&policy.OnLowConfidence,
+		&policy.CreatedAt,
+		&policy.UpdatedAt,
+	)
+	return policy, err
+}
+
+func (s *Store) GetActiveAIPromptByType(ctx context.Context, promptType string) (domain.AIPrompt, error) {
+	var prompt domain.AIPrompt
+	query := `
+SELECT id, name, prompt_type, system_prompt, temperature, max_tokens, retry, enabled, created_at, updated_at
+FROM ai_prompts
+WHERE enabled = TRUE AND prompt_type = $1
+ORDER BY updated_at DESC, created_at DESC
+LIMIT 1
+`
+	err := s.DB.QueryRowContext(ctx, query, promptType).Scan(
+		&prompt.ID,
+		&prompt.Name,
+		&prompt.PromptType,
+		&prompt.SystemPrompt,
+		&prompt.Temperature,
+		&prompt.MaxTokens,
+		&prompt.Retry,
+		&prompt.Enabled,
+		&prompt.CreatedAt,
+		&prompt.UpdatedAt,
+	)
+	return prompt, err
+}
+
 func (s *Store) SetChunkEmbedding(ctx context.Context, chunkID string, embedding []float64) error {
 	b, err := json.Marshal(embedding)
 	if err != nil {
@@ -600,6 +647,54 @@ func (s *Store) EnsureDocTypeSeed(ctx context.Context) error {
 	}
 	b, _ := json.Marshal(seed)
 	_, err = s.DB.ExecContext(ctx, `INSERT INTO doc_types (code, name, form_json, form_hash) VALUES ('legal_normative','Legal Normative',$1,'seed')`, b)
+	return err
+}
+
+func (s *Store) EnsureAIConfigSeed(ctx context.Context) error {
+	_, err := s.DB.ExecContext(ctx, `
+INSERT INTO ai_guard_policies (
+	name,
+	enabled,
+	min_retrieved_chunks,
+	min_similarity_score,
+	on_empty_retrieval,
+	on_low_confidence
+)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (name) DO NOTHING
+`,
+		"default_legal_guard_policy",
+		true,
+		1,
+		0.7,
+		"refuse",
+		"ask_clarification",
+	)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.DB.ExecContext(ctx, `
+INSERT INTO ai_prompts (
+	name,
+	prompt_type,
+	system_prompt,
+	temperature,
+	max_tokens,
+	retry,
+	enabled
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (name) DO NOTHING
+`,
+		"legal_guard_prompt",
+		"legal_guard",
+		"You are a Vietnamese legal assistant.\nUse ONLY the provided sources.\nNever invent legal provisions.\nIf sources are insufficient, say that no legal basis was found.\nCite legal provisions in human-readable format.",
+		0.2,
+		1200,
+		2,
+		true,
+	)
 	return err
 }
 

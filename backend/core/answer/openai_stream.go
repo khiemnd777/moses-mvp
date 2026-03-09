@@ -12,9 +12,11 @@ import (
 )
 
 type chatStreamRequest struct {
-	Model    string    `json:"model"`
-	Messages []message `json:"messages"`
-	Stream   bool      `json:"stream"`
+	Model       string    `json:"model"`
+	Messages    []message `json:"messages"`
+	Stream      bool      `json:"stream"`
+	Temperature *float64  `json:"temperature,omitempty"`
+	MaxTokens   int       `json:"max_tokens,omitempty"`
 }
 
 type chatStreamResponse struct {
@@ -26,11 +28,18 @@ type chatStreamResponse struct {
 	} `json:"choices"`
 }
 
-func (c *Client) StreamAnswer(ctx context.Context, messages []message, onDelta func(string) error) error {
+func (c *Client) StreamAnswer(ctx context.Context, messages []message, cfg CompletionConfig, onDelta func(string) error) error {
 	if c.APIKey == "" {
 		return errors.New("openai api key is required")
 	}
 	payload := chatStreamRequest{Model: c.Model, Messages: messages, Stream: true}
+	if cfg.Temperature >= 0 {
+		t := cfg.Temperature
+		payload.Temperature = &t
+	}
+	if cfg.MaxTokens > 0 {
+		payload.MaxTokens = cfg.MaxTokens
+	}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return err

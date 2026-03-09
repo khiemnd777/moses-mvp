@@ -9,14 +9,19 @@ const SourcesPanel = ({ citations }: { citations: Citation[] }) => {
     <div className="grid">
       {citations.map((citation, index) => (
         <div className="source-item" key={citation.id || index}>
-          <div style={{ fontWeight: 600 }}>{citation.title || `Source ${index + 1}`}</div>
+          <div style={{ fontWeight: 600 }}>
+            {citation.article
+              ? `Dieu ${citation.article} ${citation.document_title} ${citation.year || ''}`.trim()
+              : citation.document_title || `Source ${index + 1}`}
+          </div>
+          {citation.document_number && <div className="badge">So: {citation.document_number}</div>}
+          {citation.clause && <div className="badge">Khoan: {citation.clause}</div>}
           {citation.url && (
             <a href={citation.url} target="_blank" rel="noreferrer">
               {citation.url}
             </a>
           )}
           {citation.excerpt && <p>{citation.excerpt}</p>}
-          {citation.score !== undefined && <div className="badge">Score: {citation.score}</div>}
         </div>
       ))}
     </div>

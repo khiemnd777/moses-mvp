@@ -33,9 +33,16 @@ type message struct {
 	Content string `json:"content"`
 }
 
+type CompletionConfig struct {
+	Temperature float64
+	MaxTokens   int
+}
+
 type chatRequest struct {
-	Model    string    `json:"model"`
-	Messages []message `json:"messages"`
+	Model       string    `json:"model"`
+	Messages    []message `json:"messages"`
+	Temperature *float64  `json:"temperature,omitempty"`
+	MaxTokens   int       `json:"max_tokens,omitempty"`
 }
 
 type chatResponse struct {
@@ -52,11 +59,18 @@ type openaiError struct {
 	} `json:"error"`
 }
 
-func (c *Client) Answer(ctx context.Context, messages []message) (string, error) {
+func (c *Client) Answer(ctx context.Context, messages []message, cfg CompletionConfig) (string, error) {
 	if c.APIKey == "" {
 		return "", errors.New("openai api key is required")
 	}
 	payload := chatRequest{Model: c.Model, Messages: messages}
+	if cfg.Temperature >= 0 {
+		t := cfg.Temperature
+		payload.Temperature = &t
+	}
+	if cfg.MaxTokens > 0 {
+		payload.MaxTokens = cfg.MaxTokens
+	}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return "", err

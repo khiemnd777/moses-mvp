@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strconv"
 
 	"github.com/khiemnd777/legal_api/domain"
@@ -26,6 +27,8 @@ type Result struct {
 	CitationID string
 	VersionID  string
 	ChunkIndex int
+	Score      float64
+	Metadata   map[string]interface{}
 }
 
 func (s *Service) Search(ctx context.Context, query string, topK int) ([]Result, error) {
@@ -63,9 +66,22 @@ func (s *Service) Search(ctx context.Context, query string, topK int) ([]Result,
 			VersionID:  c.DocumentVersionID,
 			ChunkIndex: c.Index,
 			CitationID: citationID(c.DocumentVersionID, c.Index, c.Text),
+			Score:      match.Score,
+			Metadata:   decodeMetadata(c.MetadataJSON),
 		})
 	}
 	return results, nil
+}
+
+func decodeMetadata(raw []byte) map[string]interface{} {
+	if len(raw) == 0 {
+		return map[string]interface{}{}
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
+		return map[string]interface{}{}
+	}
+	return out
 }
 
 func citationID(versionID string, idx int, text string) string {

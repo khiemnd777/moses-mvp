@@ -53,6 +53,7 @@ func main() {
 		os.Exit(1)
 	}
 	_ = store.EnsureDocTypeSeed(context.Background())
+	_ = store.EnsureAIConfigSeed(context.Background())
 
 	storage := infra.NewStorage(cfg.Storage.RootDir)
 	embed := embedding.NewClient(cfg.OpenAI.APIKey, cfg.OpenAI.EmbeddingsModel)

@@ -79,3 +79,28 @@ type AnswerLog struct {
 	Answer    string
 	CreatedAt time.Time
 }
+
+type AIGuardPolicy struct {
+	ID                 string
+	Name               string
+	Enabled            bool
+	MinRetrievedChunks int
+	MinSimilarityScore float64
+	OnEmptyRetrieval   string
+	OnLowConfidence    string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type AIPrompt struct {
+	ID           string
+	Name         string
+	PromptType   string
+	SystemPrompt string
+	Temperature  float64
+	MaxTokens    int
+	Retry        int
+	Enabled      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}

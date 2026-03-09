@@ -88,10 +88,21 @@ export const useChatStore = create<ChatState>((set, get) => {
           {
             onEvent: (evt) => {
               if (evt.event === 'token') {
+                let delta = evt.data;
+                try {
+                  const parsed = JSON.parse(evt.data) as { delta?: string } | string;
+                  if (typeof parsed === 'string') {
+                    delta = parsed;
+                  } else if (parsed && typeof parsed.delta === 'string') {
+                    delta = parsed.delta;
+                  }
+                } catch {
+                  delta = evt.data;
+                }
                 set((state) => {
                   const updated = state.messages.map((msg) =>
                     msg.id === assistantMessage.id
-                      ? { ...msg, content: msg.content + evt.data }
+                      ? { ...msg, content: msg.content + delta }
                       : msg
                   );
                   persistState(updated, state.filters);
@@ -101,7 +112,8 @@ export const useChatStore = create<ChatState>((set, get) => {
               if (evt.event === 'citations') {
                 let citations: Citation[] | undefined;
                 try {
-                  citations = JSON.parse(evt.data) as Citation[];
+                  const parsed = JSON.parse(evt.data) as Citation[] | { citations?: Citation[] };
+                  citations = Array.isArray(parsed) ? parsed : parsed.citations;
                 } catch {
                   citations = undefined;
                 }

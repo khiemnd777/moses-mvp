@@ -56,12 +56,7 @@ func main() {
 		os.Exit(1)
 	}
 	_ = store.EnsureDocTypeSeed(context.Background())
-
-	guardPrompt, err := prompt.Load(cfg.Prompts.Guard)
-	if err != nil {
-		logger.Error("failed to load guard prompt", slog.String("error", err.Error()))
-		os.Exit(1)
-	}
+	_ = store.EnsureAIConfigSeed(context.Background())
 	defaultTone, err := prompt.Load(cfg.Prompts.ToneDefault)
 	if err != nil {
 		logger.Error("failed to load default tone", slog.String("error", err.Error()))
@@ -89,7 +84,7 @@ func main() {
 		"procedure": procTone.Content,
 	}
 
-	server := api.NewServer(store, storage, embed, qdrant, ansClient, guardPrompt.Content, tones, logger, ingest.Config{ChunkSize: cfg.Ingest.ChunkSize, ChunkOverlap: cfg.Ingest.ChunkOverlap})
+	server := api.NewServer(store, storage, embed, qdrant, ansClient, tones, logger, ingest.Config{ChunkSize: cfg.Ingest.ChunkSize, ChunkOverlap: cfg.Ingest.ChunkOverlap})
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	logger.Info("api server starting", slog.String("addr", addr))
 	if err := server.Start(context.Background(), addr); err != nil {

@@ -2,11 +2,13 @@ export type Role = 'user' | 'assistant' | 'system';
 
 export type Citation = {
   id: string;
-  title?: string;
-  url?: string;
-  excerpt?: string;
-  score?: number;
-  metadata?: Record<string, unknown>;
+  document_title: string;
+  document_number: string;
+  article: string;
+  clause: string;
+  year: number;
+  excerpt: string;
+  url: string;
 };
 
 export type ChatMessage = {

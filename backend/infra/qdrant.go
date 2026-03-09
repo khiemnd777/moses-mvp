@@ -99,6 +99,7 @@ type searchResponse struct {
 type SearchResult struct {
 	ID      string
 	ChunkID string
+	Score   float64
 	Payload map[string]interface{}
 }
 
@@ -131,6 +132,7 @@ func (c *QdrantClient) Search(ctx context.Context, vector []float64, limit int) 
 		results = append(results, SearchResult{
 			ID:      r.ID,
 			ChunkID: chunkID,
+			Score:   r.Score,
 			Payload: r.Payload,
 		})
 	}

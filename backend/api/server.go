@@ -21,13 +21,12 @@ type Server struct {
 	Embedder  *embedding.Client
 	Retriever *retrieval.Service
 	Answer    *answer.Client
-	Guard     string
 	Tones     map[string]string
 	Ingest    *ingest.Service
 	Logger    *slog.Logger
 }
 
-func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, guard string, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config) *Server {
+func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config) *Server {
 	app := fiber.New()
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "http://localhost:5173",
@@ -43,7 +42,6 @@ func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.C
 		Embedder:  embedder,
 		Retriever: retriever,
 		Answer:    ans,
-		Guard:     guard,
 		Tones:     tones,
 		Ingest:    ingestSvc,
 		Logger:    logger,
@@ -51,7 +49,7 @@ func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.C
 }
 
 func (s *Server) RegisterRoutes() {
-	h := NewHandler(s.Store, s.Storage, s.Retriever, s.Answer, s.Guard, s.Tones, s.Ingest, s.Logger)
+	h := NewHandler(s.Store, s.Storage, s.Retriever, s.Answer, s.Tones, s.Ingest, s.Logger)
 	s.App.Post("/doc-types", h.CreateDocType)
 	s.App.Get("/doc-types", h.ListDocTypes)
 	s.App.Put("/doc-types/:id/form", h.UpdateDocTypeForm)

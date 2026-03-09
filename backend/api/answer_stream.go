@@ -26,7 +26,7 @@ func (s *streamState) OnToken(delta string) error {
 }
 
 func (s *streamState) OnCitations(citations []answer.Citation) error {
-	return s.writer.writeEvent("citations", fiber.Map{"citations": citations})
+	return s.writer.writeEvent("citations", citations)
 }
 
 func (s *streamState) OnError(err error) {
@@ -52,19 +52,37 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 	}
 	ctx := c.Context()
 	_ = h.Store.LogQuery(ctx, question)
+	runtimeCfg, err := h.loadRuntimeAnswerConfig(ctx, filters.Tone)
+	if err != nil {
+		return respondError(c, 500, "config_error", "failed to load answer runtime config", err.Error())
+	}
 	results, err := h.Retriever.Search(ctx, question, filters.TopK)
 	if err != nil {
 		return respondError(c, 500, "search_error", "failed to search", err.Error())
 	}
-	sources := make([]answer.Source, 0, len(results))
-	for _, r := range results {
-		sources = append(sources, answer.Source{Text: r.Text, CitationID: r.CitationID})
+	decision := evaluateGuardPolicy(runtimeCfg.Policy, results)
+	if !decision.Allow {
+		c.Set("Content-Type", "text/event-stream")
+		c.Set("Cache-Control", "no-cache")
+		c.Set("Connection", "keep-alive")
+		c.Set("X-Accel-Buffering", "no")
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			writer := newSSEWriter(w)
+			_ = writer.writeEvent("token", fiber.Map{"delta": decision.Message})
+			_ = writer.writeEvent("citations", []answer.Citation{})
+			_ = writer.writeEvent("done", fiber.Map{"ok": true})
+		})
+		return nil
 	}
-	oneTone := h.Tones[defaultToneKey]
-	if v, ok := h.Tones[filters.Tone]; ok {
-		oneTone = v
+	sources := buildAnswerSources(results)
+	ansSvc := &answer.Service{
+		Client:       h.AnswerCli,
+		SystemPrompt: runtimeCfg.Prompt.SystemPrompt,
+		Tone:         runtimeCfg.Tone,
+		Temperature:  runtimeCfg.Prompt.Temperature,
+		MaxTokens:    runtimeCfg.Prompt.MaxTokens,
+		Retry:        runtimeCfg.Prompt.Retry,
 	}
-	ansSvc := &answer.Service{Client: h.AnswerCli, Guard: h.Guard, Tone: oneTone}
 
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache")
@@ -118,7 +136,7 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 				return
 			}
 			_ = state.OnToken(ans)
-			_ = state.OnCitations(mapCitations(sources))
+			_ = state.OnCitations(citationsFromSources(sources))
 			state.OnDone()
 			h.Logger.Info("stream end", "message_id", messageID, "fallback", true)
 			return
@@ -127,12 +145,4 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 	})
 
 	return nil
-}
-
-func mapCitations(sources []answer.Source) []answer.Citation {
-	citations := make([]answer.Citation, 0, len(sources))
-	for _, s := range sources {
-		citations = append(citations, answer.Citation{Text: s.Text, CitationID: s.CitationID})
-	}
-	return citations
 }

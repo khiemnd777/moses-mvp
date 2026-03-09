@@ -25,14 +25,13 @@ type Handler struct {
 	Storage   *infra.Storage
 	Retriever *retrieval.Service
 	AnswerCli *answer.Client
-	Guard     string
 	Tones     map[string]string
 	IngestSvc *ingest.Service
 	Logger    *slog.Logger
 }
 
-func NewHandler(store *infra.Store, storage *infra.Storage, retriever *retrieval.Service, ans *answer.Client, guard string, tones map[string]string, ingestSvc *ingest.Service, logger *slog.Logger) *Handler {
-	return &Handler{Store: store, Storage: storage, Retriever: retriever, AnswerCli: ans, Guard: guard, Tones: tones, IngestSvc: ingestSvc, Logger: logger}
+func NewHandler(store *infra.Store, storage *infra.Storage, retriever *retrieval.Service, ans *answer.Client, tones map[string]string, ingestSvc *ingest.Service, logger *slog.Logger) *Handler {
+	return &Handler{Store: store, Storage: storage, Retriever: retriever, AnswerCli: ans, Tones: tones, IngestSvc: ingestSvc, Logger: logger}
 }
 
 type errorEnvelope struct {
@@ -452,10 +451,18 @@ func (h *Handler) Search(c *fiber.Ctx) error {
 	}
 	resp := make([]fiber.Map, 0, len(results))
 	for _, r := range results {
+		source := buildAnswerSources([]retrieval.Result{r})
+		citation := answer.Citation{ID: r.ChunkID, Excerpt: excerptText(r.Text, 320)}
+		if len(source) > 0 {
+			citation = source[0].Citation
+		}
 		resp = append(resp, fiber.Map{
-			"chunk_id":    r.ChunkID,
-			"text":        r.Text,
-			"citation_id": r.CitationID,
+			"chunk_id":   r.ChunkID,
+			"text":       r.Text,
+			"score":      r.Score,
+			"citation":   citation,
+			"metadata":   r.Metadata,
+			"version_id": r.VersionID,
 		})
 	}
 	return c.JSON(fiber.Map{"results": resp})
@@ -472,23 +479,31 @@ func (h *Handler) Answer(c *fiber.Ctx) error {
 	}
 	ctx := c.Context()
 	_ = h.Store.LogQuery(ctx, question)
+	runtimeCfg, err := h.loadRuntimeAnswerConfig(ctx, filters.Tone)
+	if err != nil {
+		return respondError(c, 500, "config_error", "failed to load answer runtime config", err.Error())
+	}
 	results, err := h.Retriever.Search(ctx, question, filters.TopK)
 	if err != nil {
 		return respondError(c, 500, "search_error", "failed to search", err.Error())
 	}
-	sources := make([]answer.Source, 0, len(results))
-	for _, r := range results {
-		sources = append(sources, answer.Source{Text: r.Text, CitationID: r.CitationID})
+	decision := evaluateGuardPolicy(runtimeCfg.Policy, results)
+	if !decision.Allow {
+		return c.JSON(fiber.Map{"answer": decision.Message, "citations": []answer.Citation{}})
 	}
-	tone := h.Tones[defaultToneKey]
-	if v, ok := h.Tones[filters.Tone]; ok {
-		tone = v
+	sources := buildAnswerSources(results)
+	ansSvc := &answer.Service{
+		Client:       h.AnswerCli,
+		SystemPrompt: runtimeCfg.Prompt.SystemPrompt,
+		Tone:         runtimeCfg.Tone,
+		Temperature:  runtimeCfg.Prompt.Temperature,
+		MaxTokens:    runtimeCfg.Prompt.MaxTokens,
+		Retry:        runtimeCfg.Prompt.Retry,
 	}
-	ansSvc := &answer.Service{Client: h.AnswerCli, Guard: h.Guard, Tone: tone}
 	ans, err := ansSvc.Generate(ctx, question, sources)
 	if err != nil {
 		return respondError(c, 500, "answer_error", "failed to generate answer", err.Error())
 	}
 	_ = h.Store.LogAnswer(ctx, question, ans)
-	return c.JSON(fiber.Map{"answer": ans, "citations": sources})
+	return c.JSON(fiber.Map{"answer": ans, "citations": citationsFromSources(sources)})
 }
