@@ -1,0 +1,23 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+postgres:
+  dsn: "postgres://legal:legal@postgres:5432/legal_rag?sslmode=disable"
+qdrant:
+  url: "http://qdrant:6333"
+  collection: "legal_chunks"
+openai:
+  api_key: "YOUR_OPENAI_API_KEY"
+  embeddings_model: "text-embedding-3-small"
+  chat_model: "gpt-4.1-mini"
+storage:
+  root_dir: "./data/uploads"
+ingest:
+  default_segmenter: "free_text"
+  chunk_size: 800
+  chunk_overlap: 100
+prompts:
+  guard: "config/prompts/guard.yaml"
+  tone_default: "config/prompts/tone_default.yaml"
+  tone_academic: "config/prompts/tone_academic.yaml"
+  tone_procedure: "config/prompts/tone_procedure.yaml"
