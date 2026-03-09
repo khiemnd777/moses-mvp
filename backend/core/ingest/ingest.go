@@ -58,29 +58,39 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 	}
 	normalized := normalize(content)
 	contentHash := contentHash(normalized)
-	segments := segment(normalized, form.SegmentRules.Strategy)
-	chunks := chunkSegments(segments, s.Config.ChunkSize, s.Config.ChunkOverlap)
-	if len(chunks) == 0 {
+	metadata := extractMetadata(normalized, form.MappingRules)
+	logger.Info("chunk_generation_started")
+	chunkStartedAt := time.Now()
+	generatedChunks, chunkStats, err := s.generateChunks(bundle.Document.ID, bundle.Version.ID, normalized, form.SegmentRules.Strategy, metadata)
+	if err != nil {
+		return err
+	}
+	if len(generatedChunks) == 0 {
 		return errors.New("no chunks produced")
 	}
-	metadata := extractMetadata(normalized, form.MappingRules)
+	logger.Info("chunk_generation_completed",
+		slog.Int("chunk_count", chunkStats.ChunkCount),
+		slog.Int("avg_chunk_tokens", chunkStats.AvgChunkTokens),
+		slog.Int("max_chunk_tokens", chunkStats.MaxChunkTokens),
+		slog.Int64("duration_ms", time.Since(chunkStartedAt).Milliseconds()),
+	)
 
 	logger.Info("ingest_started",
 		slog.Int("attempt", attempt),
-		slog.Int("chunk_count", len(chunks)),
+		slog.Int("chunk_count", len(generatedChunks)),
 	)
 	if err := s.Store.TouchJob(ctx, job.ID); err != nil {
 		return err
 	}
 
-	shouldSkip, err := s.shouldSkipIngest(ctx, bundle.Version.ID, len(chunks), contentHash, formHash)
+	shouldSkip, err := s.shouldSkipIngest(ctx, bundle.Version.ID, len(generatedChunks), contentHash, formHash)
 	if err != nil {
 		return err
 	}
 	if shouldSkip {
 		logger.Info("ingest_completed",
 			slog.Int("attempt", attempt),
-			slog.Int("chunk_count", len(chunks)),
+			slog.Int("chunk_count", len(generatedChunks)),
 			slog.Duration("duration", time.Since(startedAt)),
 			slog.Bool("skipped", true),
 		)
@@ -89,19 +99,24 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 
 	logger.Info("chunks_created",
 		slog.Int("attempt", attempt),
-		slog.Int("chunk_count", len(chunks)),
+		slog.Int("chunk_count", len(generatedChunks)),
 	)
 
-	vectors, err := s.embedInBatches(ctx, chunks, 32)
+	chunkTexts := make([]string, 0, len(generatedChunks))
+	for _, chunk := range generatedChunks {
+		chunkTexts = append(chunkTexts, chunk.Text)
+	}
+
+	vectors, err := s.embedInBatches(ctx, chunkTexts, 32)
 	if err != nil {
 		return err
 	}
-	if len(vectors) != len(chunks) {
+	if len(vectors) != len(generatedChunks) {
 		return errors.New("embedding vector count mismatch")
 	}
 	logger.Info("embedding_done",
 		slog.Int("attempt", attempt),
-		slog.Int("chunk_count", len(chunks)),
+		slog.Int("chunk_count", len(generatedChunks)),
 	)
 	if err := s.Store.TouchJob(ctx, job.ID); err != nil {
 		return err
@@ -112,15 +127,14 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 		return err
 	}
 
-	replacement := make([]domain.Chunk, 0, len(chunks))
-	for i, text := range chunks {
-		metaJSON, _ := json.Marshal(metadata)
+	replacement := make([]domain.Chunk, 0, len(generatedChunks))
+	for i, chunk := range generatedChunks {
 		embedJSON, _ := json.Marshal(vectors[i])
 		replacement = append(replacement, domain.Chunk{
 			DocumentVersionID: bundle.Version.ID,
-			Index:             i,
-			Text:              text,
-			MetadataJSON:      metaJSON,
+			Index:             chunk.Index,
+			Text:              chunk.Text,
+			MetadataJSON:      chunk.Metadata,
 			EmbeddingJSON:     embedJSON,
 		})
 	}
@@ -131,9 +145,10 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 	}
 
 	points := make([]infra.PointInput, 0, len(insertedChunks))
-	retrievalPayload := buildRetrievalPayload(metadata)
 	for _, chunk := range insertedChunks {
 		vectorID := VectorPointID(bundle.Version.ID, chunk.Index)
+		metaMap := generatedChunks[chunk.Index].MetaMap
+		retrievalPayload := buildRetrievalPayload(metaMap)
 		payload := map[string]interface{}{
 			"chunk_id":            chunk.ID,
 			"document_version_id": bundle.Version.ID,
@@ -203,7 +218,7 @@ func decodeForm(b []byte) (schema.DocTypeForm, error) {
 }
 
 func normalize(in string) string {
-	return strings.TrimSpace(strings.ReplaceAll(in, "\r", ""))
+	return normalizeLegalText(in)
 }
 
 func segment(text, strategy string) []string {
@@ -277,6 +292,49 @@ func chunkSegments(segments []string, size, overlap int) []string {
 		}
 	}
 	return chunks
+}
+
+func (s *Service) generateChunks(documentID, versionID, normalized, strategy string, metadata map[string]interface{}) ([]generatedChunk, chunkGenerationStats, error) {
+	if strategy == "legal_article" {
+		return newLegalChunkGenerator().Generate(documentID, versionID, normalized, metadata)
+	}
+
+	segments := segment(normalized, strategy)
+	chunks := chunkSegments(segments, s.Config.ChunkSize, s.Config.ChunkOverlap)
+	out := make([]generatedChunk, 0, len(chunks))
+	maxTokens := 0
+	totalTokens := 0
+	builder := chunkMetadataBuilder{}
+	for idx, text := range chunks {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		tokens := estimateTokenCount(text)
+		if tokens > hardAbortChunkTokens {
+			return nil, chunkGenerationStats{}, fmt.Errorf("chunk exceeds hard safety limit: estimated_tokens=%d limit=%d", tokens, hardAbortChunkTokens)
+		}
+		metaRaw, metaMap, err := builder.Build(metadata, documentID, versionID, idx, chunkLocation{})
+		if err != nil {
+			return nil, chunkGenerationStats{}, err
+		}
+		out = append(out, generatedChunk{
+			Index:    idx,
+			Text:     text,
+			Tokens:   tokens,
+			Metadata: metaRaw,
+			MetaMap:  metaMap,
+		})
+		totalTokens += tokens
+		if tokens > maxTokens {
+			maxTokens = tokens
+		}
+	}
+	stats := chunkGenerationStats{ChunkCount: len(out), MaxChunkTokens: maxTokens}
+	if len(out) > 0 {
+		stats.AvgChunkTokens = totalTokens / len(out)
+	}
+	return out, stats, nil
 }
 
 func extractMetadata(text string, rules []schema.MappingRule) map[string]interface{} {
