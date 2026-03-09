@@ -96,21 +96,42 @@ func applyGuardAction(action string, refuseMessage string) guardDecision {
 func buildAnswerSources(results []retrieval.Result) []answer.Source {
 	sources := make([]answer.Source, 0, len(results))
 	for _, r := range results {
+		citation := answer.Citation{
+			ID:               r.ChunkID,
+			DocumentTitle:    pickString(r.Metadata, "document_title", "title", "doc_title"),
+			DocumentNumber:   pickString(r.Metadata, "document_number", "number", "doc_number", "doc_code"),
+			DocumentType:     pickString(r.Metadata, "document_type", "doc_type"),
+			IssuingAuthority: pickString(r.Metadata, "issuing_authority", "authority", "co_quan_ban_hanh"),
+			EffectiveStatus:  pickString(r.Metadata, "effective_status", "status", "hieu_luc"),
+			Article:          pickString(r.Metadata, "article", "article_number", "dieu"),
+			Clause:           pickString(r.Metadata, "clause", "clause_number", "khoan"),
+			Year:             pickInt(r.Metadata, "year", "document_year", "signed_year", "nam"),
+			Excerpt:          excerptText(r.Text, 320),
+			URL:              pickString(r.Metadata, "url", "document_url", "source_url"),
+		}
+		citation.CitationLabel = buildCitationLabel(citation)
 		sources = append(sources, answer.Source{
-			Text: r.Text,
-			Citation: answer.Citation{
-				ID:             r.ChunkID,
-				DocumentTitle:  pickString(r.Metadata, "document_title", "title", "doc_title"),
-				DocumentNumber: pickString(r.Metadata, "document_number", "number", "doc_number", "doc_code"),
-				Article:        pickString(r.Metadata, "article", "article_number", "dieu"),
-				Clause:         pickString(r.Metadata, "clause", "clause_number", "khoan"),
-				Year:           pickInt(r.Metadata, "year", "document_year", "nam"),
-				Excerpt:        excerptText(r.Text, 320),
-				URL:            pickString(r.Metadata, "url", "document_url", "source_url"),
-			},
+			Text:     r.Text,
+			Citation: citation,
 		})
 	}
 	return sources
+}
+
+func buildCitationLabel(c answer.Citation) string {
+	parts := make([]string, 0, 4)
+	if c.Article != "" {
+		parts = append(parts, "Dieu "+strings.TrimSpace(c.Article))
+	}
+	if c.DocumentTitle != "" {
+		parts = append(parts, strings.TrimSpace(c.DocumentTitle))
+	} else if c.DocumentNumber != "" {
+		parts = append(parts, "Van ban "+strings.TrimSpace(c.DocumentNumber))
+	}
+	if c.Year > 0 {
+		parts = append(parts, strconv.Itoa(c.Year))
+	}
+	return strings.Join(parts, " ")
 }
 
 func citationsFromSources(sources []answer.Source) []answer.Citation {

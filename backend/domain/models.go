@@ -104,3 +104,27 @@ type AIPrompt struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
+
+type AIRetrievalRerankWeights struct {
+	Vector   float64 `json:"vector"`
+	Keyword  float64 `json:"keyword"`
+	Metadata float64 `json:"metadata"`
+	Article  float64 `json:"article"`
+}
+
+type AIRetrievalConfig struct {
+	ID                        string
+	Name                      string
+	Enabled                   bool
+	DefaultTopK               int
+	RerankEnabled             bool
+	RerankWeights             AIRetrievalRerankWeights
+	AdjacentChunkWindow       int
+	MaxContextChunks          int
+	MaxContextChars           int
+	CandidateMultiplier       int
+	MetadataFilterDefaults    map[string]interface{}
+	PreferredDocTypesByDomain map[string][]string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+}

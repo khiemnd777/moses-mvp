@@ -33,7 +33,7 @@ func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.C
 		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 	}))
-	retriever := &retrieval.Service{Store: store, Qdrant: qdrant, Embed: embedder}
+	retriever := &retrieval.Service{Store: store, Qdrant: qdrant, Embed: embedder, Logger: logger}
 	ingestSvc := &ingest.Service{Store: store, Qdrant: qdrant, Embed: embedder, Config: ingestCfg, Logger: logger}
 	return &Server{
 		App:       app,

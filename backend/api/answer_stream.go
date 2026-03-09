@@ -9,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/khiemnd777/legal_api/core/answer"
+	"github.com/khiemnd777/legal_api/core/retrieval"
 )
 
 type streamState struct {
@@ -56,7 +57,14 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 	if err != nil {
 		return respondError(c, 500, "config_error", "failed to load answer runtime config", err.Error())
 	}
-	results, err := h.Retriever.Search(ctx, question, filters.TopK)
+	results, err := h.Retriever.Search(ctx, question, retrieval.SearchOptions{
+		TopK:            filters.TopK,
+		Domain:          filters.Domain,
+		DocType:         filters.DocType,
+		EffectiveStatus: filters.EffectiveStatus,
+		DocumentNumber:  filters.DocumentNumber,
+		ArticleNumber:   filters.ArticleNumber,
+	})
 	if err != nil {
 		return respondError(c, 500, "search_error", "failed to search", err.Error())
 	}

@@ -3,9 +3,9 @@ package api
 import "strings"
 
 const (
-	defaultTopK           = 5
-	maxTopK               = 20
-	defaultToneKey        = "default"
+	defaultTopK            = 5
+	maxTopK                = 20
+	defaultToneKey         = "default"
 	defaultEffectiveStatus = "active"
 )
 
@@ -15,6 +15,8 @@ type ChatFilters struct {
 	EffectiveStatus string `json:"effectiveStatus"`
 	Domain          string `json:"domain"`
 	DocType         string `json:"docType"`
+	DocumentNumber  string `json:"documentNumber"`
+	ArticleNumber   string `json:"articleNumber"`
 }
 
 type answerRequest struct {
@@ -42,6 +44,8 @@ func normalizeAnswerRequest(req answerRequest, tones map[string]string) (string,
 
 	filters.Domain = strings.TrimSpace(filters.Domain)
 	filters.DocType = strings.TrimSpace(filters.DocType)
+	filters.DocumentNumber = strings.TrimSpace(filters.DocumentNumber)
+	filters.ArticleNumber = strings.TrimSpace(filters.ArticleNumber)
 	filters.EffectiveStatus = normalizeEffectiveStatus(filters.EffectiveStatus)
 	filters.TopK = normalizeTopK(filters.TopK)
 	filters.Tone = normalizeTone(filters.Tone, tones)

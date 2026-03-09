@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/khiemnd777/legal_api/core/answer"
@@ -432,8 +433,9 @@ func (h *Handler) EnqueueIngest(c *fiber.Ctx) error {
 
 func (h *Handler) Search(c *fiber.Ctx) error {
 	var req struct {
-		Query string `json:"query"`
-		TopK  int    `json:"top_k"`
+		Query   string      `json:"query"`
+		TopK    int         `json:"top_k"`
+		Filters ChatFilters `json:"filters"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return respondError(c, 400, "invalid_request", "invalid json", err.Error())
@@ -444,8 +446,22 @@ func (h *Handler) Search(c *fiber.Ctx) error {
 	if req.TopK <= 0 {
 		req.TopK = 5
 	}
+	req.Filters.TopK = req.TopK
+	req.Filters.Domain = strings.TrimSpace(req.Filters.Domain)
+	req.Filters.DocType = strings.TrimSpace(req.Filters.DocType)
+	req.Filters.DocumentNumber = strings.TrimSpace(req.Filters.DocumentNumber)
+	req.Filters.ArticleNumber = strings.TrimSpace(req.Filters.ArticleNumber)
+	req.Filters.EffectiveStatus = normalizeEffectiveStatus(req.Filters.EffectiveStatus)
+
 	_ = h.Store.LogQuery(c.Context(), req.Query)
-	results, err := h.Retriever.Search(c.Context(), req.Query, req.TopK)
+	results, err := h.Retriever.Search(c.Context(), req.Query, retrieval.SearchOptions{
+		TopK:            req.TopK,
+		Domain:          req.Filters.Domain,
+		DocType:         req.Filters.DocType,
+		EffectiveStatus: req.Filters.EffectiveStatus,
+		DocumentNumber:  req.Filters.DocumentNumber,
+		ArticleNumber:   req.Filters.ArticleNumber,
+	})
 	if err != nil {
 		return respondError(c, 500, "search_error", "failed to search", err.Error())
 	}
@@ -483,7 +499,14 @@ func (h *Handler) Answer(c *fiber.Ctx) error {
 	if err != nil {
 		return respondError(c, 500, "config_error", "failed to load answer runtime config", err.Error())
 	}
-	results, err := h.Retriever.Search(ctx, question, filters.TopK)
+	results, err := h.Retriever.Search(ctx, question, retrieval.SearchOptions{
+		TopK:            filters.TopK,
+		Domain:          filters.Domain,
+		DocType:         filters.DocType,
+		EffectiveStatus: filters.EffectiveStatus,
+		DocumentNumber:  filters.DocumentNumber,
+		ArticleNumber:   filters.ArticleNumber,
+	})
 	if err != nil {
 		return respondError(c, 500, "search_error", "failed to search", err.Error())
 	}

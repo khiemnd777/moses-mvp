@@ -7,14 +7,18 @@ import (
 )
 
 type Citation struct {
-	ID             string `json:"id"`
-	DocumentTitle  string `json:"document_title"`
-	DocumentNumber string `json:"document_number"`
-	Article        string `json:"article"`
-	Clause         string `json:"clause"`
-	Year           int    `json:"year"`
-	Excerpt        string `json:"excerpt"`
-	URL            string `json:"url"`
+	ID               string `json:"id"`
+	DocumentTitle    string `json:"document_title"`
+	DocumentNumber   string `json:"document_number"`
+	DocumentType     string `json:"document_type,omitempty"`
+	IssuingAuthority string `json:"issuing_authority,omitempty"`
+	EffectiveStatus  string `json:"effective_status,omitempty"`
+	Article          string `json:"article"`
+	Clause           string `json:"clause"`
+	Year             int    `json:"year"`
+	CitationLabel    string `json:"citation_label,omitempty"`
+	Excerpt          string `json:"excerpt"`
+	URL              string `json:"url"`
 }
 
 func FormatLegalCitation(c Citation) string {

@@ -131,19 +131,24 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 	}
 
 	points := make([]infra.PointInput, 0, len(insertedChunks))
+	retrievalPayload := buildRetrievalPayload(metadata)
 	for _, chunk := range insertedChunks {
 		vectorID := VectorPointID(bundle.Version.ID, chunk.Index)
+		payload := map[string]interface{}{
+			"chunk_id":            chunk.ID,
+			"document_version_id": bundle.Version.ID,
+			"chunk_index":         chunk.Index,
+			"citation_id":         citationID(bundle.Version.ID, chunk.Index, chunk.Text),
+			"content_hash":        contentHash,
+			"form_hash":           formHash,
+		}
+		for k, v := range retrievalPayload {
+			payload[k] = v
+		}
 		points = append(points, infra.PointInput{
-			ID:     vectorID,
-			Vector: vectors[chunk.Index],
-			Payload: map[string]interface{}{
-				"chunk_id":            chunk.ID,
-				"document_version_id": bundle.Version.ID,
-				"chunk_index":         chunk.Index,
-				"citation_id":         citationID(bundle.Version.ID, chunk.Index, chunk.Text),
-				"content_hash":        contentHash,
-				"form_hash":           formHash,
-			},
+			ID:      vectorID,
+			Vector:  vectors[chunk.Index],
+			Payload: payload,
 		})
 	}
 	if err := s.Qdrant.Upsert(ctx, points); err != nil {
@@ -298,6 +303,74 @@ func extractMetadata(text string, rules []schema.MappingRule) map[string]interfa
 		}
 	}
 	return meta
+}
+
+func buildRetrievalPayload(meta map[string]interface{}) map[string]interface{} {
+	out := map[string]interface{}{}
+	if v := pickMetaString(meta, "legal_domain", "domain", "legal_field"); v != "" {
+		out["legal_domain"] = strings.ToLower(v)
+	}
+	if v := pickMetaString(meta, "document_type", "doc_type", "type"); v != "" {
+		out["document_type"] = strings.ToLower(v)
+	}
+	if v := pickMetaString(meta, "document_number", "number", "doc_number", "so_hieu"); v != "" {
+		out["document_number"] = v
+	}
+	if v := pickMetaString(meta, "article_number", "article", "dieu"); v != "" {
+		out["article_number"] = v
+	}
+	if v := pickMetaString(meta, "effective_status", "status", "hieu_luc"); v != "" {
+		out["effective_status"] = strings.ToLower(v)
+	}
+	if v := pickMetaString(meta, "issuing_authority", "authority", "co_quan_ban_hanh"); v != "" {
+		out["issuing_authority"] = v
+	}
+	if year := pickMetaInt(meta, "signed_year", "year", "nam_ban_hanh"); year > 0 {
+		out["signed_year"] = year
+	}
+	return out
+}
+
+func pickMetaString(meta map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := meta[key]
+		if !ok || raw == nil {
+			continue
+		}
+		switch v := raw.(type) {
+		case string:
+			trimmed := strings.TrimSpace(v)
+			if trimmed != "" {
+				return trimmed
+			}
+		case float64:
+			return strconv.FormatFloat(v, 'f', -1, 64)
+		case int:
+			return strconv.Itoa(v)
+		}
+	}
+	return ""
+}
+
+func pickMetaInt(meta map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		raw, ok := meta[key]
+		if !ok || raw == nil {
+			continue
+		}
+		switch v := raw.(type) {
+		case int:
+			return v
+		case float64:
+			return int(v)
+		case string:
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err == nil {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 func citationID(versionID string, idx int, text string) string {

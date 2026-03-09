@@ -86,6 +86,7 @@ type searchRequest struct {
 	Vector      []float64 `json:"vector"`
 	Limit       int       `json:"limit"`
 	WithPayload bool      `json:"with_payload"`
+	Filter      *qFilter  `json:"filter,omitempty"`
 }
 
 type searchResponse struct {
@@ -103,8 +104,33 @@ type SearchResult struct {
 	Payload map[string]interface{}
 }
 
-func (c *QdrantClient) Search(ctx context.Context, vector []float64, limit int) ([]SearchResult, error) {
+type SearchFilter struct {
+	LegalDomain     []string
+	DocumentType    []string
+	EffectiveStatus []string
+	DocumentNumber  []string
+	ArticleNumber   []string
+}
+
+type qFilter struct {
+	Must []qFieldCondition `json:"must,omitempty"`
+}
+
+type qFieldCondition struct {
+	Key   string      `json:"key"`
+	Match qFieldMatch `json:"match"`
+}
+
+type qFieldMatch struct {
+	Value interface{} `json:"value,omitempty"`
+	Any   []string    `json:"any,omitempty"`
+}
+
+func (c *QdrantClient) Search(ctx context.Context, vector []float64, limit int, filter *SearchFilter) ([]SearchResult, error) {
 	payload := searchRequest{Vector: vector, Limit: limit, WithPayload: true}
+	if qf := toQFilter(filter); qf != nil {
+		payload.Filter = qf
+	}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -137,6 +163,38 @@ func (c *QdrantClient) Search(ctx context.Context, vector []float64, limit int) 
 		})
 	}
 	return results, nil
+}
+
+func toQFilter(filter *SearchFilter) *qFilter {
+	if filter == nil {
+		return nil
+	}
+	must := make([]qFieldCondition, 0, 5)
+	appendFilter := func(key string, values []string) {
+		switch len(values) {
+		case 0:
+			return
+		case 1:
+			must = append(must, qFieldCondition{
+				Key:   key,
+				Match: qFieldMatch{Value: values[0]},
+			})
+		default:
+			must = append(must, qFieldCondition{
+				Key:   key,
+				Match: qFieldMatch{Any: values},
+			})
+		}
+	}
+	appendFilter("legal_domain", filter.LegalDomain)
+	appendFilter("document_type", filter.DocumentType)
+	appendFilter("effective_status", filter.EffectiveStatus)
+	appendFilter("document_number", filter.DocumentNumber)
+	appendFilter("article_number", filter.ArticleNumber)
+	if len(must) == 0 {
+		return nil
+	}
+	return &qFilter{Must: must}
 }
 
 type getPointsRequest struct {

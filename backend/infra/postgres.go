@@ -554,6 +554,37 @@ func (s *Store) GetChunksByIDs(ctx context.Context, ids []string) ([]domain.Chun
 	return out, rows.Err()
 }
 
+func (s *Store) GetChunksByVersionAndIndexes(ctx context.Context, documentVersionID string, indexes []int) ([]domain.Chunk, error) {
+	if len(indexes) == 0 {
+		return []domain.Chunk{}, nil
+	}
+	query := `
+SELECT id, document_version_id, idx, text, metadata_json, embedding_json, created_at
+FROM chunks
+WHERE document_version_id = $1
+  AND idx = ANY($2)
+ORDER BY idx ASC
+`
+	int64Indexes := make([]int64, 0, len(indexes))
+	for _, idx := range indexes {
+		int64Indexes = append(int64Indexes, int64(idx))
+	}
+	rows, err := s.DB.QueryContext(ctx, query, documentVersionID, pq.Array(int64Indexes))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.Chunk, 0, len(indexes))
+	for rows.Next() {
+		var c domain.Chunk
+		if err := rows.Scan(&c.ID, &c.DocumentVersionID, &c.Index, &c.Text, &c.MetadataJSON, &c.EmbeddingJSON, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) LogQuery(ctx context.Context, q string) error {
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO query_logs (query) VALUES ($1)`, q)
 	return err
@@ -609,6 +640,57 @@ LIMIT 1
 		&prompt.UpdatedAt,
 	)
 	return prompt, err
+}
+
+func (s *Store) GetActiveAIRetrievalConfig(ctx context.Context) (domain.AIRetrievalConfig, error) {
+	var cfg domain.AIRetrievalConfig
+	var weightsRaw []byte
+	var metadataDefaultsRaw []byte
+	var preferredRaw []byte
+	query := `
+SELECT id, name, enabled, default_top_k, rerank_enabled, rerank_weights,
+       adjacent_chunk_window, max_context_chunks, max_context_chars, candidate_multiplier,
+       metadata_filter_defaults, preferred_doc_types_by_domain, created_at, updated_at
+FROM ai_retrieval_configs
+WHERE enabled = TRUE
+ORDER BY updated_at DESC, created_at DESC
+LIMIT 1
+`
+	err := s.DB.QueryRowContext(ctx, query).Scan(
+		&cfg.ID,
+		&cfg.Name,
+		&cfg.Enabled,
+		&cfg.DefaultTopK,
+		&cfg.RerankEnabled,
+		&weightsRaw,
+		&cfg.AdjacentChunkWindow,
+		&cfg.MaxContextChunks,
+		&cfg.MaxContextChars,
+		&cfg.CandidateMultiplier,
+		&metadataDefaultsRaw,
+		&preferredRaw,
+		&cfg.CreatedAt,
+		&cfg.UpdatedAt,
+	)
+	if err != nil {
+		return cfg, err
+	}
+	if len(weightsRaw) > 0 {
+		_ = json.Unmarshal(weightsRaw, &cfg.RerankWeights)
+	}
+	if len(metadataDefaultsRaw) > 0 {
+		_ = json.Unmarshal(metadataDefaultsRaw, &cfg.MetadataFilterDefaults)
+	}
+	if len(preferredRaw) > 0 {
+		_ = json.Unmarshal(preferredRaw, &cfg.PreferredDocTypesByDomain)
+	}
+	if cfg.MetadataFilterDefaults == nil {
+		cfg.MetadataFilterDefaults = map[string]interface{}{}
+	}
+	if cfg.PreferredDocTypesByDomain == nil {
+		cfg.PreferredDocTypesByDomain = map[string][]string{}
+	}
+	return cfg, nil
 }
 
 func (s *Store) SetChunkEmbedding(ctx context.Context, chunkID string, embedding []float64) error {
@@ -694,6 +776,53 @@ ON CONFLICT (name) DO NOTHING
 		1200,
 		2,
 		true,
+	)
+	if err != nil {
+		return err
+	}
+
+	retrievalWeights := domain.AIRetrievalRerankWeights{
+		Vector:   0.55,
+		Keyword:  0.25,
+		Metadata: 0.15,
+		Article:  0.05,
+	}
+	weightsJSON, _ := json.Marshal(retrievalWeights)
+	defaultMetadataFilters, _ := json.Marshal(map[string]interface{}{
+		"effective_status": "active",
+	})
+	preferredDocTypes, _ := json.Marshal(map[string][]string{
+		"marriage_family": {"law", "resolution", "decree"},
+		"civil":           {"law", "decree"},
+	})
+	_, err = s.DB.ExecContext(ctx, `
+INSERT INTO ai_retrieval_configs (
+	name,
+	enabled,
+	default_top_k,
+	rerank_enabled,
+	rerank_weights,
+	adjacent_chunk_window,
+	max_context_chunks,
+	max_context_chars,
+	candidate_multiplier,
+	metadata_filter_defaults,
+	preferred_doc_types_by_domain
+)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+ON CONFLICT (name) DO NOTHING
+`,
+		"default_legal_retrieval_config",
+		true,
+		5,
+		true,
+		weightsJSON,
+		1,
+		12,
+		12000,
+		3,
+		defaultMetadataFilters,
+		preferredDocTypes,
 	)
 	return err
 }

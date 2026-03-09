@@ -5,7 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
+	"math"
+	"regexp"
+	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/khiemnd777/legal_api/domain"
 	"github.com/khiemnd777/legal_api/infra"
@@ -15,10 +21,65 @@ type Service struct {
 	Store  *infra.Store
 	Qdrant *infra.QdrantClient
 	Embed  Embedder
+	Logger *slog.Logger
 }
 
 type Embedder interface {
 	Embed(ctx context.Context, inputs []string) ([][]float64, error)
+}
+
+type SearchOptions struct {
+	TopK            int
+	Domain          string
+	DocType         string
+	EffectiveStatus string
+	DocumentNumber  string
+	ArticleNumber   string
+}
+
+type QueryUnderstandingResult struct {
+	OriginalQuery   string                 `json:"original_query"`
+	NormalizedQuery string                 `json:"normalized_query"`
+	LegalDomain     string                 `json:"legal_domain"`
+	LegalTopic      string                 `json:"legal_topic"`
+	Intent          string                 `json:"intent"`
+	Entities        map[string]interface{} `json:"entities"`
+	Filters         map[string]interface{} `json:"filters"`
+}
+
+type RetrievalPlan struct {
+	QueryText          string                 `json:"query_text"`
+	Filters            map[string]interface{} `json:"filters"`
+	PreferredDocTypes  []string               `json:"preferred_doc_types"`
+	TopK               int                    `json:"top_k"`
+	ExpandAdjacent     bool                   `json:"expand_adjacent"`
+	AdjacentWindow     int                    `json:"adjacent_window"`
+	Rerank             bool                   `json:"rerank"`
+	CandidatePoolLimit int                    `json:"candidate_pool_limit"`
+}
+
+type RetrievalCandidate struct {
+	Chunk       domain.Chunk
+	Metadata    map[string]interface{}
+	VectorScore float64
+	FinalScore  float64
+	ChunkID     string
+}
+
+type RerankedChunk struct {
+	ChunkID      string  `json:"chunk_id"`
+	VectorScore  float64 `json:"vector_score"`
+	LexicalScore float64 `json:"lexical_score"`
+	MetaScore    float64 `json:"meta_score"`
+	ArticleScore float64 `json:"article_score"`
+	FinalScore   float64 `json:"final_score"`
+}
+
+type ContextAssemblyResult struct {
+	ChunkIDs       []string `json:"chunk_ids"`
+	ChunkCount     int      `json:"chunk_count"`
+	DroppedByLimit int      `json:"dropped_by_limit"`
+	TotalChars     int      `json:"total_chars"`
 }
 
 type Result struct {
@@ -29,23 +90,71 @@ type Result struct {
 	ChunkIndex int
 	Score      float64
 	Metadata   map[string]interface{}
+	IsAdjacent bool
 }
 
-func (s *Service) Search(ctx context.Context, query string, topK int) ([]Result, error) {
-	vectors, err := s.Embed.Embed(ctx, []string{query})
+type runtimeConfig struct {
+	DefaultTopK         int
+	RerankEnabled       bool
+	AdjacentChunkWindow int
+	MaxContextChunks    int
+	MaxContextChars     int
+	CandidateMultiplier int
+	MetadataDefaults    map[string]interface{}
+	PreferredByDomain   map[string][]string
+	RerankWeights       rerankWeights
+}
+
+type rerankWeights struct {
+	Vector   float64
+	Keyword  float64
+	Metadata float64
+	Article  float64
+}
+
+type observabilityEvent struct {
+	OriginalQuery            string                 `json:"original_query"`
+	NormalizedQuery          string                 `json:"normalized_query"`
+	LegalDomain              string                 `json:"legal_domain"`
+	LegalTopic               string                 `json:"legal_topic"`
+	Intent                   string                 `json:"intent"`
+	AppliedFilters           map[string]interface{} `json:"applied_filters"`
+	TopK                     int                    `json:"top_k"`
+	InitialVectorHits        []string               `json:"initial_vector_hits"`
+	RerankedResults          []RerankedChunk        `json:"reranked_results"`
+	FinalSelectedChunkIDs    []string               `json:"final_selected_chunk_ids"`
+	AdjacentExpandedChunkIDs []string               `json:"adjacent_expanded_chunk_ids"`
+	PromptContextChunkCount  int                    `json:"prompt_context_chunk_count"`
+	RetrievalLatencyMS       int64                  `json:"retrieval_latency_ms"`
+	RerankLatencyMS          int64                  `json:"rerank_latency_ms"`
+}
+
+func (s *Service) Search(ctx context.Context, query string, opts SearchOptions) ([]Result, error) {
+	started := time.Now()
+	cfg := s.loadRuntimeConfig(ctx)
+	qu := UnderstandQuery(query)
+	plan := BuildRetrievalPlan(qu, opts, cfg)
+
+	vectors, err := s.Embed.Embed(ctx, []string{plan.QueryText})
 	if err != nil {
 		return nil, err
 	}
-	matches, err := s.Qdrant.Search(ctx, vectors[0], topK)
+	qdrantFilter := buildQdrantFilter(plan.Filters, plan.PreferredDocTypes)
+	matches, err := s.Qdrant.Search(ctx, vectors[0], plan.CandidatePoolLimit, qdrantFilter)
 	if err != nil {
 		return nil, err
 	}
+
+	initialHitIDs := make([]string, 0, len(matches))
 	chunkIDs := make([]string, 0, len(matches))
-	for _, match := range matches {
-		if match.ChunkID != "" {
-			chunkIDs = append(chunkIDs, match.ChunkID)
+	for _, m := range matches {
+		if m.ChunkID == "" {
+			continue
 		}
+		initialHitIDs = append(initialHitIDs, m.ChunkID)
+		chunkIDs = append(chunkIDs, m.ChunkID)
 	}
+
 	chunks, err := s.Store.GetChunksByIDs(ctx, chunkIDs)
 	if err != nil {
 		return nil, err
@@ -54,23 +163,619 @@ func (s *Service) Search(ctx context.Context, query string, topK int) ([]Result,
 	for _, chunk := range chunks {
 		chunkByID[chunk.ID] = chunk
 	}
-	results := make([]Result, 0, len(matches))
+
+	candidates := make([]RetrievalCandidate, 0, len(matches))
 	for _, match := range matches {
 		c, ok := chunkByID[match.ChunkID]
 		if !ok {
 			continue
 		}
-		results = append(results, Result{
-			ChunkID:    c.ID,
-			Text:       c.Text,
-			VersionID:  c.DocumentVersionID,
-			ChunkIndex: c.Index,
-			CitationID: citationID(c.DocumentVersionID, c.Index, c.Text),
-			Score:      match.Score,
-			Metadata:   decodeMetadata(c.MetadataJSON),
+		candidates = append(candidates, RetrievalCandidate{
+			Chunk:       c,
+			ChunkID:     c.ID,
+			Metadata:    decodeMetadata(c.MetadataJSON),
+			VectorScore: match.Score,
+			FinalScore:  match.Score,
 		})
 	}
-	return results, nil
+
+	rerankedTrace := []RerankedChunk{}
+	rerankLatency := time.Duration(0)
+	if plan.Rerank && len(candidates) > 1 {
+		rStart := time.Now()
+		rerankedTrace = rerankCandidates(candidates, qu, plan, cfg)
+		rerankLatency = time.Since(rStart)
+		sort.SliceStable(candidates, func(i, j int) bool {
+			return candidates[i].FinalScore > candidates[j].FinalScore
+		})
+	}
+
+	if len(candidates) > plan.TopK {
+		candidates = candidates[:plan.TopK]
+	}
+
+	selected := make([]Result, 0, len(candidates))
+	for _, c := range candidates {
+		selected = append(selected, toResult(c, false))
+	}
+
+	expanded := []Result{}
+	if plan.ExpandAdjacent && plan.AdjacentWindow > 0 && len(selected) > 0 {
+		expanded, err = s.expandAdjacent(ctx, selected, plan.AdjacentWindow)
+		if err != nil {
+			return nil, err
+		}
+		selected = expanded
+	}
+
+	limited, assembly := applyContextLimits(selected, cfg.MaxContextChunks, cfg.MaxContextChars)
+	event := observabilityEvent{
+		OriginalQuery:            qu.OriginalQuery,
+		NormalizedQuery:          qu.NormalizedQuery,
+		LegalDomain:              qu.LegalDomain,
+		LegalTopic:               qu.LegalTopic,
+		Intent:                   qu.Intent,
+		AppliedFilters:           plan.Filters,
+		TopK:                     plan.TopK,
+		InitialVectorHits:        initialHitIDs,
+		RerankedResults:          rerankedTrace,
+		FinalSelectedChunkIDs:    pickResultChunkIDs(limited, false),
+		AdjacentExpandedChunkIDs: pickResultChunkIDs(limited, true),
+		PromptContextChunkCount:  assembly.ChunkCount,
+		RetrievalLatencyMS:       time.Since(started).Milliseconds(),
+		RerankLatencyMS:          rerankLatency.Milliseconds(),
+	}
+	s.logger().Info("retrieval_observability", slog.Any("event", event))
+
+	return limited, nil
+}
+
+func UnderstandQuery(query string) QueryUnderstandingResult {
+	normalized := normalizeQuery(query)
+	result := QueryUnderstandingResult{
+		OriginalQuery:   query,
+		NormalizedQuery: normalized,
+		Entities:        map[string]interface{}{},
+		Filters:         map[string]interface{}{},
+	}
+
+	if strings.Contains(normalized, "ly hon") {
+		result.LegalDomain = "marriage_family"
+		result.LegalTopic = "divorce"
+		result.Intent = "legal_procedure_advice"
+	}
+	if result.LegalDomain == "" {
+		if strings.Contains(normalized, "hop dong") {
+			result.LegalDomain = "civil"
+			result.LegalTopic = "contract"
+			result.Intent = "legal_rights_obligations"
+		}
+	}
+	if result.Intent == "" {
+		if strings.Contains(normalized, "thu tuc") || strings.Contains(normalized, "ho so") {
+			result.Intent = "legal_procedure_advice"
+		} else {
+			result.Intent = "legal_basis_lookup"
+		}
+	}
+
+	if year := extractYear(normalized, `\b(19\d{2}|20\d{2})\b`); year > 0 {
+		result.Entities["year"] = year
+	}
+	if n := extractInt(normalized, `(\d+)\s*con`); n > 0 {
+		result.Entities["children_count"] = n
+	}
+	if strings.Contains(normalized, "nha") {
+		result.Entities["property_type"] = "house"
+	}
+	if strings.Contains(normalized, "dieu ") {
+		if v := extractString(normalized, `dieu\s+([0-9]+)`); v != "" {
+			result.Entities["article_number"] = v
+			result.Filters["article_number"] = v
+		}
+	}
+
+	if result.LegalDomain != "" {
+		result.Filters["legal_domain"] = result.LegalDomain
+	}
+	result.Filters["effective_status"] = "active"
+	return result
+}
+
+func BuildRetrievalPlan(qu QueryUnderstandingResult, opts SearchOptions, cfg runtimeConfig) RetrievalPlan {
+	topK := opts.TopK
+	if topK <= 0 {
+		topK = cfg.DefaultTopK
+	}
+	if topK <= 0 {
+		topK = 5
+	}
+	queryText := qu.NormalizedQuery
+	if queryText == "" {
+		queryText = normalizeQuery(qu.OriginalQuery)
+	}
+	if queryText == "" {
+		queryText = strings.TrimSpace(qu.OriginalQuery)
+	}
+	filters := copyMap(qu.Filters)
+	if v := strings.TrimSpace(strings.ToLower(opts.Domain)); v != "" {
+		filters["legal_domain"] = v
+	}
+	if v := strings.TrimSpace(strings.ToLower(opts.DocType)); v != "" {
+		filters["document_type"] = v
+	}
+	if v := strings.TrimSpace(strings.ToLower(opts.EffectiveStatus)); v != "" {
+		filters["effective_status"] = v
+	}
+	if v := strings.TrimSpace(opts.DocumentNumber); v != "" {
+		filters["document_number"] = v
+	}
+	if v := strings.TrimSpace(opts.ArticleNumber); v != "" {
+		filters["article_number"] = v
+	}
+	for k, v := range cfg.MetadataDefaults {
+		if _, exists := filters[k]; !exists {
+			filters[k] = v
+		}
+	}
+	preferred := []string{}
+	if domainName := pickString(filters, "legal_domain"); domainName != "" {
+		preferred = append(preferred, cfg.PreferredByDomain[domainName]...)
+	}
+	if v := pickString(filters, "document_type"); v != "" {
+		preferred = []string{v}
+	}
+
+	return RetrievalPlan{
+		QueryText:          queryText,
+		Filters:            filters,
+		PreferredDocTypes:  dedupeStrings(preferred),
+		TopK:               topK,
+		ExpandAdjacent:     cfg.AdjacentChunkWindow > 0,
+		AdjacentWindow:     max(0, cfg.AdjacentChunkWindow),
+		Rerank:             cfg.RerankEnabled,
+		CandidatePoolLimit: max(topK, topK*max(1, cfg.CandidateMultiplier)),
+	}
+}
+
+func rerankCandidates(candidates []RetrievalCandidate, qu QueryUnderstandingResult, plan RetrievalPlan, cfg runtimeConfig) []RerankedChunk {
+	trace := make([]RerankedChunk, 0, len(candidates))
+	queryTokens := tokenize(qu.NormalizedQuery)
+	for i := range candidates {
+		lexical := lexicalOverlapScore(queryTokens, tokenize(normalizeQuery(candidates[i].Chunk.Text)))
+		metaScore := metadataMatchScore(candidates[i].Metadata, plan.Filters)
+		articleScore := articleBonus(candidates[i].Metadata, qu)
+		finalScore := cfg.RerankWeights.Vector*candidates[i].VectorScore +
+			cfg.RerankWeights.Keyword*lexical +
+			cfg.RerankWeights.Metadata*metaScore +
+			cfg.RerankWeights.Article*articleScore
+		candidates[i].FinalScore = finalScore
+		trace = append(trace, RerankedChunk{
+			ChunkID:      candidates[i].ChunkID,
+			VectorScore:  candidates[i].VectorScore,
+			LexicalScore: lexical,
+			MetaScore:    metaScore,
+			ArticleScore: articleScore,
+			FinalScore:   finalScore,
+		})
+	}
+	sort.SliceStable(trace, func(i, j int) bool {
+		return trace[i].FinalScore > trace[j].FinalScore
+	})
+	return trace
+}
+
+func (s *Service) expandAdjacent(ctx context.Context, selected []Result, window int) ([]Result, error) {
+	type anchor struct {
+		versionID string
+		indices   []int
+	}
+	byVersion := map[string]map[int]struct{}{}
+	for _, r := range selected {
+		if _, ok := byVersion[r.VersionID]; !ok {
+			byVersion[r.VersionID] = map[int]struct{}{}
+		}
+		for idx := r.ChunkIndex - window; idx <= r.ChunkIndex+window; idx++ {
+			if idx < 0 {
+				continue
+			}
+			byVersion[r.VersionID][idx] = struct{}{}
+		}
+	}
+
+	adjacentByID := map[string]Result{}
+	for versionID, idxSet := range byVersion {
+		idxs := make([]int, 0, len(idxSet))
+		for idx := range idxSet {
+			idxs = append(idxs, idx)
+		}
+		chunks, err := s.Store.GetChunksByVersionAndIndexes(ctx, versionID, idxs)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range chunks {
+			adjacentByID[c.ID] = Result{
+				ChunkID:    c.ID,
+				Text:       c.Text,
+				VersionID:  c.DocumentVersionID,
+				ChunkIndex: c.Index,
+				CitationID: citationID(c.DocumentVersionID, c.Index, c.Text),
+				Metadata:   decodeMetadata(c.MetadataJSON),
+				IsAdjacent: true,
+			}
+		}
+	}
+
+	ordered := make([]Result, 0, len(adjacentByID))
+	seen := map[string]struct{}{}
+	for _, base := range selected {
+		neighbors := make([]Result, 0, 2*window+1)
+		for idx := base.ChunkIndex - window; idx <= base.ChunkIndex+window; idx++ {
+			for _, r := range adjacentByID {
+				if r.VersionID == base.VersionID && r.ChunkIndex == idx {
+					neighbors = append(neighbors, r)
+				}
+			}
+		}
+		sort.SliceStable(neighbors, func(i, j int) bool {
+			return neighbors[i].ChunkIndex < neighbors[j].ChunkIndex
+		})
+		for _, n := range neighbors {
+			if _, ok := seen[n.ChunkID]; ok {
+				continue
+			}
+			if n.ChunkID == base.ChunkID {
+				n.IsAdjacent = false
+				n.Score = base.Score
+			}
+			seen[n.ChunkID] = struct{}{}
+			ordered = append(ordered, n)
+		}
+	}
+	return ordered, nil
+}
+
+func applyContextLimits(results []Result, maxChunks, maxChars int) ([]Result, ContextAssemblyResult) {
+	if maxChunks <= 0 {
+		maxChunks = len(results)
+	}
+	if maxChars <= 0 {
+		maxChars = math.MaxInt32
+	}
+	out := make([]Result, 0, min(maxChunks, len(results)))
+	totalChars := 0
+	for _, r := range results {
+		if len(out) >= maxChunks {
+			break
+		}
+		if totalChars+len(r.Text) > maxChars {
+			break
+		}
+		out = append(out, r)
+		totalChars += len(r.Text)
+	}
+	return out, ContextAssemblyResult{
+		ChunkIDs:       pickResultChunkIDs(out, false),
+		ChunkCount:     len(out),
+		DroppedByLimit: len(results) - len(out),
+		TotalChars:     totalChars,
+	}
+}
+
+func buildQdrantFilter(filters map[string]interface{}, preferredDocTypes []string) *infra.SearchFilter {
+	qf := &infra.SearchFilter{
+		LegalDomain:     asStringSlice(filters["legal_domain"]),
+		DocumentType:    asStringSlice(filters["document_type"]),
+		EffectiveStatus: asStringSlice(filters["effective_status"]),
+		DocumentNumber:  asStringSlice(filters["document_number"]),
+		ArticleNumber:   asStringSlice(filters["article_number"]),
+	}
+	if len(qf.DocumentType) == 0 && len(preferredDocTypes) > 0 {
+		qf.DocumentType = preferredDocTypes
+	}
+	if len(qf.LegalDomain)+len(qf.DocumentType)+len(qf.EffectiveStatus)+len(qf.DocumentNumber)+len(qf.ArticleNumber) == 0 {
+		return nil
+	}
+	return qf
+}
+
+func toResult(candidate RetrievalCandidate, isAdjacent bool) Result {
+	return Result{
+		ChunkID:    candidate.Chunk.ID,
+		Text:       candidate.Chunk.Text,
+		VersionID:  candidate.Chunk.DocumentVersionID,
+		ChunkIndex: candidate.Chunk.Index,
+		CitationID: citationID(candidate.Chunk.DocumentVersionID, candidate.Chunk.Index, candidate.Chunk.Text),
+		Score:      candidate.FinalScore,
+		Metadata:   candidate.Metadata,
+		IsAdjacent: isAdjacent,
+	}
+}
+
+func (s *Service) loadRuntimeConfig(ctx context.Context) runtimeConfig {
+	cfg := defaultRuntimeConfig()
+	dbCfg, err := s.Store.GetActiveAIRetrievalConfig(ctx)
+	if err != nil {
+		s.logger().Warn("use_default_retrieval_config", slog.String("error", err.Error()))
+		return cfg
+	}
+	if dbCfg.DefaultTopK > 0 {
+		cfg.DefaultTopK = dbCfg.DefaultTopK
+	}
+	cfg.RerankEnabled = dbCfg.RerankEnabled
+	if dbCfg.AdjacentChunkWindow >= 0 {
+		cfg.AdjacentChunkWindow = dbCfg.AdjacentChunkWindow
+	}
+	if dbCfg.MaxContextChunks > 0 {
+		cfg.MaxContextChunks = dbCfg.MaxContextChunks
+	}
+	if dbCfg.MaxContextChars > 0 {
+		cfg.MaxContextChars = dbCfg.MaxContextChars
+	}
+	if dbCfg.CandidateMultiplier > 0 {
+		cfg.CandidateMultiplier = dbCfg.CandidateMultiplier
+	}
+	if len(dbCfg.MetadataFilterDefaults) > 0 {
+		cfg.MetadataDefaults = dbCfg.MetadataFilterDefaults
+	}
+	if len(dbCfg.PreferredDocTypesByDomain) > 0 {
+		cfg.PreferredByDomain = dbCfg.PreferredDocTypesByDomain
+	}
+	if w := dbCfg.RerankWeights; w.Vector > 0 || w.Keyword > 0 || w.Metadata > 0 || w.Article > 0 {
+		if w.Vector > 0 {
+			cfg.RerankWeights.Vector = w.Vector
+		}
+		if w.Keyword > 0 {
+			cfg.RerankWeights.Keyword = w.Keyword
+		}
+		if w.Metadata > 0 {
+			cfg.RerankWeights.Metadata = w.Metadata
+		}
+		if w.Article > 0 {
+			cfg.RerankWeights.Article = w.Article
+		}
+	}
+	return cfg
+}
+
+func defaultRuntimeConfig() runtimeConfig {
+	return runtimeConfig{
+		DefaultTopK:         5,
+		RerankEnabled:       true,
+		AdjacentChunkWindow: 1,
+		MaxContextChunks:    12,
+		MaxContextChars:     12000,
+		CandidateMultiplier: 3,
+		MetadataDefaults: map[string]interface{}{
+			"effective_status": "active",
+		},
+		PreferredByDomain: map[string][]string{
+			"marriage_family": {"law", "resolution", "decree"},
+			"civil":           {"law", "decree"},
+		},
+		RerankWeights: rerankWeights{
+			Vector:   0.55,
+			Keyword:  0.25,
+			Metadata: 0.15,
+			Article:  0.05,
+		},
+	}
+}
+
+func metadataMatchScore(meta map[string]interface{}, filters map[string]interface{}) float64 {
+	if len(filters) == 0 {
+		return 0
+	}
+	matches := 0.0
+	total := 0.0
+	for _, key := range []string{"legal_domain", "document_type", "effective_status", "document_number", "article_number"} {
+		expected := pickString(filters, key)
+		if expected == "" {
+			continue
+		}
+		total++
+		actual := pickString(meta, key)
+		if strings.EqualFold(strings.TrimSpace(actual), strings.TrimSpace(expected)) {
+			matches++
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return matches / total
+}
+
+func articleBonus(meta map[string]interface{}, qu QueryUnderstandingResult) float64 {
+	article := pickString(meta, "article_number", "article", "dieu")
+	if article == "" {
+		return 0
+	}
+	if v, ok := qu.Entities["article_number"]; ok {
+		if strings.EqualFold(strings.TrimSpace(article), strings.TrimSpace(toString(v))) {
+			return 1
+		}
+	}
+	if strings.Contains(qu.NormalizedQuery, "dieu "+strings.TrimSpace(article)) {
+		return 1
+	}
+	return 0
+}
+
+func lexicalOverlapScore(queryTokens, textTokens map[string]struct{}) float64 {
+	if len(queryTokens) == 0 || len(textTokens) == 0 {
+		return 0
+	}
+	inter := 0
+	for token := range queryTokens {
+		if _, ok := textTokens[token]; ok {
+			inter++
+		}
+	}
+	denom := len(queryTokens)
+	if denom == 0 {
+		return 0
+	}
+	return float64(inter) / float64(denom)
+}
+
+func tokenize(s string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, token := range strings.Fields(s) {
+		token = strings.TrimSpace(token)
+		if len(token) < 2 {
+			continue
+		}
+		out[token] = struct{}{}
+	}
+	return out
+}
+
+func normalizeQuery(q string) string {
+	q = strings.ToLower(strings.TrimSpace(q))
+	replacer := strings.NewReplacer(
+		"à", "a", "á", "a", "ạ", "a", "ả", "a", "ã", "a",
+		"â", "a", "ầ", "a", "ấ", "a", "ậ", "a", "ẩ", "a", "ẫ", "a",
+		"ă", "a", "ằ", "a", "ắ", "a", "ặ", "a", "ẳ", "a", "ẵ", "a",
+		"è", "e", "é", "e", "ẹ", "e", "ẻ", "e", "ẽ", "e",
+		"ê", "e", "ề", "e", "ế", "e", "ệ", "e", "ể", "e", "ễ", "e",
+		"ì", "i", "í", "i", "ị", "i", "ỉ", "i", "ĩ", "i",
+		"ò", "o", "ó", "o", "ọ", "o", "ỏ", "o", "õ", "o",
+		"ô", "o", "ồ", "o", "ố", "o", "ộ", "o", "ổ", "o", "ỗ", "o",
+		"ơ", "o", "ờ", "o", "ớ", "o", "ợ", "o", "ở", "o", "ỡ", "o",
+		"ù", "u", "ú", "u", "ụ", "u", "ủ", "u", "ũ", "u",
+		"ư", "u", "ừ", "u", "ứ", "u", "ự", "u", "ử", "u", "ữ", "u",
+		"ỳ", "y", "ý", "y", "ỵ", "y", "ỷ", "y", "ỹ", "y",
+		"đ", "d",
+	)
+	q = replacer.Replace(q)
+	re := regexp.MustCompile(`[^a-z0-9\s]+`)
+	q = re.ReplaceAllString(q, " ")
+	q = strings.Join(strings.Fields(q), " ")
+	return q
+}
+
+func extractYear(text, pattern string) int {
+	return extractInt(text, pattern)
+}
+
+func extractInt(text, pattern string) int {
+	re := regexp.MustCompile(pattern)
+	m := re.FindStringSubmatch(text)
+	if len(m) < 2 {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(m[1]))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func extractString(text, pattern string) string {
+	re := regexp.MustCompile(pattern)
+	m := re.FindStringSubmatch(text)
+	if len(m) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
+}
+
+func copyMap(in map[string]interface{}) map[string]interface{} {
+	out := map[string]interface{}{}
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func asStringSlice(v interface{}) []string {
+	switch value := v.(type) {
+	case nil:
+		return nil
+	case string:
+		if strings.TrimSpace(value) == "" {
+			return nil
+		}
+		return []string{strings.TrimSpace(value)}
+	case []string:
+		return dedupeStrings(value)
+	case []interface{}:
+		out := make([]string, 0, len(value))
+		for _, item := range value {
+			if s := strings.TrimSpace(toString(item)); s != "" {
+				out = append(out, s)
+			}
+		}
+		return dedupeStrings(out)
+	default:
+		s := strings.TrimSpace(toString(value))
+		if s == "" {
+			return nil
+		}
+		return []string{s}
+	}
+}
+
+func pickString(meta map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		v, ok := meta[key]
+		if !ok || v == nil {
+			continue
+		}
+		s := strings.TrimSpace(toString(v))
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func toString(v interface{}) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(t)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	case json.Number:
+		return t.String()
+	default:
+		return ""
+	}
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		v := strings.TrimSpace(strings.ToLower(raw))
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func pickResultChunkIDs(results []Result, onlyAdjacent bool) []string {
+	out := []string{}
+	for _, r := range results {
+		if onlyAdjacent && !r.IsAdjacent {
+			continue
+		}
+		if !onlyAdjacent && r.IsAdjacent {
+			continue
+		}
+		out = append(out, r.ChunkID)
+	}
+	return out
 }
 
 func decodeMetadata(raw []byte) map[string]interface{} {
@@ -95,4 +800,25 @@ func ToDomainChunks(results []Result) []domain.Chunk {
 		out = append(out, domain.Chunk{ID: r.ChunkID, DocumentVersionID: r.VersionID, Index: r.ChunkIndex, Text: r.Text})
 	}
 	return out
+}
+
+func (s *Service) logger() *slog.Logger {
+	if s.Logger != nil {
+		return s.Logger
+	}
+	return slog.Default()
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
