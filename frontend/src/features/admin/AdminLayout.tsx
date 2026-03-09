@@ -13,6 +13,12 @@ const AdminLayout = () => {
         <NavLink to="/admin/ingest-jobs" className={({ isActive }) => (isActive ? 'active' : '')}>
           Ingest Jobs
         </NavLink>
+        <NavLink to="/admin/ai/guard-policies" className={({ isActive }) => (isActive ? 'active' : '')}>
+          AI Guard Policies
+        </NavLink>
+        <NavLink to="/admin/ai/prompts" className={({ isActive }) => (isActive ? 'active' : '')}>
+          AI Prompts
+        </NavLink>
         {/* <NavLink to="/admin/playground" className={({ isActive }) => (isActive ? 'active' : '')}>
           Playground
         </NavLink> */}

@@ -5,6 +5,8 @@ import DocTypesPage from '@/features/admin/DocTypesPage';
 import DocumentsPage from '@/features/admin/DocumentsPage';
 import IngestJobsPage from '@/features/admin/IngestJobsPage';
 import PlaygroundPage from '@/features/admin/PlaygroundPage';
+import GuardPoliciesPage from '@/features/admin/ai/GuardPoliciesPage';
+import PromptsPage from '@/features/admin/ai/PromptsPage';
 
 const App = () => {
   return (
@@ -28,6 +30,8 @@ const App = () => {
             <Route path="doc-types" element={<DocTypesPage />} />
             <Route path="documents" element={<DocumentsPage />} />
             <Route path="ingest-jobs" element={<IngestJobsPage />} />
+            <Route path="ai/guard-policies" element={<GuardPoliciesPage />} />
+            <Route path="ai/prompts" element={<PromptsPage />} />
             {/* <Route path="playground" element={<PlaygroundPage />} /> */}
           </Route>
         </Routes>

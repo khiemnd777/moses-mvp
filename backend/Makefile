@@ -16,6 +16,7 @@ run:
 migrate:
 	psql $(POSTGRES_DSN) -f infra/migrations/001_init.sql
 	psql $(POSTGRES_DSN) -f infra/migrations/002_phase1_legal_rag_config.sql
+	psql $(POSTGRES_DSN) -f infra/migrations/003_phase1_ai_config_safety.sql
 	psql $(POSTGRES_DSN) -f infra/migrations/003_phase2_rag_intelligence_config.sql
 
 docker-up:

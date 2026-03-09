@@ -3,7 +3,11 @@ package api
 import (
 	"context"
 	"log/slog"
+	"strings"
 
+	adminapi "github.com/khiemnd777/legal_api/admin"
+	"github.com/khiemnd777/legal_api/admin/repository"
+	adminservice "github.com/khiemnd777/legal_api/admin/service"
 	"github.com/khiemnd777/legal_api/core/answer"
 	"github.com/khiemnd777/legal_api/core/embedding"
 	"github.com/khiemnd777/legal_api/core/ingest"
@@ -15,18 +19,19 @@ import (
 )
 
 type Server struct {
-	App       *fiber.App
-	Store     *infra.Store
-	Storage   *infra.Storage
-	Embedder  *embedding.Client
-	Retriever *retrieval.Service
-	Answer    *answer.Client
-	Tones     map[string]string
-	Ingest    *ingest.Service
-	Logger    *slog.Logger
+	App         *fiber.App
+	Store       *infra.Store
+	Storage     *infra.Storage
+	Embedder    *embedding.Client
+	Retriever   *retrieval.Service
+	Answer      *answer.Client
+	AdminAPIKey string
+	Tones       map[string]string
+	Ingest      *ingest.Service
+	Logger      *slog.Logger
 }
 
-func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config) *Server {
+func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, adminAPIKey string, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config) *Server {
 	app := fiber.New()
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "http://localhost:5173",
@@ -36,15 +41,16 @@ func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.C
 	retriever := &retrieval.Service{Store: store, Qdrant: qdrant, Embed: embedder, Logger: logger}
 	ingestSvc := &ingest.Service{Store: store, Qdrant: qdrant, Embed: embedder, Config: ingestCfg, Logger: logger}
 	return &Server{
-		App:       app,
-		Store:     store,
-		Storage:   storage,
-		Embedder:  embedder,
-		Retriever: retriever,
-		Answer:    ans,
-		Tones:     tones,
-		Ingest:    ingestSvc,
-		Logger:    logger,
+		App:         app,
+		Store:       store,
+		Storage:     storage,
+		Embedder:    embedder,
+		Retriever:   retriever,
+		Answer:      ans,
+		AdminAPIKey: adminAPIKey,
+		Tones:       tones,
+		Ingest:      ingestSvc,
+		Logger:      logger,
 	}
 }
 
@@ -65,9 +71,45 @@ func (s *Server) RegisterRoutes() {
 	s.App.Post("/search", h.Search)
 	s.App.Post("/answer", h.Answer)
 	s.App.Post("/answer/stream", h.AnswerStream)
+
+	adminGroup := s.App.Group("/admin", adminAuthMiddleware(s.AdminAPIKey))
+	guardRepo := repository.NewGuardPolicyRepository(s.Store)
+	promptRepo := repository.NewPromptRepository(s.Store)
+	guardSvc := adminservice.NewGuardPolicyService(guardRepo)
+	promptSvc := adminservice.NewPromptService(promptRepo)
+	guardHandler := adminapi.NewGuardPolicyHandler(guardSvc, h.InvalidateRuntimeAnswerConfigCache)
+	defaultTone := s.Tones[defaultToneKey]
+	promptHandler := adminapi.NewPromptHandler(promptSvc, s.Retriever, s.Answer, defaultTone, h.InvalidateRuntimeAnswerConfigCache)
+	adminapi.RegisterRoutes(adminGroup, guardHandler, promptHandler)
 }
 
 func (s *Server) Start(ctx context.Context, addr string) error {
 	s.RegisterRoutes()
 	return s.App.Listen(addr)
+}
+
+func adminAuthMiddleware(adminKey string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		adminKey = strings.TrimSpace(adminKey)
+		if adminKey == "" {
+			// MVP mode: allow admin routes when no key is configured.
+			return c.Next()
+		}
+		clientKey := strings.TrimSpace(c.Get("X-Admin-Key"))
+		if clientKey == "" {
+			auth := strings.TrimSpace(c.Get("Authorization"))
+			if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+				clientKey = strings.TrimSpace(auth[7:])
+			}
+		}
+		if clientKey == "" || clientKey != adminKey {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    "unauthorized",
+					"message": "invalid admin credentials",
+				},
+			})
+		}
+		return c.Next()
+	}
 }

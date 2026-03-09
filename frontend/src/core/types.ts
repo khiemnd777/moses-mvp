@@ -89,3 +89,28 @@ export type IngestJob = {
   created_at?: string;
   updated_at?: string;
 };
+
+export type AIGuardPolicy = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  min_retrieved_chunks: number;
+  min_similarity_score: number;
+  on_empty_retrieval: 'refuse' | 'fallback_llm' | 'ask_clarification';
+  on_low_confidence: 'refuse' | 'fallback_llm' | 'ask_clarification';
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AIPrompt = {
+  id: string;
+  name: string;
+  prompt_type: string;
+  system_prompt: string;
+  temperature: number;
+  max_tokens: number;
+  retry: number;
+  enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+};

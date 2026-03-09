@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/khiemnd777/legal_api/core/answer"
 	"github.com/khiemnd777/legal_api/core/retrieval"
@@ -32,6 +33,19 @@ type guardDecision struct {
 }
 
 func (h *Handler) loadRuntimeAnswerConfig(ctx context.Context, toneKey string) (runtimeAnswerConfig, error) {
+	h.runtimeCfgMu.RLock()
+	if h.runtimeCfgReady && time.Since(h.runtimeCfgLoadedAt) <= h.runtimeCfgTTL {
+		cached := h.runtimeCfg
+		h.runtimeCfgMu.RUnlock()
+		if v, ok := h.Tones[toneKey]; ok {
+			cached.Tone = v
+		} else {
+			cached.Tone = h.Tones[defaultToneKey]
+		}
+		return cached, nil
+	}
+	h.runtimeCfgMu.RUnlock()
+
 	promptCfg, err := h.Store.GetActiveAIPromptByType(ctx, legalGuardPromptType)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -53,11 +67,24 @@ func (h *Handler) loadRuntimeAnswerConfig(ctx context.Context, toneKey string) (
 		tone = v
 	}
 
-	return runtimeAnswerConfig{
+	out := runtimeAnswerConfig{
 		Prompt: promptCfg,
 		Policy: guardCfg,
 		Tone:   tone,
-	}, nil
+	}
+	h.runtimeCfgMu.Lock()
+	h.runtimeCfg = out
+	h.runtimeCfgReady = true
+	h.runtimeCfgLoadedAt = time.Now()
+	h.runtimeCfgMu.Unlock()
+	return out, nil
+}
+
+func (h *Handler) InvalidateRuntimeAnswerConfigCache() {
+	h.runtimeCfgMu.Lock()
+	h.runtimeCfgReady = false
+	h.runtimeCfgLoadedAt = time.Time{}
+	h.runtimeCfgMu.Unlock()
 }
 
 func evaluateGuardPolicy(policy domain.AIGuardPolicy, results []retrieval.Result) guardDecision {

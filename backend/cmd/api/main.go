@@ -83,8 +83,9 @@ func main() {
 		"academic":  acadTone.Content,
 		"procedure": procTone.Content,
 	}
+	adminAPIKey := os.Getenv("ADMIN_API_KEY")
 
-	server := api.NewServer(store, storage, embed, qdrant, ansClient, tones, logger, ingest.Config{ChunkSize: cfg.Ingest.ChunkSize, ChunkOverlap: cfg.Ingest.ChunkOverlap})
+	server := api.NewServer(store, storage, embed, qdrant, ansClient, adminAPIKey, tones, logger, ingest.Config{ChunkSize: cfg.Ingest.ChunkSize, ChunkOverlap: cfg.Ingest.ChunkOverlap})
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	logger.Info("api server starting", slog.String("addr", addr))
 	if err := server.Start(context.Background(), addr); err != nil {

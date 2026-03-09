@@ -1,9 +1,22 @@
 import axios from 'axios';
-import type { ChatFilters, DocType, DocTypeForm, DocumentItem, IngestJob } from './types';
+import type {
+  AIGuardPolicy,
+  AIPrompt,
+  ChatFilters,
+  DocType,
+  DocTypeForm,
+  DocumentItem,
+  IngestJob
+} from './types';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL
 });
+
+const adminApiKey = import.meta.env.VITE_ADMIN_API_KEY;
+if (adminApiKey) {
+  api.defaults.headers.common['X-Admin-Key'] = adminApiKey;
+}
 
 export type ApiError = {
   code: string;
@@ -88,6 +101,62 @@ export const listIngestJobs = async () => {
 
 export const deleteIngestJob = async (id: string) => {
   await api.delete(`/ingest-jobs/${id}`);
+};
+
+export const listAIGuardPolicies = async () => {
+  const { data } = await api.get('/admin/ai/guard-policies');
+  return (data?.items || []) as AIGuardPolicy[];
+};
+
+export const getAIGuardPolicy = async (id: string) => {
+  const { data } = await api.get(`/admin/ai/guard-policies/${id}`);
+  return data as AIGuardPolicy;
+};
+
+export const createAIGuardPolicy = async (payload: Omit<AIGuardPolicy, 'id' | 'created_at' | 'updated_at'>) => {
+  const { data } = await api.post('/admin/ai/guard-policies', payload);
+  return data as AIGuardPolicy;
+};
+
+export const updateAIGuardPolicy = async (
+  id: string,
+  payload: Omit<AIGuardPolicy, 'id' | 'created_at' | 'updated_at'>
+) => {
+  const { data } = await api.put(`/admin/ai/guard-policies/${id}`, payload);
+  return data as AIGuardPolicy;
+};
+
+export const deleteAIGuardPolicy = async (id: string) => {
+  await api.delete(`/admin/ai/guard-policies/${id}`);
+};
+
+export const listAIPrompts = async () => {
+  const { data } = await api.get('/admin/ai/prompts');
+  return (data?.items || []) as AIPrompt[];
+};
+
+export const getAIPrompt = async (id: string) => {
+  const { data } = await api.get(`/admin/ai/prompts/${id}`);
+  return data as AIPrompt;
+};
+
+export const createAIPrompt = async (payload: Omit<AIPrompt, 'id' | 'created_at' | 'updated_at'>) => {
+  const { data } = await api.post('/admin/ai/prompts', payload);
+  return data as AIPrompt;
+};
+
+export const updateAIPrompt = async (id: string, payload: Omit<AIPrompt, 'id' | 'created_at' | 'updated_at'>) => {
+  const { data } = await api.put(`/admin/ai/prompts/${id}`, payload);
+  return data as AIPrompt;
+};
+
+export const deleteAIPrompt = async (id: string) => {
+  await api.delete(`/admin/ai/prompts/${id}`);
+};
+
+export const testAIPrompt = async (payload: { prompt_id: string; query: string; top_k?: number }) => {
+  const { data } = await api.post('/admin/ai/prompts/test', payload);
+  return data as { answer: string; citations?: unknown[] };
 };
 
 export default api;

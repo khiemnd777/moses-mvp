@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/khiemnd777/legal_api/core/answer"
@@ -29,10 +30,25 @@ type Handler struct {
 	Tones     map[string]string
 	IngestSvc *ingest.Service
 	Logger    *slog.Logger
+
+	runtimeCfgMu       sync.RWMutex
+	runtimeCfg         runtimeAnswerConfig
+	runtimeCfgLoadedAt time.Time
+	runtimeCfgReady    bool
+	runtimeCfgTTL      time.Duration
 }
 
 func NewHandler(store *infra.Store, storage *infra.Storage, retriever *retrieval.Service, ans *answer.Client, tones map[string]string, ingestSvc *ingest.Service, logger *slog.Logger) *Handler {
-	return &Handler{Store: store, Storage: storage, Retriever: retriever, AnswerCli: ans, Tones: tones, IngestSvc: ingestSvc, Logger: logger}
+	return &Handler{
+		Store:         store,
+		Storage:       storage,
+		Retriever:     retriever,
+		AnswerCli:     ans,
+		Tones:         tones,
+		IngestSvc:     ingestSvc,
+		Logger:        logger,
+		runtimeCfgTTL: 30 * time.Second,
+	}
 }
 
 type errorEnvelope struct {
