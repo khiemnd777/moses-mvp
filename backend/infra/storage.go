@@ -1,8 +1,11 @@
 package infra
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/khiemnd777/legal_api/core/ingest/extractor"
 )
 
 type Storage struct {
@@ -23,11 +26,11 @@ func (s *Storage) Write(path string, content []byte) error {
 
 func (s *Storage) Read(path string) (string, error) {
 	full := filepath.Join(s.Root, path)
-	b, err := os.ReadFile(full)
+	text, err := extractor.ExtractText(full)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("extract text from %s: %w", full, err)
 	}
-	return string(b), nil
+	return text, nil
 }
 
 func (s *Storage) Remove(path string) error {

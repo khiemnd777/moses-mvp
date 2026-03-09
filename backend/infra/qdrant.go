@@ -201,7 +201,7 @@ func toQFilter(filter *SearchFilter) *qFilter {
 type getPointsRequest struct {
 	IDs         []string `json:"ids"`
 	WithPayload bool     `json:"with_payload"`
-	WithVectors bool     `json:"with_vectors"`
+	WithVector  bool     `json:"with_vector"`
 }
 
 type getPointsResponse struct {
@@ -215,7 +215,7 @@ func (c *QdrantClient) GetPayloadByPointID(ctx context.Context, pointID string) 
 	payload := getPointsRequest{
 		IDs:         []string{pointID},
 		WithPayload: true,
-		WithVectors: false,
+		WithVector:  false,
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -232,7 +232,8 @@ func (c *QdrantClient) GetPayloadByPointID(ctx context.Context, pointID string) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return nil, false, errors.New("qdrant point lookup failed")
+		body, _ := io.ReadAll(resp.Body)
+		return nil, false, errors.New("qdrant point lookup failed: " + resp.Status + " body=" + string(body))
 	}
 	var out getPointsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {

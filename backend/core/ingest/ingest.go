@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/khiemnd777/legal_api/core/schema"
 	"github.com/khiemnd777/legal_api/domain"
 	"github.com/khiemnd777/legal_api/infra"
@@ -223,10 +224,15 @@ func normalize(in string) string {
 
 func segment(text, strategy string) []string {
 	switch strategy {
+
 	case "legal_article":
-		return splitByRegex(text, `(?m)^Article\s+\d+`)
+		return splitByRegex(text, `(?m)^\s*Điều\s+\d+`)
+
 	case "judgement_structure":
-		return splitByRegex(text, `(?m)^\s*(Facts|Reasoning|Decision)\b`)
+		return splitByRegex(text,
+			`(?mi)^\s*(?:[IVXLC]+\.\s*)?(?:PHẦN\s+)?(NỘI DUNG VỤ ÁN|QUÁ TRÌNH TỐ TỤNG|NHẬN ĐỊNH CỦA TÒA ÁN|TÒA ÁN NHẬN ĐỊNH|VÌ CÁC LẼ TRÊN|QUYẾT ĐỊNH)\b`,
+		)
+
 	default:
 		return splitByParagraph(text)
 	}
@@ -442,7 +448,12 @@ func contentHash(text string) string {
 }
 
 func VectorPointID(versionID string, idx int) string {
-	return fmt.Sprintf("doc_%s_chunk_%04d", versionID, idx)
+	return chunkUUID(versionID, idx)
+}
+
+func chunkUUID(documentVersionID string, index int) string {
+	key := fmt.Sprintf("%s_%d", documentVersionID, index)
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(key)).String()
 }
 
 func staleVectorIDs(versionID string, from, to int) []string {

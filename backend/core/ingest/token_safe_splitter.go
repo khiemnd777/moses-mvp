@@ -139,8 +139,17 @@ func splitBySentences(text string) []string {
 	if text == "" {
 		return nil
 	}
-	replacer := strings.NewReplacer(";", ".\n", "!", "!\n", "?", "?\n", ":", ":\n")
+
+	// Không split theo ":" vì văn bản pháp lý tiếng Việt dùng ":" rất nhiều
+	// ở tiêu đề, Điều, Khoản, Điểm, căn cứ, quyết định...
+	replacer := strings.NewReplacer(
+		";", ";\n",
+		"!", "!\n",
+		"?", "?\n",
+		". ", ".\n",
+	)
 	text = replacer.Replace(text)
+
 	lines := strings.Split(text, "\n")
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {

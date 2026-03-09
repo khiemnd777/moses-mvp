@@ -72,6 +72,31 @@ func (g legalChunkGenerator) Generate(documentID, versionID, text string, baseMe
 		return nil
 	}
 
+	if len(doc.Articles) == 1 && doc.Articles[0].Number == "" {
+		if err := g.appendSplitChunks(
+			&chunks,
+			&totalTokens,
+			&maxTokens,
+			baseMetadata,
+			documentID,
+			versionID,
+			"RAW_DOCUMENT",
+			"",
+			"RAW_DOCUMENT",
+			[]chunkPart{{Text: doc.Articles[0].Content}},
+		); err != nil {
+			return nil, chunkGenerationStats{}, err
+		}
+		stats := chunkGenerationStats{
+			ChunkCount:     len(chunks),
+			MaxChunkTokens: maxTokens,
+		}
+		if len(chunks) > 0 {
+			stats.AvgChunkTokens = totalTokens / len(chunks)
+		}
+		return chunks, stats, nil
+	}
+
 	for _, article := range doc.Articles {
 		if len(article.Clauses) == 0 {
 			if err := appendChunk(chunkLocation{Article: article.Number}, strings.TrimSpace(joinChunkSections(article.Header, article.Content))); err != nil {

@@ -1,14 +1,34 @@
 package ingest
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 var (
-	articleHeaderPattern = regexp.MustCompile(`(?i)^Điều\s+([0-9]+[a-zA-Z]*)\b(.*)$`)
-	clausePattern        = regexp.MustCompile(`^([0-9]+)\.\s*(.*)$`)
-	pointPattern         = regexp.MustCompile(`^(?:[0-9]+\.)?([a-zđ])(?:[\)\.])\s*(.*)$`)
+	// Detect Vietnamese legal article
+	// Điều 1
+	// Điều 1.
+	// Điều 1:
+	// Điều 1 Phạm vi...
+	// ĐIỀU 1
+	articleHeaderPattern = regexp.MustCompile(`(?im)^\s*điều\s*([0-9]+[a-zA-Z]*)\s*[\.:]?\s*(.*)$`)
+
+	// Detect clause
+	// 1.
+	// 1
+	// Khoản 1.
+	clausePattern = regexp.MustCompile(`(?im)^\s*(?:khoản\s+)?([0-9]+)\s*[\.\)]?\s*(.*)$`)
+
+	// Detect point
+	// a)
+	// a.
+	// Điểm a)
+	// 1.a)
+	pointPattern = regexp.MustCompile(`(?im)^\s*(?:điểm\s+)?(?:[0-9]+\.)?([a-zđ])[\)\.]?\s*(.*)$`)
 )
 
 type legalDocument struct {
@@ -190,12 +210,43 @@ func parsePoints(text string) []pointNode {
 }
 
 func normalizeLegalText(in string) string {
+
+	// DEBUG: raw preview
+	if len(in) > 200 {
+		fmt.Println("[LEGAL DEBUG] RAW:", in[:200])
+	} else {
+		fmt.Println("[LEGAL DEBUG] RAW:", in)
+	}
+
+	// FIX: normalize unicode (Word DOC combining characters)
+	in = norm.NFC.String(in)
+
+	replacer := strings.NewReplacer(
+		"\u00A0", " ",
+		"Ð", "Đ",
+		"ð", "đ",
+		"Ðiều", "Điều",
+		"ÐIỀU", "Điều",
+	)
+
+	in = replacer.Replace(in)
+
 	in = strings.ReplaceAll(in, "\r", "")
+
 	lines := strings.Split(in, "\n")
 	normalized := make([]string, 0, len(lines))
+
 	lastBlank := false
+
 	for _, line := range lines {
+
 		line = strings.Join(strings.Fields(strings.TrimSpace(line)), " ")
+
+		// DEBUG: detect article line
+		if strings.HasPrefix(strings.ToLower(line), "điều") {
+			fmt.Println("[LEGAL DEBUG] DETECT LINE:", line)
+		}
+
 		if line == "" {
 			if !lastBlank {
 				normalized = append(normalized, "")
@@ -203,10 +254,21 @@ func normalizeLegalText(in string) string {
 			lastBlank = true
 			continue
 		}
+
 		normalized = append(normalized, line)
 		lastBlank = false
 	}
-	return strings.TrimSpace(strings.Join(normalized, "\n"))
+
+	result := strings.TrimSpace(strings.Join(normalized, "\n"))
+
+	// DEBUG normalized preview
+	if len(result) > 200 {
+		fmt.Println("[LEGAL DEBUG] NORMALIZED:", result[:200])
+	} else {
+		fmt.Println("[LEGAL DEBUG] NORMALIZED:", result)
+	}
+
+	return result
 }
 
 func joinNonEmpty(lines []string) string {

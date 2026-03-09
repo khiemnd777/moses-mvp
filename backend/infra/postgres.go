@@ -812,7 +812,7 @@ INSERT INTO ai_retrieval_configs (
 	preferred_doc_types_json,
 	legal_domain_defaults_json
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 ON CONFLICT (name) DO NOTHING
 `,
 		"default_legal_retrieval_config",

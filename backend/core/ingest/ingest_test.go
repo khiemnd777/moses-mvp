@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/khiemnd777/legal_api/core/schema"
 )
 
@@ -122,5 +123,24 @@ func TestTokenSafeSplitterSplitsOversizedText(t *testing.T) {
 		if tokens := estimateTokenCount(part.Text); tokens > 40 {
 			t.Fatalf("part exceeds limit: %d", tokens)
 		}
+	}
+}
+
+func TestVectorPointID_IsDeterministicUUID(t *testing.T) {
+	t.Parallel()
+
+	versionID := "eadcc28b-4f5e-4ed1-87d4-7e9f3309ecda"
+	idA := VectorPointID(versionID, 0)
+	idB := VectorPointID(versionID, 0)
+	idC := VectorPointID(versionID, 1)
+
+	if idA != idB {
+		t.Fatalf("expected deterministic id, got %q and %q", idA, idB)
+	}
+	if idA == idC {
+		t.Fatalf("expected different ids for different chunk index, got %q", idA)
+	}
+	if _, err := uuid.Parse(idA); err != nil {
+		t.Fatalf("expected valid UUID, got %q err=%v", idA, err)
 	}
 }
