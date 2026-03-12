@@ -14,7 +14,9 @@ import (
 	"github.com/khiemnd777/legal_api/core/embedding"
 	"github.com/khiemnd777/legal_api/core/ingest"
 	"github.com/khiemnd777/legal_api/infra"
-	"github.com/khiemnd777/legal_api/pkg/config"
+	"github.com/khiemnd777/legal_api/internal/auth"
+	envconfig "github.com/khiemnd777/legal_api/internal/config"
+	appconfig "github.com/khiemnd777/legal_api/pkg/config"
 	"github.com/khiemnd777/legal_api/pkg/logging"
 	"github.com/khiemnd777/legal_api/pkg/prompt"
 
@@ -22,18 +24,27 @@ import (
 )
 
 func main() {
+	envCfg, err := envconfig.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	logger := logging.New()
 	slog.SetDefault(logger)
-	cfgPath := os.Getenv("CONFIG_PATH")
-	if cfgPath == "" {
-		cfgPath = "config/config.yaml"
-	}
-	cfg, err := config.Load(cfgPath)
+	cfg, err := appconfig.Load(envCfg.ConfigPath)
 	if err != nil {
 		logger.Error("failed to load config", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
-	db, err := sql.Open("postgres", cfg.Postgres.DSN)
+	databaseURL := cfg.Postgres.DSN
+	if envCfg.DatabaseURL != "" {
+		databaseURL = envCfg.DatabaseURL
+	}
+	if databaseURL == "" {
+		logger.Error("database connection is empty; set DATABASE_URL or postgres.dsn")
+		os.Exit(1)
+	}
+	db, err := sql.Open("postgres", databaseURL)
 	if err != nil {
 		logger.Error("failed to open db", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -100,10 +111,18 @@ func main() {
 		"academic":  acadTone.Content,
 		"procedure": procTone.Content,
 	}
-	adminAPIKey := os.Getenv("ADMIN_API_KEY")
+	authService := auth.NewService(store, auth.Config{
+		Secret:   envCfg.JWTSecret,
+		Issuer:   "legal_api",
+		TokenTTL: time.Hour,
+	})
+	if err := auth.BootstrapAdmin(context.Background(), store, envCfg.AdminBootstrapPassword, logger); err != nil {
+		logger.Error("failed to bootstrap admin user", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 
-	server := api.NewServer(store, storage, embed, qdrant, ansClient, adminAPIKey, tones, logger, ingest.Config{ChunkSize: cfg.Ingest.ChunkSize, ChunkOverlap: cfg.Ingest.ChunkOverlap})
-	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+	server := api.NewServer(store, storage, embed, qdrant, ansClient, authService, tones, logger, ingest.Config{ChunkSize: cfg.Ingest.ChunkSize, ChunkOverlap: cfg.Ingest.ChunkOverlap})
+	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, envCfg.ServerPort)
 	logger.Info("api server starting", slog.String("addr", addr))
 	if err := server.Start(context.Background(), addr); err != nil {
 		logger.Error("api server stopped", slog.String("error", err.Error()))

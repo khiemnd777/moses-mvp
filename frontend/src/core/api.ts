@@ -1,4 +1,5 @@
 import axios from 'axios';
+import apiClient from '@/playground/apiClient.js';
 import type {
   AIGuardPolicy,
   AIPrompt,
@@ -20,9 +21,7 @@ import type {
   VectorHealthResponse
 } from './types';
 
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL
-});
+const api = apiClient;
 
 const adminApiKey = import.meta.env.VITE_ADMIN_API_KEY;
 if (adminApiKey) {

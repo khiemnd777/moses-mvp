@@ -1,7 +1,8 @@
-import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
-import ChatPage from '@/features/chat/ChatPage';
+import { Route, Routes, Navigate } from 'react-router-dom';
 import AdminLayout from '@/features/admin/AdminLayout';
-import AdminAuthGuard from '@/features/admin/AdminAuthGuard';
+import PlaygroundAuthGuard from '@/features/admin/PlaygroundAuthGuard';
+import PlaygroundPage from '@/features/admin/PlaygroundPage';
+import PlaygroundLoginPage from '@/features/admin/PlaygroundLoginPage';
 import DocTypesPage from '@/features/admin/DocTypesPage';
 import DocumentsPage from '@/features/admin/DocumentsPage';
 import IngestJobsPage from '@/features/admin/IngestJobsPage';
@@ -14,27 +15,23 @@ import SearchDebugPage from '@/features/admin/vectors/SearchDebugPage';
 import VectorHealthPage from '@/features/admin/vectors/VectorHealthPage';
 import DeleteByFilterPage from '@/features/admin/vectors/DeleteByFilterPage';
 import ReindexControlsPage from '@/features/admin/vectors/ReindexControlsPage';
+import Navbar from './Navbar';
 
 const App = () => {
   return (
     <div className="app-shell">
       <header className="app-header">
         <div className="brand">Moses Console</div>
-        <nav className="top-nav">
-          <NavLink to="/" end className={({ isActive }) => (isActive ? 'active' : '')}>
-            Playground
-          </NavLink>
-          <NavLink to="/admin/doc-types" className={({ isActive }) => (isActive ? 'active' : '')}>
-            Tuning
-          </NavLink>
-        </nav>
+        <Navbar />
       </header>
       <main className="app-main">
         <Routes>
-          <Route path="/" element={<ChatPage />} />
-          <Route path="/admin" element={<AdminAuthGuard />}>
-            <Route element={<AdminLayout />}>
-              <Route index element={<Navigate to="/admin/doc-types" replace />} />
+          <Route path="/" element={<Navigate to="/playground" replace />} />
+          <Route path="/playground/login" element={<PlaygroundLoginPage />} />
+          <Route element={<PlaygroundAuthGuard />}>
+            <Route path="/playground" element={<PlaygroundPage />} />
+            <Route path="/tuning" element={<AdminLayout />}>
+              <Route index element={<Navigate to="/tuning/doc-types" replace />} />
               <Route path="doc-types" element={<DocTypesPage />} />
               <Route path="documents" element={<DocumentsPage />} />
               <Route path="ingest-jobs" element={<IngestJobsPage />} />
@@ -47,7 +44,6 @@ const App = () => {
               <Route path="vectors/health" element={<VectorHealthPage />} />
               <Route path="vectors/delete" element={<DeleteByFilterPage />} />
               <Route path="vectors/reindex" element={<ReindexControlsPage />} />
-              {/* <Route path="playground" element={<PlaygroundPage />} /> */}
             </Route>
           </Route>
         </Routes>

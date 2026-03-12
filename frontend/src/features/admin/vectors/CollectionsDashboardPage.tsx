@@ -35,7 +35,7 @@ const CollectionsDashboardPage = () => {
             <button
               key={collection.collection_name}
               className="source-item vector-row-btn"
-              onClick={() => navigate(`/admin/vectors/collections/${encodeURIComponent(collection.collection_name)}`)}
+              onClick={() => navigate(`/tuning/vectors/collections/${encodeURIComponent(collection.collection_name)}`)}
               type="button"
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>

@@ -22,7 +22,7 @@ const CollectionDetailPage = () => {
           <Button onClick={() => void refresh()} disabled={isRefreshing}>
             {isRefreshing ? 'Refreshing...' : 'Refresh'}
           </Button>
-          <Link to="/admin/vectors/collections">
+          <Link to="/tuning/vectors/collections">
             <Button variant="outline">Back to Collections</Button>
           </Link>
           {isLoading && <div className="badge">Loading collection...</div>}
@@ -56,13 +56,13 @@ const CollectionDetailPage = () => {
               ))}
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <Link to="/admin/vectors/health">
+              <Link to="/tuning/vectors/health">
                 <Button variant="secondary">Vector Health</Button>
               </Link>
-              <Link to="/admin/vectors/search-debug">
+              <Link to="/tuning/vectors/search-debug">
                 <Button variant="secondary">Search Debug</Button>
               </Link>
-              <Link to="/admin/vectors/delete">
+              <Link to="/tuning/vectors/delete">
                 <Button variant="secondary">Delete by Filter</Button>
               </Link>
             </div>

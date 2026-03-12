@@ -80,6 +80,14 @@ type AnswerLog struct {
 	CreatedAt time.Time
 }
 
+type User struct {
+	ID           string
+	Username     string
+	PasswordHash string
+	Role         string
+	CreatedAt    time.Time
+}
+
 type AIGuardPolicy struct {
 	ID                 string
 	Name               string

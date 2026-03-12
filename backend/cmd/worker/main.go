@@ -12,19 +12,21 @@ import (
 	"github.com/khiemnd777/legal_api/core/embedding"
 	"github.com/khiemnd777/legal_api/core/ingest"
 	"github.com/khiemnd777/legal_api/infra"
-	"github.com/khiemnd777/legal_api/pkg/config"
+	envconfig "github.com/khiemnd777/legal_api/internal/config"
+	appconfig "github.com/khiemnd777/legal_api/pkg/config"
 	"github.com/khiemnd777/legal_api/pkg/logging"
 
 	_ "github.com/lib/pq"
 )
 
 func main() {
-	logger := logging.New()
-	cfgPath := os.Getenv("CONFIG_PATH")
-	if cfgPath == "" {
-		cfgPath = "config/config.yaml"
+	envCfg, err := envconfig.Load()
+	if err != nil {
+		log.Fatal(err)
 	}
-	cfg, err := config.Load(cfgPath)
+
+	logger := logging.New()
+	cfg, err := appconfig.Load(envCfg.ConfigPath)
 	if err != nil {
 		logger.Error("failed to load config", slog.String("error", err.Error()))
 		os.Exit(1)

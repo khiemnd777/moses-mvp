@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	adminapi "github.com/khiemnd777/legal_api/admin"
 	"github.com/khiemnd777/legal_api/admin/repository"
@@ -13,6 +14,7 @@ import (
 	"github.com/khiemnd777/legal_api/core/ingest"
 	"github.com/khiemnd777/legal_api/core/retrieval"
 	"github.com/khiemnd777/legal_api/infra"
+	"github.com/khiemnd777/legal_api/internal/auth"
 	"github.com/khiemnd777/legal_api/observability"
 
 	"github.com/gofiber/fiber/v2"
@@ -27,14 +29,14 @@ type Server struct {
 	Qdrant      *infra.QdrantClient
 	Retriever   *retrieval.Service
 	Answer      *answer.Client
-	AdminAPIKey string
 	Tones       map[string]string
 	Ingest      *ingest.Service
 	Logger      *slog.Logger
 	TraceRepo   observability.TraceRepository
+	AuthService *auth.Service
 }
 
-func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, adminAPIKey string, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config) *Server {
+func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, authService *auth.Service, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config) *Server {
 	app := fiber.New()
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "http://localhost:5173",
@@ -51,37 +53,50 @@ func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.C
 		Qdrant:      qdrant,
 		Retriever:   retriever,
 		Answer:      ans,
-		AdminAPIKey: adminAPIKey,
 		Tones:       tones,
 		Ingest:      ingestSvc,
 		Logger:      logger,
 		TraceRepo:   observability.NewSQLTraceRepository(store.DB),
+		AuthService: authService,
 	}
 }
 
 func (s *Server) RegisterRoutes() {
 	h := NewHandler(s.Store, s.Storage, s.Qdrant, s.Retriever, s.Answer, s.Tones, s.Ingest, s.Logger, s.TraceRepo)
 	traceMiddleware := answerTraceMiddleware(s.Logger)
-	s.App.Post("/doc-types", h.CreateDocType)
-	s.App.Get("/doc-types", h.ListDocTypes)
-	s.App.Put("/doc-types/:id/form", h.UpdateDocTypeForm)
-	s.App.Delete("/doc-types/:id", h.DeleteDocType)
-	s.App.Get("/documents", h.ListDocuments)
-	s.App.Post("/documents", h.CreateDocument)
-	s.App.Delete("/documents/:id", h.DeleteDocument)
-	s.App.Post("/documents/:id/assets", h.AddDocumentAsset)
-	s.App.Post("/documents/:id/versions", h.CreateDocumentVersion)
-	s.App.Delete("/document-versions/:id", h.DeleteDocumentVersion)
-	s.App.Get("/ingest-jobs", h.ListIngestJobs)
-	s.App.Delete("/ingest-jobs/:id", h.DeleteIngestJob)
-	s.App.Post("/document-versions/:id/ingest", h.EnqueueIngest)
+	authMiddleware := auth.RequireAuth(s.AuthService.JWTManager())
+	authHandlers := auth.NewHandlers(s.AuthService, auth.NewLoginRateLimiter(5, time.Minute))
+
+	s.App.Post("/auth/login", authHandlers.Login)
+	s.App.Get("/auth/me", authMiddleware, authHandlers.Me)
+
+	s.App.Post("/chat", traceMiddleware, h.Answer)
 	s.App.Post("/search", h.Search)
 	s.App.Get("/health", s.Health)
 	s.App.Get("/metrics", observability.MetricsHandler)
 	s.App.Post("/answer", traceMiddleware, h.Answer)
 	s.App.Post("/answer/stream", traceMiddleware, h.AnswerStream)
 
-	adminGroup := s.App.Group("/admin", adminAuthMiddleware(s.AdminAPIKey))
+	s.App.Use("/playground", authMiddleware)
+	s.App.Use("/tuning", authMiddleware)
+	s.App.Use("/ingest", authMiddleware)
+
+	protectedGroup := s.App.Group("", authMiddleware)
+	protectedGroup.Post("/doc-types", h.CreateDocType)
+	protectedGroup.Get("/doc-types", h.ListDocTypes)
+	protectedGroup.Put("/doc-types/:id/form", h.UpdateDocTypeForm)
+	protectedGroup.Delete("/doc-types/:id", h.DeleteDocType)
+	protectedGroup.Get("/documents", h.ListDocuments)
+	protectedGroup.Post("/documents", h.CreateDocument)
+	protectedGroup.Delete("/documents/:id", h.DeleteDocument)
+	protectedGroup.Post("/documents/:id/assets", h.AddDocumentAsset)
+	protectedGroup.Post("/documents/:id/versions", h.CreateDocumentVersion)
+	protectedGroup.Delete("/document-versions/:id", h.DeleteDocumentVersion)
+	protectedGroup.Get("/ingest-jobs", h.ListIngestJobs)
+	protectedGroup.Delete("/ingest-jobs/:id", h.DeleteIngestJob)
+	protectedGroup.Post("/document-versions/:id/ingest", h.EnqueueIngest)
+
+	adminGroup := s.App.Group("/admin", authMiddleware)
 	guardRepo := repository.NewGuardPolicyRepository(s.Store)
 	promptRepo := repository.NewPromptRepository(s.Store)
 	retrievalCfgRepo := repository.NewRetrievalConfigRepository(s.Store)

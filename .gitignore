@@ -5,3 +5,5 @@ backend/data/qdrant/
 backend/data/uploads/
 frontend/dist/
 backend/vendor/
+.env
+**/.env

@@ -3,6 +3,7 @@ import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
 import { answer, search } from '@/core/api';
 import type { ChatFilters } from '@/core/types';
+import { logout } from '@/playground/auth.js';
 
 const PlaygroundPage = () => {
   const [query, setQuery] = useState('');
@@ -30,6 +31,11 @@ const PlaygroundPage = () => {
   return (
     <Panel title="QA Playground">
       <div className="grid">
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button type="button" variant="outline" onClick={logout}>
+            Logout
+          </Button>
+        </div>
         <label>
           <div className="label">Run /search</div>
           <textarea className="textarea" rows={3} value={query} onChange={(e) => setQuery(e.target.value)} />

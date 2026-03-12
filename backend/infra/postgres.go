@@ -41,6 +41,30 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{DB: db}
 }
 
+func (s *Store) CountUsers(ctx context.Context) (int, error) {
+	var count int
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(1) FROM users`).Scan(&count)
+	return count, err
+}
+
+func (s *Store) GetUserByUsername(ctx context.Context, username string) (domain.User, error) {
+	var user domain.User
+	query := `SELECT id, username, password_hash, role, created_at FROM users WHERE username = $1`
+	err := s.DB.QueryRowContext(ctx, query, username).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Role, &user.CreatedAt)
+	return user, err
+}
+
+func (s *Store) CreateUser(ctx context.Context, user domain.User) error {
+	return s.DB.QueryRowContext(
+		ctx,
+		`INSERT INTO users (id, username, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING created_at`,
+		user.ID,
+		user.Username,
+		user.PasswordHash,
+		user.Role,
+	).Scan(&user.CreatedAt)
+}
+
 func (s *Store) CreateDocType(ctx context.Context, code, name string, formJSON []byte, formHash string) (string, error) {
 	var id string
 	query := `INSERT INTO doc_types (code, name, form_json, form_hash) VALUES ($1,$2,$3,$4) RETURNING id`
