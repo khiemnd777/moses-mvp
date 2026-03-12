@@ -12,12 +12,12 @@ import (
 )
 
 type DocTypeForm struct {
-	Version       int             `json:"version"`
-	DocType       DocType         `json:"doc_type"`
-	SegmentRules  SegmentRules    `json:"segment_rules"`
-	Metadata      MetadataSchema  `json:"metadata_schema"`
-	MappingRules  []MappingRule   `json:"mapping_rules"`
-	ReindexPolicy ReindexPolicy   `json:"reindex_policy"`
+	Version       int            `json:"version"`
+	DocType       DocType        `json:"doc_type"`
+	SegmentRules  SegmentRules   `json:"segment_rules"`
+	Metadata      MetadataSchema `json:"metadata_schema"`
+	MappingRules  []MappingRule  `json:"mapping_rules"`
+	ReindexPolicy ReindexPolicy  `json:"reindex_policy"`
 }
 
 type DocType struct {
@@ -26,9 +26,10 @@ type DocType struct {
 }
 
 type SegmentRules struct {
-	Strategy     string `json:"strategy"`
-	Hierarchy    string `json:"hierarchy"`
-	Normalization string `json:"normalization"`
+	Strategy      string            `json:"strategy"`
+	Hierarchy     string            `json:"hierarchy"`
+	Normalization string            `json:"normalization"`
+	LevelPatterns map[string]string `json:"level_patterns,omitempty"`
 }
 
 type MetadataSchema struct {
@@ -103,6 +104,14 @@ func (f DocTypeForm) Validate() error {
 	if f.SegmentRules.Strategy == "" {
 		return errors.New("segment_rules.strategy is required")
 	}
+	for level, pattern := range f.SegmentRules.LevelPatterns {
+		if strings.TrimSpace(level) == "" || strings.TrimSpace(pattern) == "" {
+			return errors.New("segment_rules.level_patterns keys and values must be non-empty")
+		}
+		if _, err := regexp.Compile(pattern); err != nil {
+			return fmt.Errorf("segment_rules.level_patterns[%q] is invalid: %v", level, err)
+		}
+	}
 	if len(f.Metadata.Fields) == 0 {
 		return errors.New("metadata_schema.fields is required")
 	}
@@ -132,7 +141,7 @@ func (f DocTypeForm) Validate() error {
 		}
 		if strings.TrimSpace(rule.Regex) != "" {
 			if _, err := regexp.Compile(rule.Regex); err != nil {
-			return fmt.Errorf("mapping_rules[%d].regex is invalid: %v", i, err)
+				return fmt.Errorf("mapping_rules[%d].regex is invalid: %v", i, err)
 			}
 		}
 		ruleByField[rule.Field]++

@@ -505,13 +505,24 @@ func (s *Store) ReplaceChunks(ctx context.Context, documentVersionID string, chu
 	inserted := make([]domain.Chunk, 0, len(chunks))
 	for _, chunk := range chunks {
 		var id string
-		err := tx.QueryRowContext(ctx, `
+		if chunk.ID == "" {
+			err := tx.QueryRowContext(ctx, `
 INSERT INTO chunks (document_version_id, idx, text, metadata_json, embedding_json)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id
 `, chunk.DocumentVersionID, chunk.Index, chunk.Text, chunk.MetadataJSON, chunk.EmbeddingJSON).Scan(&id)
-		if err != nil {
-			return nil, err
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			err := tx.QueryRowContext(ctx, `
+INSERT INTO chunks (id, document_version_id, idx, text, metadata_json, embedding_json)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id
+`, chunk.ID, chunk.DocumentVersionID, chunk.Index, chunk.Text, chunk.MetadataJSON, chunk.EmbeddingJSON).Scan(&id)
+			if err != nil {
+				return nil, err
+			}
 		}
 		chunk.ID = id
 		inserted = append(inserted, chunk)
@@ -521,6 +532,11 @@ RETURNING id
 		return nil, err
 	}
 	return inserted, nil
+}
+
+func (s *Store) DeleteChunksByVersion(ctx context.Context, documentVersionID string) error {
+	_, err := s.DB.ExecContext(ctx, `DELETE FROM chunks WHERE document_version_id = $1`, documentVersionID)
+	return err
 }
 
 func (s *Store) CountChunksByVersion(ctx context.Context, documentVersionID string) (int, error) {

@@ -1,41 +1,35 @@
 package ingest
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 
+	"github.com/khiemnd777/legal_api/core/schema"
 	"golang.org/x/text/unicode/norm"
 )
 
-var (
-	// Detect Vietnamese legal article
-	// Điều 1
-	// Điều 1.
-	// Điều 1:
-	// Điều 1 Phạm vi...
-	// ĐIỀU 1
-	articleHeaderPattern = regexp.MustCompile(`(?im)^\s*điều\s*([0-9]+[a-zA-Z]*)\s*[\.:]?\s*(.*)$`)
+type hierarchyLevel string
 
-	// Detect clause
-	// 1.
-	// 1
-	// Khoản 1.
-	clausePattern = regexp.MustCompile(`(?im)^\s*(?:khoản\s+)?([0-9]+)\s*[\.\)]?\s*(.*)$`)
-
-	// Detect point
-	// a)
-	// a.
-	// Điểm a)
-	// 1.a)
-	pointPattern = regexp.MustCompile(`(?im)^\s*(?:điểm\s+)?(?:[0-9]+\.)?([a-zđ])[\)\.]?\s*(.*)$`)
+const (
+	levelChapter hierarchyLevel = "chapter"
+	levelArticle hierarchyLevel = "article"
+	levelClause  hierarchyLevel = "clause"
+	levelPoint   hierarchyLevel = "point"
 )
+
+var defaultLevelPatterns = map[hierarchyLevel]string{
+	levelChapter: `(?im)^\s*(?:chương|chuong)\s*([ivxlcdm0-9]+[a-zA-Z]*)\s*[\.:]?\s*(.*)$`,
+	levelArticle: `(?im)^\s*điều\s*([0-9]+[a-zA-Z]*)\s*[\.:]?\s*(.*)$`,
+	levelClause:  `(?im)^\s*(?:khoản\s+)?([0-9]+)\s*[\.\)]?\s*(.*)$`,
+	levelPoint:   `(?im)^\s*(?:điểm\s+)?(?:[0-9]+\.)?([a-zđ])(?:[\)\.])\s*(.+)?$`,
+}
 
 type legalDocument struct {
 	Articles []articleNode
 }
 
 type articleNode struct {
+	Chapter string
 	Number  string
 	Header  string
 	Content string
@@ -53,13 +47,95 @@ type pointNode struct {
 	Content string
 }
 
-type legalStructureParser struct{}
+type legalStructureParser struct {
+	levels        []hierarchyLevel
+	normalization string
+	patterns      map[hierarchyLevel]*regexp.Regexp
+}
+
+func newLegalStructureParser(rules schema.SegmentRules) legalStructureParser {
+	levels := parseHierarchyLevels(rules.Hierarchy)
+	patterns := compileLevelPatterns(rules.LevelPatterns)
+	normalization := strings.TrimSpace(strings.ToLower(rules.Normalization))
+	if normalization == "" {
+		normalization = "basic"
+	}
+	return legalStructureParser{
+		levels:        levels,
+		normalization: normalization,
+		patterns:      patterns,
+	}
+}
+
+func parseHierarchyLevels(hierarchy string) []hierarchyLevel {
+	hierarchy = strings.TrimSpace(strings.ToLower(hierarchy))
+	if hierarchy == "" {
+		return []hierarchyLevel{levelArticle, levelClause, levelPoint}
+	}
+	parts := strings.FieldsFunc(hierarchy, func(r rune) bool {
+		return r == '>' || r == ',' || r == '/' || r == '|' || r == ';'
+	})
+	out := make([]hierarchyLevel, 0, len(parts))
+	seen := map[hierarchyLevel]struct{}{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		switch hierarchyLevel(part) {
+		case levelChapter, levelArticle, levelClause, levelPoint:
+			lv := hierarchyLevel(part)
+			if _, ok := seen[lv]; ok {
+				continue
+			}
+			seen[lv] = struct{}{}
+			out = append(out, lv)
+		}
+	}
+	if len(out) == 0 {
+		return []hierarchyLevel{levelArticle, levelClause, levelPoint}
+	}
+	return out
+}
+
+func compileLevelPatterns(overrides map[string]string) map[hierarchyLevel]*regexp.Regexp {
+	patterns := make(map[hierarchyLevel]*regexp.Regexp, len(defaultLevelPatterns))
+	for lv, raw := range defaultLevelPatterns {
+		patterns[lv] = regexp.MustCompile(raw)
+	}
+	for k, pattern := range overrides {
+		lv := hierarchyLevel(strings.TrimSpace(strings.ToLower(k)))
+		if _, ok := patterns[lv]; !ok {
+			continue
+		}
+		compiled, err := regexp.Compile(pattern)
+		if err != nil {
+			continue
+		}
+		patterns[lv] = compiled
+	}
+	return patterns
+}
+
+func (p legalStructureParser) has(level hierarchyLevel) bool {
+	for _, lv := range p.levels {
+		if lv == level {
+			return true
+		}
+	}
+	return false
+}
 
 func (p legalStructureParser) Parse(text string) legalDocument {
-	normalized := normalizeLegalText(text)
+	if len(p.levels) == 0 || len(p.patterns) == 0 {
+		p = newLegalStructureParser(schema.SegmentRules{
+			Strategy:      "legal_article",
+			Hierarchy:     "article>clause>point",
+			Normalization: "basic",
+		})
+	}
+	normalized := p.normalize(text)
 	lines := strings.Split(normalized, "\n")
 	articles := make([]articleNode, 0)
 
+	currentChapter := ""
 	current := articleNode{}
 	hasArticle := false
 	buffer := make([]string, 0)
@@ -69,6 +145,7 @@ func (p legalStructureParser) Parse(text string) legalDocument {
 		}
 		if !hasArticle {
 			current = articleNode{
+				Chapter: currentChapter,
 				Header:  "",
 				Number:  "",
 				Content: joinNonEmpty(buffer),
@@ -76,7 +153,7 @@ func (p legalStructureParser) Parse(text string) legalDocument {
 		} else {
 			current.Content = joinNonEmpty(buffer)
 		}
-		current.Clauses = parseClauses(current.Content)
+		current.Clauses = p.parseClauses(current.Content)
 		articles = append(articles, current)
 		buffer = buffer[:0]
 		current = articleNode{}
@@ -92,14 +169,24 @@ func (p legalStructureParser) Parse(text string) legalDocument {
 			continue
 		}
 
-		if matches := articleHeaderPattern.FindStringSubmatch(trimmed); matches != nil {
-			flushArticle()
-			current = articleNode{
-				Number: strings.TrimSpace(matches[1]),
-				Header: trimmed,
+		if p.has(levelChapter) {
+			if matches := p.patterns[levelChapter].FindStringSubmatch(trimmed); matches != nil {
+				currentChapter = strings.TrimSpace(matches[1])
+				continue
 			}
-			hasArticle = true
-			continue
+		}
+
+		if p.has(levelArticle) {
+			if matches := p.patterns[levelArticle].FindStringSubmatch(trimmed); matches != nil {
+				flushArticle()
+				current = articleNode{
+					Chapter: currentChapter,
+					Number:  strings.TrimSpace(matches[1]),
+					Header:  trimmed,
+				}
+				hasArticle = true
+				continue
+			}
 		}
 
 		buffer = append(buffer, trimmed)
@@ -108,14 +195,18 @@ func (p legalStructureParser) Parse(text string) legalDocument {
 	flushArticle()
 	if len(articles) == 0 {
 		articles = append(articles, articleNode{
+			Chapter: currentChapter,
 			Content: normalized,
-			Clauses: parseClauses(normalized),
+			Clauses: p.parseClauses(normalized),
 		})
 	}
 	return legalDocument{Articles: articles}
 }
 
-func parseClauses(text string) []clauseNode {
+func (p legalStructureParser) parseClauses(text string) []clauseNode {
+	if !p.has(levelClause) {
+		return nil
+	}
 	lines := strings.Split(text, "\n")
 	clauses := make([]clauseNode, 0)
 	current := clauseNode{}
@@ -133,7 +224,7 @@ func parseClauses(text string) []clauseNode {
 		} else {
 			current.Content = content
 		}
-		current.Points = parsePoints(current.Content)
+		current.Points = p.parsePoints(current.Content)
 		clauses = append(clauses, current)
 		buffer = buffer[:0]
 		current = clauseNode{}
@@ -149,7 +240,7 @@ func parseClauses(text string) []clauseNode {
 			continue
 		}
 
-		if matches := clausePattern.FindStringSubmatch(trimmed); matches != nil {
+		if matches := p.patterns[levelClause].FindStringSubmatch(trimmed); matches != nil {
 			flushClause()
 			current = clauseNode{Number: strings.TrimSpace(matches[1])}
 			hasClause = true
@@ -166,7 +257,10 @@ func parseClauses(text string) []clauseNode {
 	return clauses
 }
 
-func parsePoints(text string) []pointNode {
+func (p legalStructureParser) parsePoints(text string) []pointNode {
+	if !p.has(levelPoint) {
+		return nil
+	}
 	lines := strings.Split(text, "\n")
 	points := make([]pointNode, 0)
 	current := pointNode{}
@@ -193,12 +287,14 @@ func parsePoints(text string) []pointNode {
 			}
 			continue
 		}
-		if matches := pointPattern.FindStringSubmatch(trimmed); matches != nil {
+		if matches := p.patterns[levelPoint].FindStringSubmatch(trimmed); matches != nil {
 			flushPoint()
 			current = pointNode{Marker: strings.TrimSpace(matches[1])}
 			hasPoint = true
-			if tail := strings.TrimSpace(matches[2]); tail != "" {
-				buffer = append(buffer, tail)
+			if len(matches) > 2 {
+				if tail := strings.TrimSpace(matches[2]); tail != "" {
+					buffer = append(buffer, tail)
+				}
 			}
 			continue
 		}
@@ -209,18 +305,17 @@ func parsePoints(text string) []pointNode {
 	return points
 }
 
-func normalizeLegalText(in string) string {
-
-	// DEBUG: raw preview
-	if len(in) > 200 {
-		fmt.Println("[LEGAL DEBUG] RAW:", in[:200])
-	} else {
-		fmt.Println("[LEGAL DEBUG] RAW:", in)
+func (p legalStructureParser) normalize(in string) string {
+	switch p.normalization {
+	case "none":
+		return strings.TrimSpace(strings.ReplaceAll(in, "\r", ""))
+	default:
+		return normalizeLegalText(in)
 	}
+}
 
-	// FIX: normalize unicode (Word DOC combining characters)
+func normalizeLegalText(in string) string {
 	in = norm.NFC.String(in)
-
 	replacer := strings.NewReplacer(
 		"\u00A0", " ",
 		"Ð", "Đ",
@@ -228,25 +323,14 @@ func normalizeLegalText(in string) string {
 		"Ðiều", "Điều",
 		"ÐIỀU", "Điều",
 	)
-
 	in = replacer.Replace(in)
-
 	in = strings.ReplaceAll(in, "\r", "")
 
 	lines := strings.Split(in, "\n")
 	normalized := make([]string, 0, len(lines))
-
 	lastBlank := false
-
 	for _, line := range lines {
-
 		line = strings.Join(strings.Fields(strings.TrimSpace(line)), " ")
-
-		// DEBUG: detect article line
-		if strings.HasPrefix(strings.ToLower(line), "điều") {
-			fmt.Println("[LEGAL DEBUG] DETECT LINE:", line)
-		}
-
 		if line == "" {
 			if !lastBlank {
 				normalized = append(normalized, "")
@@ -254,21 +338,10 @@ func normalizeLegalText(in string) string {
 			lastBlank = true
 			continue
 		}
-
 		normalized = append(normalized, line)
 		lastBlank = false
 	}
-
-	result := strings.TrimSpace(strings.Join(normalized, "\n"))
-
-	// DEBUG normalized preview
-	if len(result) > 200 {
-		fmt.Println("[LEGAL DEBUG] NORMALIZED:", result[:200])
-	} else {
-		fmt.Println("[LEGAL DEBUG] NORMALIZED:", result)
-	}
-
-	return result
+	return strings.TrimSpace(strings.Join(normalized, "\n"))
 }
 
 func joinNonEmpty(lines []string) string {

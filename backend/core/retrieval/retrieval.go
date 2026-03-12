@@ -865,7 +865,26 @@ func decodeMetadata(raw []byte) map[string]interface{} {
 	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
 		return map[string]interface{}{}
 	}
-	return out
+	flat := map[string]interface{}{}
+	for k, v := range out {
+		flat[k] = v
+	}
+	for _, key := range []string{"document", "structural", "system"} {
+		rawSection, ok := out[key]
+		if !ok || rawSection == nil {
+			continue
+		}
+		section, ok := rawSection.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for k, v := range section {
+			if _, exists := flat[k]; !exists {
+				flat[k] = v
+			}
+		}
+	}
+	return flat
 }
 
 func citationID(versionID string, idx int, text string) string {

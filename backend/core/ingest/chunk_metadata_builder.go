@@ -5,28 +5,50 @@ import "encoding/json"
 type chunkMetadataBuilder struct{}
 
 type chunkLocation struct {
+	Chapter string
 	Article string
 	Clause  string
 	Point   string
 }
 
 func (b chunkMetadataBuilder) Build(base map[string]interface{}, documentID, versionID string, chunkIndex int, loc chunkLocation) ([]byte, map[string]interface{}, error) {
-	meta := make(map[string]interface{}, len(base)+6)
+	documentMeta := make(map[string]interface{}, len(base))
 	for k, v := range base {
-		meta[k] = v
+		documentMeta[k] = v
 	}
-	meta["document_id"] = documentID
-	meta["document_version_id"] = versionID
-	meta["chunk_index"] = chunkIndex
+	structuralMeta := map[string]interface{}{}
+	if loc.Chapter != "" {
+		structuralMeta["chapter"] = loc.Chapter
+	}
 	if loc.Article != "" {
-		meta["article"] = loc.Article
+		structuralMeta["article"] = loc.Article
 	}
 	if loc.Clause != "" {
-		meta["clause"] = loc.Clause
+		structuralMeta["clause"] = loc.Clause
 	}
 	if loc.Point != "" {
-		meta["point"] = loc.Point
+		structuralMeta["point"] = loc.Point
 	}
-	raw, err := json.Marshal(meta)
-	return raw, meta, err
+	systemMeta := map[string]interface{}{
+		"document_id":         documentID,
+		"document_version_id": versionID,
+		"chunk_index":         chunkIndex,
+	}
+	wire := map[string]interface{}{
+		"document":   documentMeta,
+		"structural": structuralMeta,
+		"system":     systemMeta,
+	}
+	flat := make(map[string]interface{}, len(documentMeta)+len(structuralMeta)+len(systemMeta))
+	for k, v := range documentMeta {
+		flat[k] = v
+	}
+	for k, v := range structuralMeta {
+		flat[k] = v
+	}
+	for k, v := range systemMeta {
+		flat[k] = v
+	}
+	raw, err := json.Marshal(wire)
+	return raw, flat, err
 }

@@ -25,11 +25,24 @@ type Config struct {
 }
 
 type Service struct {
-	Store  *infra.Store
-	Qdrant *infra.QdrantClient
+	Store  ingestStore
+	Qdrant vectorStore
 	Embed  Embedder
 	Config Config
 	Logger *slog.Logger
+}
+
+type ingestStore interface {
+	TouchJob(ctx context.Context, id string) error
+	CountChunksByVersion(ctx context.Context, documentVersionID string) (int, error)
+	ReplaceChunks(ctx context.Context, documentVersionID string, chunks []domain.Chunk) ([]domain.Chunk, error)
+	DeleteChunksByVersion(ctx context.Context, documentVersionID string) error
+}
+
+type vectorStore interface {
+	Upsert(ctx context.Context, points []infra.PointInput) error
+	Delete(ctx context.Context, ids []string) error
+	GetPayloadByPointID(ctx context.Context, pointID string) (map[string]interface{}, bool, error)
 }
 
 type Embedder interface {
@@ -57,12 +70,12 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 	if err != nil {
 		return err
 	}
-	normalized := normalize(content)
+	normalized := normalize(content, form.SegmentRules.Normalization)
 	contentHash := contentHash(normalized)
 	metadata := extractMetadata(normalized, form.MappingRules)
 	logger.Info("chunk_generation_started")
 	chunkStartedAt := time.Now()
-	generatedChunks, chunkStats, err := s.generateChunks(bundle.Document.ID, bundle.Version.ID, normalized, form.SegmentRules.Strategy, metadata)
+	generatedChunks, chunkStats, err := s.generateChunks(bundle.Document.ID, bundle.Version.ID, normalized, form.SegmentRules, metadata)
 	if err != nil {
 		return err
 	}
@@ -81,6 +94,9 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 		slog.Int("chunk_count", len(generatedChunks)),
 	)
 	if err := s.Store.TouchJob(ctx, job.ID); err != nil {
+		return err
+	}
+	if err := s.recoverPartialIngest(ctx, bundle.Version.ID); err != nil {
 		return err
 	}
 
@@ -132,6 +148,7 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 	for i, chunk := range generatedChunks {
 		embedJSON, _ := json.Marshal(vectors[i])
 		replacement = append(replacement, domain.Chunk{
+			ID:                ChunkRecordID(bundle.Version.ID, chunk.Index),
 			DocumentVersionID: bundle.Version.ID,
 			Index:             chunk.Index,
 			Text:              chunk.Text,
@@ -140,13 +157,8 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 		})
 	}
 
-	insertedChunks, err := s.Store.ReplaceChunks(ctx, bundle.Version.ID, replacement)
-	if err != nil {
-		return err
-	}
-
-	points := make([]infra.PointInput, 0, len(insertedChunks))
-	for _, chunk := range insertedChunks {
+	points := make([]infra.PointInput, 0, len(generatedChunks))
+	for _, chunk := range replacement {
 		vectorID := VectorPointID(bundle.Version.ID, chunk.Index)
 		metaMap := generatedChunks[chunk.Index].MetaMap
 		retrievalPayload := buildRetrievalPayload(metaMap)
@@ -168,6 +180,10 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 		})
 	}
 	if err := s.Qdrant.Upsert(ctx, points); err != nil {
+		return err
+	}
+	insertedChunks, err := s.Store.ReplaceChunks(ctx, bundle.Version.ID, replacement)
+	if err != nil {
 		return err
 	}
 	if oldChunkCount > len(insertedChunks) {
@@ -218,8 +234,14 @@ func decodeForm(b []byte) (schema.DocTypeForm, error) {
 	return form, nil
 }
 
-func normalize(in string) string {
-	return normalizeLegalText(in)
+func normalize(in string, mode string) string {
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	switch mode {
+	case "none":
+		return strings.TrimSpace(strings.ReplaceAll(in, "\r", ""))
+	default:
+		return normalizeLegalText(in)
+	}
 }
 
 func segment(text, strategy string) []string {
@@ -300,12 +322,12 @@ func chunkSegments(segments []string, size, overlap int) []string {
 	return chunks
 }
 
-func (s *Service) generateChunks(documentID, versionID, normalized, strategy string, metadata map[string]interface{}) ([]generatedChunk, chunkGenerationStats, error) {
-	if strategy == "legal_article" {
-		return newLegalChunkGenerator().Generate(documentID, versionID, normalized, metadata)
+func (s *Service) generateChunks(documentID, versionID, normalized string, segmentRules schema.SegmentRules, metadata map[string]interface{}) ([]generatedChunk, chunkGenerationStats, error) {
+	if segmentRules.Strategy == "legal_article" {
+		return newLegalChunkGenerator(segmentRules).Generate(documentID, versionID, normalized, metadata)
 	}
 
-	segments := segment(normalized, strategy)
+	segments := segment(normalized, segmentRules.Strategy)
 	chunks := chunkSegments(segments, s.Config.ChunkSize, s.Config.ChunkOverlap)
 	out := make([]generatedChunk, 0, len(chunks))
 	maxTokens := 0
@@ -451,6 +473,10 @@ func VectorPointID(versionID string, idx int) string {
 	return chunkUUID(versionID, idx)
 }
 
+func ChunkRecordID(versionID string, idx int) string {
+	return chunkUUID(versionID, idx)
+}
+
 func chunkUUID(documentVersionID string, index int) string {
 	key := fmt.Sprintf("%s_%d", documentVersionID, index)
 	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(key)).String()
@@ -478,7 +504,34 @@ func (s *Service) shouldSkipIngest(ctx context.Context, versionID string, chunkC
 	}
 	payloadContentHash, _ := payload["content_hash"].(string)
 	payloadFormHash, _ := payload["form_hash"].(string)
-	return payloadContentHash == contentHash && payloadFormHash == formHash, nil
+	if payloadContentHash != contentHash || payloadFormHash != formHash {
+		return false, nil
+	}
+	// Guard against stale tail vectors left by a crash after DB commit and before vector cleanup.
+	_, staleFound, err := s.Qdrant.GetPayloadByPointID(ctx, VectorPointID(versionID, chunkCount))
+	if err != nil {
+		return false, err
+	}
+	return !staleFound, nil
+}
+
+func (s *Service) recoverPartialIngest(ctx context.Context, versionID string) error {
+	existingChunkCount, err := s.Store.CountChunksByVersion(ctx, versionID)
+	if err != nil {
+		return err
+	}
+	if existingChunkCount == 0 {
+		return nil
+	}
+	_, found, err := s.Qdrant.GetPayloadByPointID(ctx, VectorPointID(versionID, 0))
+	if err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	s.logger().Warn("orphan_chunks_detected_cleaning", slog.String("document_version_id", versionID), slog.Int("chunk_count", existingChunkCount))
+	return s.Store.DeleteChunksByVersion(ctx, versionID)
 }
 
 func (s *Service) embedInBatches(ctx context.Context, chunks []string, batchSize int) ([][]float64, error) {

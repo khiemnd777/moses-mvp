@@ -73,7 +73,11 @@ b) Bảo vệ lợi ích hợp pháp của con.
 2. Nhà nước bảo hộ quyền trẻ em.
 `
 	base := map[string]interface{}{"document_type": "law"}
-	generator := newLegalChunkGenerator()
+	generator := newLegalChunkGenerator(schema.SegmentRules{
+		Strategy:      "legal_article",
+		Hierarchy:     "article>clause>point",
+		Normalization: "basic",
+	})
 
 	first, statsA, err := generator.Generate("doc-1", "54", text, base)
 	if err != nil {
@@ -103,8 +107,51 @@ b) Bảo vệ lợi ích hợp pháp của con.
 	if err := json.Unmarshal(first[0].Metadata, &meta); err != nil {
 		t.Fatalf("metadata unmarshal error = %v", err)
 	}
-	if meta["article"] != "81" || meta["clause"] != "1" {
+	structural, ok := meta["structural"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected structural metadata map, got %+v", meta)
+	}
+	if structural["article"] != "81" || structural["clause"] != "1" {
 		t.Fatalf("unexpected metadata: %+v", meta)
+	}
+}
+
+func TestLegalStructureParserRespectsConfiguredHierarchy(t *testing.T) {
+	parser := newLegalStructureParser(schema.SegmentRules{
+		Strategy:      "legal_article",
+		Hierarchy:     "article",
+		Normalization: "basic",
+	})
+	text := `
+Điều 5. Quyền
+1. Cha mẹ có nghĩa vụ.
+2. Nhà nước bảo hộ.
+`
+	doc := parser.Parse(text)
+	if len(doc.Articles) != 1 {
+		t.Fatalf("expected 1 article, got %d", len(doc.Articles))
+	}
+	if len(doc.Articles[0].Clauses) != 0 {
+		t.Fatalf("expected no clauses when hierarchy excludes clause, got %d", len(doc.Articles[0].Clauses))
+	}
+}
+
+func TestLegalStructureParserPointRegexDoesNotOvermatch(t *testing.T) {
+	parser := newLegalStructureParser(schema.SegmentRules{
+		Strategy:      "legal_article",
+		Hierarchy:     "article>clause>point",
+		Normalization: "basic",
+	})
+	text := `
+Điều 10. Quyền trẻ em
+1. Cha mẹ có nghĩa vụ bảo vệ con.
+`
+	doc := parser.Parse(text)
+	if len(doc.Articles) != 1 || len(doc.Articles[0].Clauses) != 1 {
+		t.Fatalf("unexpected parse result: %+v", doc)
+	}
+	if got := len(doc.Articles[0].Clauses[0].Points); got != 0 {
+		t.Fatalf("expected 0 points, got %d", got)
 	}
 }
 

@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -22,6 +23,8 @@ type chunkPart struct {
 	Text  string
 	Point string
 }
+
+var pointLinePattern = regexp.MustCompile(defaultLevelPatterns[levelPoint])
 
 func (s tokenSafeSplitter) Split(text string, point string) ([]chunkPart, error) {
 	if tokens := estimateTokenCount(text); tokens > hardAbortChunkTokens {
@@ -119,7 +122,7 @@ func splitByPointLines(text string) []string {
 			}
 			continue
 		}
-		if pointPattern.MatchString(trimmed) && len(current) > 0 {
+		if pointLinePattern.MatchString(trimmed) && len(current) > 0 {
 			out = append(out, strings.TrimSpace(strings.Join(current, "\n")))
 			current = current[:0]
 		}

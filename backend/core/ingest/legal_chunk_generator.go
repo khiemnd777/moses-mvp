@@ -3,6 +3,8 @@ package ingest
 import (
 	"fmt"
 	"strings"
+
+	"github.com/khiemnd777/legal_api/core/schema"
 )
 
 type legalChunkGenerator struct {
@@ -26,9 +28,9 @@ type chunkGenerationStats struct {
 	MaxChunkTokens int
 }
 
-func newLegalChunkGenerator() legalChunkGenerator {
+func newLegalChunkGenerator(rules schema.SegmentRules) legalChunkGenerator {
 	return legalChunkGenerator{
-		parser: legalStructureParser{},
+		parser: newLegalStructureParser(rules),
 		splitter: tokenSafeSplitter{
 			maxTokens:    defaultMaxChunkTokens,
 			targetTokens: defaultTargetChunkTokens,
@@ -80,6 +82,7 @@ func (g legalChunkGenerator) Generate(documentID, versionID, text string, baseMe
 			baseMetadata,
 			documentID,
 			versionID,
+			doc.Articles[0].Chapter,
 			"RAW_DOCUMENT",
 			"",
 			"RAW_DOCUMENT",
@@ -99,7 +102,7 @@ func (g legalChunkGenerator) Generate(documentID, versionID, text string, baseMe
 
 	for _, article := range doc.Articles {
 		if len(article.Clauses) == 0 {
-			if err := appendChunk(chunkLocation{Article: article.Number}, strings.TrimSpace(joinChunkSections(article.Header, article.Content))); err != nil {
+			if err := appendChunk(chunkLocation{Chapter: article.Chapter, Article: article.Number}, strings.TrimSpace(joinChunkSections(article.Header, article.Content))); err != nil {
 				return nil, chunkGenerationStats{}, err
 			}
 			continue
@@ -108,7 +111,7 @@ func (g legalChunkGenerator) Generate(documentID, versionID, text string, baseMe
 			prefix := joinChunkSections(article.Header, clauseLabel(clause.Number))
 			clauseText := strings.TrimSpace(joinChunkSections(prefix, clause.Content))
 			if tokens := estimateTokenCount(clauseText); tokens <= defaultMaxChunkTokens {
-				if err := appendChunk(chunkLocation{Article: article.Number, Clause: clause.Number}, clauseText); err != nil {
+				if err := appendChunk(chunkLocation{Chapter: article.Chapter, Article: article.Number, Clause: clause.Number}, clauseText); err != nil {
 					return nil, chunkGenerationStats{}, err
 				}
 				continue
@@ -121,13 +124,13 @@ func (g legalChunkGenerator) Generate(documentID, versionID, text string, baseMe
 						Point: point.Marker,
 					})
 				}
-				if err := g.appendSplitChunks(&chunks, &totalTokens, &maxTokens, baseMetadata, documentID, versionID, article.Number, clause.Number, prefix, pointParts); err != nil {
+				if err := g.appendSplitChunks(&chunks, &totalTokens, &maxTokens, baseMetadata, documentID, versionID, article.Chapter, article.Number, clause.Number, prefix, pointParts); err != nil {
 					return nil, chunkGenerationStats{}, err
 				}
 				continue
 			}
 
-			if err := g.appendSplitChunks(&chunks, &totalTokens, &maxTokens, baseMetadata, documentID, versionID, article.Number, clause.Number, prefix, []chunkPart{{Text: clause.Content}}); err != nil {
+			if err := g.appendSplitChunks(&chunks, &totalTokens, &maxTokens, baseMetadata, documentID, versionID, article.Chapter, article.Number, clause.Number, prefix, []chunkPart{{Text: clause.Content}}); err != nil {
 				return nil, chunkGenerationStats{}, err
 			}
 		}
@@ -148,7 +151,7 @@ func (g legalChunkGenerator) appendSplitChunks(
 	totalTokens *int,
 	maxTokens *int,
 	baseMetadata map[string]interface{},
-	documentID, versionID, articleNumber, clauseNumber, prefix string,
+	documentID, versionID, chapterNumber, articleNumber, clauseNumber, prefix string,
 	parts []chunkPart,
 ) error {
 	expanded := make([]chunkPart, 0)
@@ -171,6 +174,7 @@ func (g legalChunkGenerator) appendSplitChunks(
 		}
 		idx := len(*chunks)
 		metaRaw, metaMap, err := g.metadata.Build(baseMetadata, documentID, versionID, idx, chunkLocation{
+			Chapter: chapterNumber,
 			Article: articleNumber,
 			Clause:  clauseNumber,
 			Point:   part.Point,
