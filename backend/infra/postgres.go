@@ -17,6 +17,15 @@ type Store struct {
 	DB *sql.DB
 }
 
+type ChunkVectorRow struct {
+	ID                string
+	DocumentVersionID string
+	Index             int
+	Text              string
+	MetadataJSON      []byte
+	EmbeddingJSON     []byte
+}
+
 type jobErrorMeta struct {
 	Attempt int    `json:"attempt"`
 	Message string `json:"message,omitempty"`
@@ -163,6 +172,40 @@ func (s *Store) DeleteDocument(ctx context.Context, id string) (bool, error) {
 	return affected > 0, nil
 }
 
+func (s *Store) EnqueueDeleteVectorsRepair(ctx context.Context, collection, documentID, documentVersionID string, filter Filter) (bool, error) {
+	payload := VectorRepairPayload{
+		DocumentID:        documentID,
+		DocumentVersionID: documentVersionID,
+		Filter:            &filter,
+	}
+	taskKey := repairTaskKey("delete_vectors_by_filter", collection, payload)
+	return s.EnqueueVectorRepairTask(ctx, taskKey, "delete_vectors_by_filter", collection, payload)
+}
+
+func (s *Store) EnqueueRebuildVectorsRepair(ctx context.Context, collection, documentVersionID string) (bool, error) {
+	payload := VectorRepairPayload{DocumentVersionID: documentVersionID}
+	taskKey := repairTaskKey("rebuild_vectors_for_version", collection, payload)
+	return s.EnqueueVectorRepairTask(ctx, taskKey, "rebuild_vectors_for_version", collection, payload)
+}
+
+func (s *Store) ListDocumentVersionIDsByDocument(ctx context.Context, documentID string) ([]string, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id FROM document_versions WHERE document_id = $1`, documentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ListDocumentAssetPaths(ctx context.Context, documentID string) ([]string, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT storage_path FROM document_assets WHERE document_id=$1`, documentID)
 	if err != nil {
@@ -239,6 +282,33 @@ func (s *Store) GetDocumentVersion(ctx context.Context, id string) (domain.Docum
 	query := `SELECT id, document_id, asset_id, version, created_at FROM document_versions WHERE id=$1`
 	err := s.DB.QueryRowContext(ctx, query, id).Scan(&v.ID, &v.DocumentID, &v.AssetID, &v.Version, &v.CreatedAt)
 	return v, err
+}
+
+func (s *Store) DeleteDocumentVersion(ctx context.Context, id string) (bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ingest_jobs WHERE document_version_id = $1`, id); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chunks WHERE document_version_id = $1`, id); err != nil {
+		return false, err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM document_versions WHERE id = $1`, id)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return affected > 0, nil
 }
 
 func (s *Store) CreateIngestJob(ctx context.Context, documentVersionID string) (string, error) {
@@ -537,6 +607,91 @@ RETURNING id
 func (s *Store) DeleteChunksByVersion(ctx context.Context, documentVersionID string) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM chunks WHERE document_version_id = $1`, documentVersionID)
 	return err
+}
+
+func (s *Store) ListChunkIDsByVersion(ctx context.Context, documentVersionID string) ([]string, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id FROM chunks WHERE document_version_id = $1`, documentVersionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListChunkVectorsByVersion(ctx context.Context, documentVersionID string, afterIdx, limit int) ([]ChunkVectorRow, error) {
+	if limit <= 0 {
+		limit = 128
+	}
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT id, document_version_id, idx, text, metadata_json, embedding_json
+FROM chunks
+WHERE document_version_id = $1 AND idx > $2
+ORDER BY idx ASC
+LIMIT $3
+`, documentVersionID, afterIdx, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]ChunkVectorRow, 0, limit)
+	for rows.Next() {
+		var row ChunkVectorRow
+		if err := rows.Scan(&row.ID, &row.DocumentVersionID, &row.Index, &row.Text, &row.MetadataJSON, &row.EmbeddingJSON); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListChunkVectorRefsAfterID(ctx context.Context, afterID string, limit int) ([]ChunkVectorRow, error) {
+	if limit <= 0 {
+		limit = 256
+	}
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if afterID == "" {
+		rows, err = s.DB.QueryContext(ctx, `
+SELECT id, document_version_id, idx, COALESCE(embedding_json, '[]'::jsonb), COALESCE(metadata_json, '{}'::jsonb)
+FROM chunks
+ORDER BY id ASC
+LIMIT $1
+`, limit)
+	} else {
+		rows, err = s.DB.QueryContext(ctx, `
+SELECT id, document_version_id, idx, COALESCE(embedding_json, '[]'::jsonb), COALESCE(metadata_json, '{}'::jsonb)
+FROM chunks
+WHERE id > $1::uuid
+ORDER BY id ASC
+LIMIT $2
+`, afterID, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]ChunkVectorRow, 0, limit)
+	for rows.Next() {
+		var row ChunkVectorRow
+		if err := rows.Scan(&row.ID, &row.DocumentVersionID, &row.Index, &row.EmbeddingJSON, &row.MetadataJSON); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) CountChunksByVersion(ctx context.Context, documentVersionID string) (int, error) {

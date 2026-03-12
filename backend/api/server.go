@@ -60,7 +60,7 @@ func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.C
 }
 
 func (s *Server) RegisterRoutes() {
-	h := NewHandler(s.Store, s.Storage, s.Retriever, s.Answer, s.Tones, s.Ingest, s.Logger, s.TraceRepo)
+	h := NewHandler(s.Store, s.Storage, s.Qdrant, s.Retriever, s.Answer, s.Tones, s.Ingest, s.Logger, s.TraceRepo)
 	traceMiddleware := answerTraceMiddleware(s.Logger)
 	s.App.Post("/doc-types", h.CreateDocType)
 	s.App.Get("/doc-types", h.ListDocTypes)
@@ -71,6 +71,7 @@ func (s *Server) RegisterRoutes() {
 	s.App.Delete("/documents/:id", h.DeleteDocument)
 	s.App.Post("/documents/:id/assets", h.AddDocumentAsset)
 	s.App.Post("/documents/:id/versions", h.CreateDocumentVersion)
+	s.App.Delete("/document-versions/:id", h.DeleteDocumentVersion)
 	s.App.Get("/ingest-jobs", h.ListIngestJobs)
 	s.App.Delete("/ingest-jobs/:id", h.DeleteIngestJob)
 	s.App.Post("/document-versions/:id/ingest", h.EnqueueIngest)

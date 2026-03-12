@@ -15,6 +15,7 @@ import (
 	"github.com/khiemnd777/legal_api/core/answer"
 	"github.com/khiemnd777/legal_api/core/retrieval"
 	"github.com/khiemnd777/legal_api/domain"
+	"github.com/khiemnd777/legal_api/infra"
 	"github.com/khiemnd777/legal_api/observability"
 	"github.com/khiemnd777/legal_api/pkg/logging"
 )
@@ -46,6 +47,18 @@ func (f *fakeStore) GetDocument(ctx context.Context, id string) (domain.Document
 }
 func (f *fakeStore) ListDocuments(ctx context.Context) ([]domain.Document, error) { return nil, nil }
 func (f *fakeStore) DeleteDocument(ctx context.Context, id string) (bool, error)  { return false, nil }
+func (f *fakeStore) ListDocumentVersionIDsByDocument(ctx context.Context, documentID string) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeStore) ListChunkIDsByVersion(ctx context.Context, documentVersionID string) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeStore) EnqueueDeleteVectorsRepair(ctx context.Context, collection, documentID, documentVersionID string, filter infra.Filter) (bool, error) {
+	return true, nil
+}
+func (f *fakeStore) EnqueueRebuildVectorsRepair(ctx context.Context, collection, documentVersionID string) (bool, error) {
+	return true, nil
+}
 func (f *fakeStore) ListDocumentAssetPaths(ctx context.Context, documentID string) ([]string, error) {
 	return nil, nil
 }
@@ -63,6 +76,9 @@ func (f *fakeStore) CreateDocumentVersion(ctx context.Context, documentID, asset
 }
 func (f *fakeStore) GetDocumentVersion(ctx context.Context, id string) (domain.DocumentVersion, error) {
 	return domain.DocumentVersion{}, nil
+}
+func (f *fakeStore) DeleteDocumentVersion(ctx context.Context, id string) (bool, error) {
+	return false, nil
 }
 func (f *fakeStore) ListIngestJobs(ctx context.Context) ([]domain.IngestJob, error) { return nil, nil }
 func (f *fakeStore) DeleteIngestJob(ctx context.Context, id string) (bool, error)   { return false, nil }
@@ -285,6 +301,7 @@ func newTestHandler(baseURL string, repo observability.TraceRepository) *Handler
 	client.BaseURL = baseURL
 	return NewHandler(
 		&fakeStore{},
+		nil,
 		nil,
 		&fakeRetriever{results: []retrieval.Result{{
 			ChunkID:    "chunk-1",

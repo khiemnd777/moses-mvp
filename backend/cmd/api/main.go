@@ -58,6 +58,10 @@ func main() {
 	}
 	_ = store.EnsureDocTypeSeed(context.Background())
 	_ = store.EnsureAIConfigSeed(context.Background())
+	if err := store.EnsureVectorRepairSchema(context.Background()); err != nil {
+		logger.Error("failed to ensure vector repair schema", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 	defaultTone, err := prompt.Load(cfg.Prompts.ToneDefault)
 	if err != nil {
 		logger.Error("failed to load default tone", slog.String("error", err.Error()))
@@ -77,7 +81,19 @@ func main() {
 	storage := infra.NewStorage(cfg.Storage.RootDir)
 	embed := embedding.NewClient(cfg.OpenAI.APIKey, cfg.OpenAI.EmbeddingsModel)
 	qdrant := infra.NewQdrantClient(cfg.Qdrant.URL, cfg.Qdrant.Collection)
-	_ = qdrant.EnsureCollection(context.Background(), 1536)
+	vectorDim, err := embedding.ExpectedDimensions(cfg.OpenAI.EmbeddingsModel)
+	if err != nil {
+		logger.Error("failed to resolve embedding dimension", slog.String("model", cfg.OpenAI.EmbeddingsModel), slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	if err := qdrant.EnsureCollection(context.Background(), vectorDim); err != nil {
+		logger.Error("failed to ensure qdrant collection", slog.String("collection", cfg.Qdrant.Collection), slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	if err := qdrant.ValidateCollectionDimension(context.Background(), vectorDim); err != nil {
+		logger.Error("qdrant collection validation failed", slog.String("collection", cfg.Qdrant.Collection), slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 	ansClient := answer.NewClient(cfg.OpenAI.APIKey, cfg.OpenAI.ChatModel)
 	tones := map[string]string{
 		"default":   defaultTone.Content,

@@ -54,11 +54,27 @@ func main() {
 	}
 	_ = store.EnsureDocTypeSeed(context.Background())
 	_ = store.EnsureAIConfigSeed(context.Background())
+	if err := store.EnsureVectorRepairSchema(context.Background()); err != nil {
+		logger.Error("failed to ensure vector repair schema", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 
 	storage := infra.NewStorage(cfg.Storage.RootDir)
 	embed := embedding.NewClient(cfg.OpenAI.APIKey, cfg.OpenAI.EmbeddingsModel)
 	qdrant := infra.NewQdrantClient(cfg.Qdrant.URL, cfg.Qdrant.Collection)
-	_ = qdrant.EnsureCollection(context.Background(), 1536)
+	vectorDim, err := embedding.ExpectedDimensions(cfg.OpenAI.EmbeddingsModel)
+	if err != nil {
+		logger.Error("failed to resolve embedding dimension", slog.String("model", cfg.OpenAI.EmbeddingsModel), slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	if err := qdrant.EnsureCollection(context.Background(), vectorDim); err != nil {
+		logger.Error("failed to ensure qdrant collection", slog.String("collection", cfg.Qdrant.Collection), slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	if err := qdrant.ValidateCollectionDimension(context.Background(), vectorDim); err != nil {
+		logger.Error("qdrant collection validation failed", slog.String("collection", cfg.Qdrant.Collection), slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 
 	service := &ingest.Service{
 		Store:  store,
@@ -90,6 +106,11 @@ func main() {
 
 		if err := requeueFailedJobs(ctx, logger, store, retryScanLimit, maxAttempts); err != nil {
 			logger.Error("failed to requeue failed jobs", slog.String("error", err.Error()))
+			time.Sleep(pollInterval)
+			continue
+		}
+		if _, err := infra.RunVectorRepairPass(ctx, logger, store, qdrant, 20); err != nil {
+			logger.Error("failed to run vector repair pass", slog.String("error", err.Error()))
 			time.Sleep(pollInterval)
 			continue
 		}

@@ -18,6 +18,8 @@ migrate:
 	psql $(POSTGRES_DSN) -f infra/migrations/002_phase1_legal_rag_config.sql
 	psql $(POSTGRES_DSN) -f infra/migrations/003_phase1_ai_config_safety.sql
 	psql $(POSTGRES_DSN) -f infra/migrations/004_phase2b_retrieval_config_management.sql
+	psql $(POSTGRES_DSN) -f infra/migrations/005_ai_answer_traces.sql
+	psql $(POSTGRES_DSN) -f infra/migrations/006_phase15_vector_repair.sql
 
 docker-up:
 	docker compose -f docker/docker-compose.yml up --build

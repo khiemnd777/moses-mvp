@@ -26,6 +26,7 @@ import (
 type Handler struct {
 	Store     handlerStore
 	Storage   *infra.Storage
+	Qdrant    *infra.QdrantClient
 	Retriever retriever
 	AnswerCli *answer.Client
 	Tones     map[string]string
@@ -40,10 +41,11 @@ type Handler struct {
 	runtimeCfgTTL      time.Duration
 }
 
-func NewHandler(store handlerStore, storage *infra.Storage, retriever retriever, ans *answer.Client, tones map[string]string, ingestSvc *ingest.Service, logger *slog.Logger, traceRepo observability.TraceRepository) *Handler {
+func NewHandler(store handlerStore, storage *infra.Storage, qdrant *infra.QdrantClient, retriever retriever, ans *answer.Client, tones map[string]string, ingestSvc *ingest.Service, logger *slog.Logger, traceRepo observability.TraceRepository) *Handler {
 	return &Handler{
 		Store:         store,
 		Storage:       storage,
+		Qdrant:        qdrant,
 		Retriever:     retriever,
 		AnswerCli:     ans,
 		Tones:         tones,
@@ -309,6 +311,17 @@ func (h *Handler) DeleteDocument(c *fiber.Ctx) error {
 	if id == "" {
 		return respondError(c, 400, "validation", "document id is required", nil)
 	}
+	// Consistency policy (Phase 1.5):
+	// 1) Delete from Postgres first (source of truth for retrieval path).
+	// 2) Cleanup vectors in Qdrant after DB commit.
+	// If step 2 fails, enqueue a durable repair task. This avoids serving live DB
+	// rows with missing vectors (worse for retrieval correctness) and makes any
+	// orphan vectors explicitly repairable and auditable.
+	versionIDs, err := h.Store.ListDocumentVersionIDsByDocument(c.Context(), id)
+	if err != nil {
+		return respondError(c, 500, "db_error", "failed to load document versions", err.Error())
+	}
+
 	assetPaths, err := h.Store.ListDocumentAssetPaths(c.Context(), id)
 	if err != nil {
 		return respondError(c, 500, "db_error", "failed to load document assets", err.Error())
@@ -320,10 +333,64 @@ func (h *Handler) DeleteDocument(c *fiber.Ctx) error {
 	if !deleted {
 		return respondError(c, 404, "not_found", "document not found", nil)
 	}
+	vectorCleanupFailed := false
+	if h.Qdrant == nil {
+		for _, path := range assetPaths {
+			if err := h.Storage.Remove(path); err != nil {
+				h.Logger.Error("failed to remove document asset file", slog.String("document_id", id), slog.String("path", path), slog.String("error", err.Error()))
+			}
+		}
+		return c.SendStatus(fiber.StatusNoContent)
+	}
+	for _, versionID := range versionIDs {
+		filter := infra.Filter{
+			Must: []infra.FieldCondition{{
+				Key:   "document_version_id",
+				Match: infra.FieldMatch{Value: versionID},
+			}},
+		}
+		started := time.Now()
+		h.Logger.Info("vector_cleanup_started",
+			slog.String("document_id", id),
+			slog.String("document_version_id", versionID),
+			slog.String("collection", h.Qdrant.Collection),
+		)
+		if err := h.Qdrant.DeleteByFilter(c.Context(), h.Qdrant.Collection, filter); err != nil {
+			vectorCleanupFailed = true
+			enqueued, enqueueErr := h.Store.EnqueueDeleteVectorsRepair(c.Context(), h.Qdrant.Collection, id, versionID, filter)
+			if enqueueErr != nil {
+				h.Logger.Error("vector_cleanup_failed_repair_enqueue_failed",
+					slog.String("document_id", id),
+					slog.String("document_version_id", versionID),
+					slog.String("collection", h.Qdrant.Collection),
+					slog.String("error", err.Error()),
+					slog.String("enqueue_error", enqueueErr.Error()),
+				)
+				continue
+			}
+			h.Logger.Error("vector_cleanup_failed_repair_enqueued",
+				slog.String("document_id", id),
+				slog.String("document_version_id", versionID),
+				slog.String("collection", h.Qdrant.Collection),
+				slog.String("error", err.Error()),
+				slog.Bool("repair_enqueued", enqueued),
+			)
+			continue
+		}
+		h.Logger.Info("vector_cleanup_completed",
+			slog.String("document_id", id),
+			slog.String("document_version_id", versionID),
+			slog.String("collection", h.Qdrant.Collection),
+			slog.Duration("duration", time.Since(started)),
+		)
+	}
 	for _, path := range assetPaths {
 		if err := h.Storage.Remove(path); err != nil {
 			h.Logger.Error("failed to remove document asset file", slog.String("document_id", id), slog.String("path", path), slog.String("error", err.Error()))
 		}
+	}
+	if vectorCleanupFailed {
+		return respondError(c, 500, "partial_delete", "document deleted but vector cleanup pending repair", nil)
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
@@ -403,6 +470,70 @@ func (h *Handler) CreateDocumentVersion(c *fiber.Ctx) error {
 		return respondError(c, 500, "db_error", "failed to create document version", err.Error())
 	}
 	return c.JSON(fiber.Map{"id": id})
+}
+
+func (h *Handler) DeleteDocumentVersion(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return respondError(c, 400, "validation", "document version id is required", nil)
+	}
+	version, err := h.Store.GetDocumentVersion(c.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return respondError(c, 404, "not_found", "document version not found", nil)
+		}
+		return respondError(c, 500, "db_error", "failed to load document version", err.Error())
+	}
+	deleted, err := h.Store.DeleteDocumentVersion(c.Context(), id)
+	if err != nil {
+		return respondError(c, 500, "db_error", "failed to delete document version", err.Error())
+	}
+	if !deleted {
+		return respondError(c, 404, "not_found", "document version not found", nil)
+	}
+	if h.Qdrant == nil {
+		return c.SendStatus(fiber.StatusNoContent)
+	}
+	filter := infra.Filter{
+		Must: []infra.FieldCondition{{
+			Key:   "document_version_id",
+			Match: infra.FieldMatch{Value: id},
+		}},
+	}
+	started := time.Now()
+	h.Logger.Info("vector_cleanup_started",
+		slog.String("document_id", version.DocumentID),
+		slog.String("document_version_id", id),
+		slog.String("collection", h.Qdrant.Collection),
+	)
+	if err := h.Qdrant.DeleteByFilter(c.Context(), h.Qdrant.Collection, filter); err != nil {
+		enqueued, enqueueErr := h.Store.EnqueueDeleteVectorsRepair(c.Context(), h.Qdrant.Collection, version.DocumentID, id, filter)
+		if enqueueErr != nil {
+			h.Logger.Error("vector_cleanup_failed_repair_enqueue_failed",
+				slog.String("document_id", version.DocumentID),
+				slog.String("document_version_id", id),
+				slog.String("collection", h.Qdrant.Collection),
+				slog.String("error", err.Error()),
+				slog.String("enqueue_error", enqueueErr.Error()),
+			)
+			return respondError(c, 500, "partial_delete", "document version deleted but vector cleanup repair enqueue failed", enqueueErr.Error())
+		}
+		h.Logger.Error("vector_cleanup_failed_repair_enqueued",
+			slog.String("document_id", version.DocumentID),
+			slog.String("document_version_id", id),
+			slog.String("collection", h.Qdrant.Collection),
+			slog.String("error", err.Error()),
+			slog.Bool("repair_enqueued", enqueued),
+		)
+		return respondError(c, 500, "partial_delete", "document version deleted but vector cleanup pending repair", nil)
+	}
+	h.Logger.Info("vector_cleanup_completed",
+		slog.String("document_id", version.DocumentID),
+		slog.String("document_version_id", id),
+		slog.String("collection", h.Qdrant.Collection),
+		slog.Duration("duration", time.Since(started)),
+	)
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 func (h *Handler) ListIngestJobs(c *fiber.Ctx) error {

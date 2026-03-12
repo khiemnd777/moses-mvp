@@ -5,6 +5,7 @@ import (
 
 	"github.com/khiemnd777/legal_api/core/retrieval"
 	"github.com/khiemnd777/legal_api/domain"
+	"github.com/khiemnd777/legal_api/infra"
 )
 
 type handlerStore interface {
@@ -19,12 +20,17 @@ type handlerStore interface {
 	GetDocument(ctx context.Context, id string) (domain.Document, error)
 	ListDocuments(ctx context.Context) ([]domain.Document, error)
 	DeleteDocument(ctx context.Context, id string) (bool, error)
+	ListDocumentVersionIDsByDocument(ctx context.Context, documentID string) ([]string, error)
+	ListChunkIDsByVersion(ctx context.Context, documentVersionID string) ([]string, error)
+	EnqueueDeleteVectorsRepair(ctx context.Context, collection, documentID, documentVersionID string, filter infra.Filter) (bool, error)
+	EnqueueRebuildVectorsRepair(ctx context.Context, collection, documentVersionID string) (bool, error)
 	ListDocumentAssetPaths(ctx context.Context, documentID string) ([]string, error)
 	ListDocumentAssets(ctx context.Context, documentID string) ([]domain.DocumentAssetWithVersions, error)
 	CreateDocumentAsset(ctx context.Context, documentID, fileName, contentType, storagePath string) (string, error)
 	GetDocumentAsset(ctx context.Context, id string) (domain.DocumentAsset, error)
 	CreateDocumentVersion(ctx context.Context, documentID, assetID string) (string, error)
 	GetDocumentVersion(ctx context.Context, id string) (domain.DocumentVersion, error)
+	DeleteDocumentVersion(ctx context.Context, id string) (bool, error)
 	ListIngestJobs(ctx context.Context) ([]domain.IngestJob, error)
 	DeleteIngestJob(ctx context.Context, id string) (bool, error)
 	EnqueueIngestJob(ctx context.Context, documentVersionID string) (domain.IngestJob, bool, error)
