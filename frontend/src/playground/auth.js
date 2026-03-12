@@ -1,4 +1,4 @@
-import apiClient, { AUTH_TOKEN_KEY, PLAYGROUND_LOGIN_PATH } from './apiClient.js';
+import apiClient, { AUTH_TOKEN_KEY, CHANGE_PASSWORD_PATH, PLAYGROUND_LOGIN_PATH } from './apiClient.js';
 
 export const getToken = () => window.localStorage.getItem(AUTH_TOKEN_KEY);
 
@@ -25,16 +25,21 @@ export const me = async () => {
   return data;
 };
 
-export const verifyToken = async () => {
+export const getSessionState = async () => {
   const token = getToken();
-  if (!token) return false;
+  if (!token) return { valid: false, mustChangePassword: false };
   try {
-    await me();
-    return true;
+    const identity = await me();
+    return { valid: true, mustChangePassword: Boolean(identity?.must_change_password) };
   } catch {
     clearToken();
-    return false;
+    return { valid: false, mustChangePassword: false };
   }
+};
+
+export const verifyToken = async () => {
+  const state = await getSessionState();
+  return state.valid;
 };
 
 export const logout = () => {
@@ -42,4 +47,4 @@ export const logout = () => {
   window.location.assign(PLAYGROUND_LOGIN_PATH);
 };
 
-export { AUTH_TOKEN_KEY, PLAYGROUND_LOGIN_PATH };
+export { AUTH_TOKEN_KEY, PLAYGROUND_LOGIN_PATH, CHANGE_PASSWORD_PATH };

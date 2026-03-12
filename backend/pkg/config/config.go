@@ -2,9 +2,16 @@ package config
 
 import (
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+type VectorRepairConfig struct {
+	Enabled         bool          `yaml:"enabled"`
+	Interval        time.Duration `yaml:"interval"`
+	MaxTasksPerPass int           `yaml:"max_tasks_per_pass"`
+}
 
 type Config struct {
 	Server struct {
@@ -37,10 +44,17 @@ type Config struct {
 		ToneAcademic  string `yaml:"tone_academic"`
 		ToneProcedure string `yaml:"tone_procedure"`
 	} `yaml:"prompts"`
+	VectorRepair VectorRepairConfig `yaml:"vector_repair"`
 }
 
 func Load(path string) (Config, error) {
-	var cfg Config
+	cfg := Config{
+		VectorRepair: VectorRepairConfig{
+			Enabled:         true,
+			Interval:        30 * time.Second,
+			MaxTasksPerPass: 20,
+		},
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return cfg, err

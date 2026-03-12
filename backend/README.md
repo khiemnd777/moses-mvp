@@ -96,6 +96,30 @@ CONFIG_PATH=config/config.local.yaml go run ./cmd/api
 
 Stop it with `Ctrl+C`.
 
+## 4) Database migrations (with version tracking)
+
+Migration state is tracked in Postgres table `schema_migrations`.
+
+Apply pending migrations:
+```bash
+cd backend
+make migrate
+```
+
+Show applied versions:
+```bash
+cd backend
+make migrate-status
+```
+
+If your database already exists and was migrated before this tracking was added, baseline first (mark as applied without executing SQL files):
+```bash
+cd backend
+make migrate-baseline
+```
+
+Then use `make migrate` normally for new migration files.
+
 ---
 
 Notes:

@@ -69,6 +69,10 @@ func main() {
 	}
 	_ = store.EnsureDocTypeSeed(context.Background())
 	_ = store.EnsureAIConfigSeed(context.Background())
+	if err := store.EnsureAuthSchema(context.Background()); err != nil {
+		logger.Error("failed to ensure auth schema", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 	if err := store.EnsureVectorRepairSchema(context.Background()); err != nil {
 		logger.Error("failed to ensure vector repair schema", slog.String("error", err.Error()))
 		os.Exit(1)

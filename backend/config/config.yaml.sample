@@ -21,3 +21,7 @@ prompts:
   tone_default: "config/prompts/tone_default.yaml"
   tone_academic: "config/prompts/tone_academic.yaml"
   tone_procedure: "config/prompts/tone_procedure.yaml"
+vector_repair:
+  enabled: true
+  interval: 30s
+  max_tasks_per_pass: 20

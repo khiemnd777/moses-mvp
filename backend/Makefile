@@ -1,8 +1,19 @@
 APP_NAME=github.com/khiemnd777/legal_api
 CONFIG_PATH?=config/config.yaml
 POSTGRES_DSN?=postgres://legal:legal@localhost:5433/legal_rag?sslmode=disable
+MIGRATIONS_DIR?=infra/migrations
+MIGRATION_TABLE?=schema_migrations
+MIGRATION_FILES?=\
+	$(MIGRATIONS_DIR)/001_init.sql \
+	$(MIGRATIONS_DIR)/002_phase1_legal_rag_config.sql \
+	$(MIGRATIONS_DIR)/003_phase1_ai_config_safety.sql \
+	$(MIGRATIONS_DIR)/004_phase2b_retrieval_config_management.sql \
+	$(MIGRATIONS_DIR)/005_ai_answer_traces.sql \
+	$(MIGRATIONS_DIR)/006_phase15_vector_repair.sql \
+	$(MIGRATIONS_DIR)/007_auth_users.sql \
+	$(MIGRATIONS_DIR)/008_force_password_change.sql
 
-.PHONY: api worker run migrate docker-up docker-down
+.PHONY: api worker run migrate migrate-baseline migrate-status docker-up docker-down
 
 api:
 	go build -o bin/api ./cmd/api
@@ -14,12 +25,32 @@ run:
 	CONFIG_PATH=$(CONFIG_PATH) go run ./cmd/api
 
 migrate:
-	psql $(POSTGRES_DSN) -f infra/migrations/001_init.sql
-	psql $(POSTGRES_DSN) -f infra/migrations/002_phase1_legal_rag_config.sql
-	psql $(POSTGRES_DSN) -f infra/migrations/003_phase1_ai_config_safety.sql
-	psql $(POSTGRES_DSN) -f infra/migrations/004_phase2b_retrieval_config_management.sql
-	psql $(POSTGRES_DSN) -f infra/migrations/005_ai_answer_traces.sql
-	psql $(POSTGRES_DSN) -f infra/migrations/006_phase15_vector_repair.sql
+	@set -eu; \
+	psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS $(MIGRATION_TABLE) (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"; \
+	for file in $(MIGRATION_FILES); do \
+		version=$$(basename "$$file"); \
+		applied=$$(psql "$(POSTGRES_DSN)" -At -v ON_ERROR_STOP=1 -c "SELECT 1 FROM $(MIGRATION_TABLE) WHERE version = '$$version' LIMIT 1;"); \
+		if [ "$$applied" = "1" ]; then \
+			echo "Skipping $$version (already applied)"; \
+			continue; \
+		fi; \
+		echo "Applying $$version"; \
+		psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -f "$$file"; \
+		psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "INSERT INTO $(MIGRATION_TABLE) (version) VALUES ('$$version');"; \
+	done
+
+migrate-baseline:
+	@set -eu; \
+	psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS $(MIGRATION_TABLE) (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"; \
+	for file in $(MIGRATION_FILES); do \
+		version=$$(basename "$$file"); \
+		psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "INSERT INTO $(MIGRATION_TABLE) (version) VALUES ('$$version') ON CONFLICT (version) DO NOTHING;"; \
+		echo "Baselined $$version"; \
+	done
+
+migrate-status:
+	psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS $(MIGRATION_TABLE) (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"
+	psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "SELECT version, applied_at FROM $(MIGRATION_TABLE) ORDER BY version;"
 
 docker-up:
 	docker compose -f docker/docker-compose.yml up --build

@@ -81,11 +81,13 @@ type AnswerLog struct {
 }
 
 type User struct {
-	ID           string
-	Username     string
-	PasswordHash string
-	Role         string
-	CreatedAt    time.Time
+	ID                 string
+	Username           string
+	PasswordHash       string
+	Role               string
+	MustChangePassword bool
+	PasswordChangedAt  *time.Time
+	CreatedAt          time.Time
 }
 
 type AIGuardPolicy struct {

@@ -41,6 +41,24 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{DB: db}
 }
 
+func (s *Store) EnsureAuthSchema(ctx context.Context) error {
+	_, err := s.DB.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL,
+  must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+  password_changed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+`)
+	return err
+}
+
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var count int
 	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(1) FROM users`).Scan(&count)
@@ -49,20 +67,50 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (domain.User, error) {
 	var user domain.User
-	query := `SELECT id, username, password_hash, role, created_at FROM users WHERE username = $1`
-	err := s.DB.QueryRowContext(ctx, query, username).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Role, &user.CreatedAt)
+	query := `SELECT id, username, password_hash, role, must_change_password, password_changed_at, created_at FROM users WHERE username = $1`
+	err := s.DB.QueryRowContext(ctx, query, username).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Role, &user.MustChangePassword, &user.PasswordChangedAt, &user.CreatedAt)
+	return user, err
+}
+
+func (s *Store) GetUserByID(ctx context.Context, id string) (domain.User, error) {
+	var user domain.User
+	query := `SELECT id, username, password_hash, role, must_change_password, password_changed_at, created_at FROM users WHERE id = $1`
+	err := s.DB.QueryRowContext(ctx, query, id).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Role, &user.MustChangePassword, &user.PasswordChangedAt, &user.CreatedAt)
 	return user, err
 }
 
 func (s *Store) CreateUser(ctx context.Context, user domain.User) error {
 	return s.DB.QueryRowContext(
 		ctx,
-		`INSERT INTO users (id, username, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING created_at`,
+		`INSERT INTO users (id, username, password_hash, role, must_change_password, password_changed_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING created_at`,
 		user.ID,
 		user.Username,
 		user.PasswordHash,
 		user.Role,
+		user.MustChangePassword,
+		user.PasswordChangedAt,
 	).Scan(&user.CreatedAt)
+}
+
+func (s *Store) UpdateUserPassword(ctx context.Context, userID, passwordHash string, changedAt time.Time) error {
+	result, err := s.DB.ExecContext(
+		ctx,
+		`UPDATE users SET password_hash = $1, must_change_password = FALSE, password_changed_at = $2 WHERE id = $3`,
+		passwordHash,
+		changedAt,
+		userID,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *Store) CreateDocType(ctx context.Context, code, name string, formJSON []byte, formHash string) (string, error) {
@@ -984,11 +1032,16 @@ INSERT INTO ai_guard_policies (
 	on_empty_retrieval,
 	on_low_confidence
 )
-VALUES ($1, $2, $3, $4, $5, $6)
+SELECT
+	$1,
+	CASE
+		WHEN EXISTS (SELECT 1 FROM ai_guard_policies WHERE enabled = TRUE) THEN FALSE
+		ELSE TRUE
+	END,
+	$2, $3, $4, $5
 ON CONFLICT (name) DO NOTHING
-`,
+	`,
 		"default_legal_guard_policy",
-		true,
 		1,
 		0.7,
 		"refuse",
@@ -1008,16 +1061,20 @@ INSERT INTO ai_prompts (
 	retry,
 	enabled
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+SELECT
+	$1, $2, $3, $4, $5, $6,
+	CASE
+		WHEN EXISTS (SELECT 1 FROM ai_prompts WHERE prompt_type = $2 AND enabled = TRUE) THEN FALSE
+		ELSE TRUE
+	END
 ON CONFLICT (name) DO NOTHING
-`,
+	`,
 		"legal_guard_prompt",
 		"legal_guard",
 		"You are a Vietnamese legal assistant.\nUse ONLY the provided sources.\nNever invent legal provisions.\nIf sources are insufficient, say that no legal basis was found.\nCite legal provisions in human-readable format.",
 		0.2,
 		1200,
 		2,
-		true,
 	)
 	if err != nil {
 		return err
@@ -1051,11 +1108,16 @@ INSERT INTO ai_retrieval_configs (
 	preferred_doc_types_json,
 	legal_domain_defaults_json
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+SELECT
+	$1,
+	CASE
+		WHEN EXISTS (SELECT 1 FROM ai_retrieval_configs WHERE enabled = TRUE) THEN FALSE
+		ELSE TRUE
+	END,
+	$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
 ON CONFLICT (name) DO NOTHING
-`,
+	`,
 		"default_legal_retrieval_config",
-		true,
 		5,
 		true,
 		0.55,

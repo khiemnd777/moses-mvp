@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
@@ -45,10 +46,18 @@ func (h *Handlers) Me(c *fiber.Ctx) error {
 	if !ok {
 		return unauthorized(c)
 	}
+	user, err := h.service.GetUserByID(c.UserContext(), identity.UserID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return unauthorized(c)
+		}
+		return respondError(c, fiber.StatusInternalServerError, "internal_error", "failed to load user")
+	}
 	return c.JSON(fiber.Map{
-		"id":       identity.UserID,
-		"username": identity.Username,
-		"role":     identity.Role,
+		"id":                   identity.UserID,
+		"username":             identity.Username,
+		"role":                 identity.Role,
+		"must_change_password": user.MustChangePassword,
 	})
 }
 

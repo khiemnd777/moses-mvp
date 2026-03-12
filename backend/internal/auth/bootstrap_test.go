@@ -32,6 +32,9 @@ func TestBootstrapAdminCreatesAdminWhenUsersTableEmpty(t *testing.T) {
 	if user.PasswordHash == "super-secret" {
 		t.Fatalf("password should be hashed")
 	}
+	if !user.MustChangePassword {
+		t.Fatalf("expected must_change_password to be true for bootstrap admin")
+	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte("super-secret")); err != nil {
 		t.Fatalf("password hash mismatch: %v", err)
 	}

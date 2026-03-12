@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -11,7 +13,7 @@ type contextKey string
 
 const identityContextKey contextKey = "auth.identity"
 
-func RequireAuth(jwtManager *JWTManager) fiber.Handler {
+func RequireAuth(jwtManager *JWTManager, store UserStore) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		raw := strings.TrimSpace(c.Get("Authorization"))
 		if raw == "" || !strings.HasPrefix(strings.ToLower(raw), "bearer ") {
@@ -24,6 +26,29 @@ func RequireAuth(jwtManager *JWTManager) fiber.Handler {
 		identity, err := jwtManager.ParseAndValidate(token)
 		if err != nil {
 			return unauthorized(c)
+		}
+		user, err := store.GetUserByID(c.UserContext(), identity.UserID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return unauthorized(c)
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    "internal_error",
+					"message": "failed to authorize user",
+				},
+			})
+		}
+		if user.MustChangePassword {
+			path := c.Path()
+			if path != "/auth/change-password" && path != "/auth/me" {
+				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+					"error": fiber.Map{
+						"code":    "password_change_required",
+						"message": "password_change_required",
+					},
+				})
+			}
 		}
 		c.Locals(string(identityContextKey), identity)
 		userCtx := context.WithValue(c.UserContext(), identityContextKey, identity)

@@ -9,6 +9,7 @@ import (
 )
 
 var ErrInvalidCredentials = errors.New("invalid credentials")
+var ErrWeakPassword = errors.New("weak password")
 
 type Identity struct {
 	UserID   string `json:"user_id"`
@@ -22,14 +23,22 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	AccessToken string `json:"access_token"`
-	ExpiresIn   int    `json:"expires_in"`
+	AccessToken        string `json:"access_token"`
+	ExpiresIn          int    `json:"expires_in"`
+	MustChangePassword bool   `json:"must_change_password"`
+}
+
+type ChangePasswordRequest struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
 }
 
 type UserStore interface {
 	CountUsers(ctx context.Context) (int, error)
+	GetUserByID(ctx context.Context, id string) (domain.User, error)
 	GetUserByUsername(ctx context.Context, username string) (domain.User, error)
 	CreateUser(ctx context.Context, user domain.User) error
+	UpdateUserPassword(ctx context.Context, userID, passwordHash string, changedAt time.Time) error
 }
 
 type Config struct {

@@ -35,10 +35,11 @@ func BootstrapAdmin(ctx context.Context, store UserStore, bootstrapPassword stri
 		return err
 	}
 	if err := store.CreateUser(ctx, domain.User{
-		ID:           uuid.NewString(),
-		Username:     bootstrapAdminUsername,
-		PasswordHash: string(passwordHash),
-		Role:         bootstrapAdminRole,
+		ID:                 uuid.NewString(),
+		Username:           bootstrapAdminUsername,
+		PasswordHash:       string(passwordHash),
+		Role:               bootstrapAdminRole,
+		MustChangePassword: true,
 	}); err != nil {
 		return err
 	}

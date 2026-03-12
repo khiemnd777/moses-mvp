@@ -64,11 +64,12 @@ func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.C
 func (s *Server) RegisterRoutes() {
 	h := NewHandler(s.Store, s.Storage, s.Qdrant, s.Retriever, s.Answer, s.Tones, s.Ingest, s.Logger, s.TraceRepo)
 	traceMiddleware := answerTraceMiddleware(s.Logger)
-	authMiddleware := auth.RequireAuth(s.AuthService.JWTManager())
+	authMiddleware := auth.RequireAuth(s.AuthService.JWTManager(), s.Store)
 	authHandlers := auth.NewHandlers(s.AuthService, auth.NewLoginRateLimiter(5, time.Minute))
 
 	s.App.Post("/auth/login", authHandlers.Login)
 	s.App.Get("/auth/me", authMiddleware, authHandlers.Me)
+	s.App.Post("/auth/change-password", authMiddleware, authHandlers.ChangePassword)
 
 	s.App.Post("/chat", traceMiddleware, h.Answer)
 	s.App.Post("/search", h.Search)

@@ -4,7 +4,7 @@ import axios from 'axios';
 import Panel from '@/shared/Panel';
 import Input from '@/shared/Input';
 import Button from '@/shared/Button';
-import { login, verifyToken } from '@/playground/auth.js';
+import { getSessionState, login } from '@/playground/auth.js';
 
 const PlaygroundLoginPage = () => {
   const navigate = useNavigate();
@@ -17,11 +17,11 @@ const PlaygroundLoginPage = () => {
   useEffect(() => {
     let active = true;
     const checkSession = async () => {
-      const valid = await verifyToken();
+      const session = await getSessionState();
       if (!active) return;
       setChecking(false);
-      if (valid) {
-        navigate('/playground', { replace: true });
+      if (session.valid) {
+        navigate(session.mustChangePassword ? '/change-password' : '/playground', { replace: true });
       }
     };
     void checkSession();
@@ -39,8 +39,8 @@ const PlaygroundLoginPage = () => {
     setLoading(true);
     setError('');
     try {
-      await login(username.trim(), password);
-      navigate('/playground', { replace: true });
+      const data = await login(username.trim(), password);
+      navigate(data.must_change_password ? '/change-password' : '/playground', { replace: true });
     } catch (err) {
       if (axios.isAxiosError(err)) {
         setError(err.response?.data?.error?.message || 'Login failed.');

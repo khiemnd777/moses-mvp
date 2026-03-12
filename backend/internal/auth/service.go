@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
+	"github.com/khiemnd777/legal_api/domain"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -46,7 +48,30 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 		return LoginResponse{}, Identity{}, err
 	}
 	return LoginResponse{
-		AccessToken: token,
-		ExpiresIn:   int(s.jwt.ttl.Seconds()),
+		AccessToken:        token,
+		ExpiresIn:          int(s.jwt.ttl.Seconds()),
+		MustChangePassword: user.MustChangePassword,
 	}, identity, nil
+}
+
+func (s *Service) GetUserByID(ctx context.Context, userID string) (domain.User, error) {
+	return s.store.GetUserByID(ctx, userID)
+}
+
+func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPassword string) error {
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)) != nil {
+		return ErrInvalidCredentials
+	}
+	if len(newPassword) < 8 {
+		return ErrWeakPassword
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	return s.store.UpdateUserPassword(ctx, userID, string(newHash), time.Now().UTC())
 }

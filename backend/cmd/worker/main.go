@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/khiemnd777/legal_api/core/embedding"
@@ -20,6 +22,9 @@ import (
 )
 
 func main() {
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	envCfg, err := envconfig.Load()
 	if err != nil {
 		log.Fatal(err)
@@ -38,7 +43,7 @@ func main() {
 	}
 
 	if err := infra.WaitForPostgres(
-		context.Background(),
+		rootCtx,
 		db,
 		infra.WaitPostgresOptions{
 			MaxRetries: 15,
@@ -50,13 +55,13 @@ func main() {
 	}
 
 	store := infra.NewStore(db)
-	if err := store.Ping(context.Background()); err != nil {
+	if err := store.Ping(rootCtx); err != nil {
 		logger.Error("failed to ping db", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
-	_ = store.EnsureDocTypeSeed(context.Background())
-	_ = store.EnsureAIConfigSeed(context.Background())
-	if err := store.EnsureVectorRepairSchema(context.Background()); err != nil {
+	_ = store.EnsureDocTypeSeed(rootCtx)
+	_ = store.EnsureAIConfigSeed(rootCtx)
+	if err := store.EnsureVectorRepairSchema(rootCtx); err != nil {
 		logger.Error("failed to ensure vector repair schema", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
@@ -69,11 +74,11 @@ func main() {
 		logger.Error("failed to resolve embedding dimension", slog.String("model", cfg.OpenAI.EmbeddingsModel), slog.String("error", err.Error()))
 		os.Exit(1)
 	}
-	if err := qdrant.EnsureCollection(context.Background(), vectorDim); err != nil {
+	if err := qdrant.EnsureCollection(rootCtx, vectorDim); err != nil {
 		logger.Error("failed to ensure qdrant collection", slog.String("collection", cfg.Qdrant.Collection), slog.String("error", err.Error()))
 		os.Exit(1)
 	}
-	if err := qdrant.ValidateCollectionDimension(context.Background(), vectorDim); err != nil {
+	if err := qdrant.ValidateCollectionDimension(rootCtx, vectorDim); err != nil {
 		logger.Error("qdrant collection validation failed", slog.String("collection", cfg.Qdrant.Collection), slog.String("error", err.Error()))
 		os.Exit(1)
 	}
@@ -93,43 +98,58 @@ func main() {
 		retryScanLimit    = 50
 	)
 
-	for {
-		ctx := context.Background()
+	repairWorker := newVectorRepairWorker(
+		logger,
+		cfg.VectorRepair,
+		func(ctx context.Context, limit int) (int, error) {
+			return infra.RunVectorRepairPass(ctx, logger, store, qdrant, limit)
+		},
+	)
+	repairWorker.Start(rootCtx)
+	defer repairWorker.Stop()
 
-		recovered, err := store.ResetStaleProcessingJobs(ctx, time.Now().Add(-processingTimeout))
+	for {
+		if err := rootCtx.Err(); err != nil {
+			break
+		}
+
+		recovered, err := store.ResetStaleProcessingJobs(rootCtx, time.Now().Add(-processingTimeout))
 		if err != nil {
 			logger.Error("failed to reset stale processing jobs", slog.String("error", err.Error()))
-			time.Sleep(pollInterval)
+			if !sleepOrDone(rootCtx, pollInterval) {
+				break
+			}
 			continue
 		}
 		if recovered > 0 {
 			logger.Info("stale_ingest_jobs_reset", slog.Int64("job_count", recovered))
 		}
 
-		if err := requeueFailedJobs(ctx, logger, store, retryScanLimit, maxAttempts); err != nil {
+		if err := requeueFailedJobs(rootCtx, logger, store, retryScanLimit, maxAttempts); err != nil {
 			logger.Error("failed to requeue failed jobs", slog.String("error", err.Error()))
-			time.Sleep(pollInterval)
-			continue
-		}
-		if _, err := infra.RunVectorRepairPass(ctx, logger, store, qdrant, 20); err != nil {
-			logger.Error("failed to run vector repair pass", slog.String("error", err.Error()))
-			time.Sleep(pollInterval)
+			if !sleepOrDone(rootCtx, pollInterval) {
+				break
+			}
 			continue
 		}
 
-		job, claimed, err := store.ClaimNextIngestJob(ctx)
+		job, claimed, err := store.ClaimNextIngestJob(rootCtx)
 		if err != nil {
 			logger.Error("failed to claim ingest job", slog.String("error", err.Error()))
-			time.Sleep(pollInterval)
+			if !sleepOrDone(rootCtx, pollInterval) {
+				break
+			}
 			continue
 		}
 		if !claimed {
-			time.Sleep(pollInterval)
+			if !sleepOrDone(rootCtx, pollInterval) {
+				break
+			}
 			continue
 		}
 
 		attempt := infra.DecodeJobAttempt(job) + 1
-		version, doc, asset, doctype, err := store.GetDocumentVersionBundle(ctx, job.DocumentVersionID)
+		version, doc, asset, doctype, err := store.GetDocumentVersionBundle(rootCtx, job.DocumentVersionID)
 		if err != nil {
 			logger.Error("failed to load ingest bundle",
 				slog.String("job_id", job.ID),
@@ -137,11 +157,11 @@ func main() {
 				slog.Int("attempt", attempt),
 				slog.String("error", err.Error()),
 			)
-			_ = store.MarkJobFailed(ctx, job.ID, attempt, err.Error())
+			_ = store.MarkJobFailed(rootCtx, job.ID, attempt, err.Error())
 			continue
 		}
 		bundle := ingest.Bundle{Version: version, Document: doc, Asset: asset, DocType: doctype, Storage: storage}
-		if err := service.Run(ctx, job, bundle); err != nil {
+		if err := service.Run(rootCtx, job, bundle); err != nil {
 			logger.Error("ingest_job_failed",
 				slog.String("job_id", job.ID),
 				slog.String("document_id", doc.ID),
@@ -149,18 +169,31 @@ func main() {
 				slog.Int("attempt", attempt),
 				slog.String("error", err.Error()),
 			)
-			_ = store.MarkJobFailed(ctx, job.ID, attempt, err.Error())
+			_ = store.MarkJobFailed(rootCtx, job.ID, attempt, err.Error())
 			continue
 		}
-		if err := store.MarkJobCompleted(ctx, job.ID); err != nil {
+		if err := store.MarkJobCompleted(rootCtx, job.ID); err != nil {
 			logger.Error("failed to mark job completed",
 				slog.String("job_id", job.ID),
 				slog.String("document_version_id", job.DocumentVersionID),
 				slog.String("error", err.Error()),
 			)
-			time.Sleep(pollInterval)
+			if !sleepOrDone(rootCtx, pollInterval) {
+				break
+			}
 			continue
 		}
+	}
+}
+
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

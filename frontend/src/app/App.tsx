@@ -3,6 +3,7 @@ import AdminLayout from '@/features/admin/AdminLayout';
 import PlaygroundAuthGuard from '@/features/admin/PlaygroundAuthGuard';
 import PlaygroundPage from '@/features/admin/PlaygroundPage';
 import PlaygroundLoginPage from '@/features/admin/PlaygroundLoginPage';
+import ChangePasswordPage from '@/features/admin/ChangePasswordPage';
 import DocTypesPage from '@/features/admin/DocTypesPage';
 import DocumentsPage from '@/features/admin/DocumentsPage';
 import IngestJobsPage from '@/features/admin/IngestJobsPage';
@@ -16,6 +17,7 @@ import VectorHealthPage from '@/features/admin/vectors/VectorHealthPage';
 import DeleteByFilterPage from '@/features/admin/vectors/DeleteByFilterPage';
 import ReindexControlsPage from '@/features/admin/vectors/ReindexControlsPage';
 import Navbar from './Navbar';
+import ChatPage from '@/features/chat/ChatPage';
 
 const App = () => {
   return (
@@ -28,8 +30,9 @@ const App = () => {
         <Routes>
           <Route path="/" element={<Navigate to="/playground" replace />} />
           <Route path="/playground/login" element={<PlaygroundLoginPage />} />
+          <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route element={<PlaygroundAuthGuard />}>
-            <Route path="/playground" element={<PlaygroundPage />} />
+            <Route path="/playground" element={<ChatPage />} />
             <Route path="/tuning" element={<AdminLayout />}>
               <Route index element={<Navigate to="/tuning/doc-types" replace />} />
               <Route path="doc-types" element={<DocTypesPage />} />

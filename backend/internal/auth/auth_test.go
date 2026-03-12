@@ -27,11 +27,12 @@ func newFakeUserStore(t *testing.T) *fakeUserStore {
 		t.Fatalf("hash password: %v", err)
 	}
 	user := domain.User{
-		ID:           "f6f42987-61ab-4be1-ae31-3fbe2273ab8b",
-		Username:     "admin",
-		PasswordHash: string(hash),
-		Role:         "admin",
-		CreatedAt:    time.Now().UTC(),
+		ID:                 "f6f42987-61ab-4be1-ae31-3fbe2273ab8b",
+		Username:           "admin",
+		PasswordHash:       string(hash),
+		Role:               "admin",
+		MustChangePassword: false,
+		CreatedAt:          time.Now().UTC(),
 	}
 	return &fakeUserStore{
 		users: map[string]domain.User{
@@ -52,12 +53,34 @@ func (f *fakeUserStore) GetUserByUsername(ctx context.Context, username string) 
 	return user, nil
 }
 
+func (f *fakeUserStore) GetUserByID(ctx context.Context, id string) (domain.User, error) {
+	for _, user := range f.users {
+		if user.ID == id {
+			return user, nil
+		}
+	}
+	return domain.User{}, sql.ErrNoRows
+}
+
 func (f *fakeUserStore) CreateUser(ctx context.Context, user domain.User) error {
 	if _, exists := f.users[user.Username]; exists {
 		return errors.New("duplicate username")
 	}
 	f.users[user.Username] = user
 	return nil
+}
+
+func (f *fakeUserStore) UpdateUserPassword(ctx context.Context, userID, passwordHash string, changedAt time.Time) error {
+	for username, user := range f.users {
+		if user.ID == userID {
+			user.PasswordHash = passwordHash
+			user.MustChangePassword = false
+			user.PasswordChangedAt = &changedAt
+			f.users[username] = user
+			return nil
+		}
+	}
+	return sql.ErrNoRows
 }
 
 func setupAuthApp(t *testing.T, secret string) *fiber.App {
@@ -69,7 +92,7 @@ func setupAuthApp(t *testing.T, secret string) *fiber.App {
 		TokenTTL: time.Hour,
 	})
 	handlers := NewHandlers(service, NewLoginRateLimiter(5, time.Minute))
-	requireAuth := RequireAuth(service.JWTManager())
+	requireAuth := RequireAuth(service.JWTManager(), store)
 
 	app := fiber.New()
 	app.Post("/auth/login", handlers.Login)
@@ -106,6 +129,9 @@ func TestLoginAndMeSuccess(t *testing.T) {
 	if loginResp.ExpiresIn <= 0 {
 		t.Fatalf("expected positive expires_in")
 	}
+	if loginResp.MustChangePassword {
+		t.Fatalf("expected must_change_password=false")
+	}
 
 	meReq := httptest.NewRequest(http.MethodGet, "/auth/me", nil)
 	meReq.Header.Set("Authorization", "Bearer "+loginResp.AccessToken)
@@ -116,6 +142,14 @@ func TestLoginAndMeSuccess(t *testing.T) {
 	defer meResp.Body.Close()
 	if meResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected /auth/me 200, got %d", meResp.StatusCode)
+	}
+
+	var mePayload map[string]any
+	if err := json.NewDecoder(meResp.Body).Decode(&mePayload); err != nil {
+		t.Fatalf("decode me response: %v", err)
+	}
+	if mePayload["must_change_password"] != false {
+		t.Fatalf("expected must_change_password=false in /auth/me")
 	}
 }
 
@@ -199,5 +233,127 @@ func TestLoginRateLimit(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("expected 429, got %d", resp.StatusCode)
+	}
+}
+
+func TestProtectedRouteBlockedWhenPasswordChangeRequired(t *testing.T) {
+	store := newFakeUserStore(t)
+	user := store.users["admin"]
+	user.MustChangePassword = true
+	store.users["admin"] = user
+
+	service := NewService(store, Config{
+		Secret:   "test-secret",
+		Issuer:   "test_issuer",
+		TokenTTL: time.Hour,
+	})
+	handlers := NewHandlers(service, NewLoginRateLimiter(5, time.Minute))
+	requireAuth := RequireAuth(service.JWTManager(), store)
+
+	app := fiber.New()
+	app.Post("/auth/login", handlers.Login)
+	app.Get("/playground/ping", requireAuth, func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"ok": true})
+	})
+
+	reqBody := map[string]string{"username": "admin", "password": "password"}
+	body, _ := json.Marshal(reqBody)
+	loginReq := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(body))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginResp, err := app.Test(loginReq, -1)
+	if err != nil {
+		t.Fatalf("login request failed: %v", err)
+	}
+	defer loginResp.Body.Close()
+
+	var tokenResp LoginResponse
+	if err := json.NewDecoder(loginResp.Body).Decode(&tokenResp); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+	if !tokenResp.MustChangePassword {
+		t.Fatalf("expected must_change_password=true")
+	}
+
+	protectedReq := httptest.NewRequest(http.MethodGet, "/playground/ping", nil)
+	protectedReq.Header.Set("Authorization", "Bearer "+tokenResp.AccessToken)
+	protectedResp, err := app.Test(protectedReq, -1)
+	if err != nil {
+		t.Fatalf("protected request failed: %v", err)
+	}
+	defer protectedResp.Body.Close()
+	if protectedResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", protectedResp.StatusCode)
+	}
+}
+
+func TestChangePasswordFlowUnblocksProtectedRoutes(t *testing.T) {
+	store := newFakeUserStore(t)
+	user := store.users["admin"]
+	user.MustChangePassword = true
+	store.users["admin"] = user
+
+	service := NewService(store, Config{
+		Secret:   "test-secret",
+		Issuer:   "test_issuer",
+		TokenTTL: time.Hour,
+	})
+	handlers := NewHandlers(service, NewLoginRateLimiter(5, time.Minute))
+	requireAuth := RequireAuth(service.JWTManager(), store)
+
+	app := fiber.New()
+	app.Post("/auth/login", handlers.Login)
+	app.Post("/auth/change-password", requireAuth, handlers.ChangePassword)
+	app.Get("/playground/ping", requireAuth, func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"ok": true})
+	})
+
+	loginBody, _ := json.Marshal(map[string]string{"username": "admin", "password": "password"})
+	loginReq := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginResp, err := app.Test(loginReq, -1)
+	if err != nil {
+		t.Fatalf("login request failed: %v", err)
+	}
+	defer loginResp.Body.Close()
+
+	var tokenResp LoginResponse
+	if err := json.NewDecoder(loginResp.Body).Decode(&tokenResp); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+
+	changeBody, _ := json.Marshal(map[string]string{"old_password": "password", "new_password": "newpassword"})
+	changeReq := httptest.NewRequest(http.MethodPost, "/auth/change-password", bytes.NewReader(changeBody))
+	changeReq.Header.Set("Content-Type", "application/json")
+	changeReq.Header.Set("Authorization", "Bearer "+tokenResp.AccessToken)
+	changeResp, err := app.Test(changeReq, -1)
+	if err != nil {
+		t.Fatalf("change password request failed: %v", err)
+	}
+	defer changeResp.Body.Close()
+	if changeResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", changeResp.StatusCode)
+	}
+
+	protectedReq := httptest.NewRequest(http.MethodGet, "/playground/ping", nil)
+	protectedReq.Header.Set("Authorization", "Bearer "+tokenResp.AccessToken)
+	protectedResp, err := app.Test(protectedReq, -1)
+	if err != nil {
+		t.Fatalf("protected request failed: %v", err)
+	}
+	defer protectedResp.Body.Close()
+	if protectedResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", protectedResp.StatusCode)
+	}
+
+	oldLoginBody, _ := json.Marshal(map[string]string{"username": "admin", "password": "password"})
+	oldLoginReq := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(oldLoginBody))
+	oldLoginReq.Header.Set("Content-Type", "application/json")
+	oldLoginResp, err := app.Test(oldLoginReq, -1)
+	if err != nil {
+		t.Fatalf("old login request failed: %v", err)
+	}
+	defer oldLoginResp.Body.Close()
+	if oldLoginResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected old password login to fail with 401, got %d", oldLoginResp.StatusCode)
 	}
 }
