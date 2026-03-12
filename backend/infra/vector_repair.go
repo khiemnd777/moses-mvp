@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/khiemnd777/legal_api/observability"
 )
 
 const (
@@ -183,6 +185,11 @@ func RunVectorRepairPass(ctx context.Context, logger *slog.Logger, store *Store,
 		log.Info("vector_repair_completed")
 	}
 	logger.Info("vector_repair_pass_completed",
+		slog.Int("tasks_processed", processed),
+		slog.Duration("duration", time.Since(started)),
+	)
+	observability.Metrics.IncVectorRepairTotal(processed)
+	logger.Info("vector_repair_operational_summary",
 		slog.Int("tasks_processed", processed),
 		slog.Duration("duration", time.Since(started)),
 	)

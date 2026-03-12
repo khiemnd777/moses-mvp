@@ -1,0 +1,117 @@
+groups:
+  - name: qdrant-control-plane
+    rules:
+      - alert: QdrantVectorOrphanWarning
+        expr: vector_orphan_count > 25
+        for: 10m
+        labels:
+          severity: warning
+          service: legal-api
+          component: qdrant-control-plane
+        annotations:
+          summary: "Orphan vectors detected"
+          description: "vector_orphan_count is above 25 for 10m. Run vector_health and investigate stale vector cleanup."
+
+      - alert: QdrantVectorOrphanCritical
+        expr: vector_orphan_count > 100
+        for: 5m
+        labels:
+          severity: critical
+          service: legal-api
+          component: qdrant-control-plane
+        annotations:
+          summary: "High orphan vector count"
+          description: "vector_orphan_count is above 100 for 5m. Pause destructive admin ops and run repair workflow."
+
+      - alert: QdrantVectorMissingWarning
+        expr: vector_missing_count > 25
+        for: 10m
+        labels:
+          severity: warning
+          service: legal-api
+          component: qdrant-control-plane
+        annotations:
+          summary: "Missing vectors detected"
+          description: "vector_missing_count is above 25 for 10m. Reindex affected versions and verify ingest pipeline health."
+
+      - alert: QdrantVectorMissingCritical
+        expr: vector_missing_count > 100
+        for: 5m
+        labels:
+          severity: critical
+          service: legal-api
+          component: qdrant-control-plane
+        annotations:
+          summary: "High missing vector count"
+          description: "vector_missing_count is above 100 for 5m. Trigger scoped reindex and check Qdrant/worker health immediately."
+
+      - alert: QdrantConsistencyErrorsWarning
+        expr: increase(vector_consistency_error_total[15m]) >= 3
+        for: 5m
+        labels:
+          severity: warning
+          service: legal-api
+          component: qdrant-control-plane
+        annotations:
+          summary: "Repeated vector consistency scan errors"
+          description: "vector consistency errors are repeating. Check Qdrant availability and scan timeout settings."
+
+      - alert: QdrantConsistencyErrorsCritical
+        expr: increase(vector_consistency_error_total[15m]) >= 10
+        for: 5m
+        labels:
+          severity: critical
+          service: legal-api
+          component: qdrant-control-plane
+        annotations:
+          summary: "Frequent vector consistency scan failures"
+          description: "vector consistency scans are consistently failing. Treat as control plane outage risk."
+
+      - alert: QdrantAdminErrorRateHigh
+        expr: |
+          (
+            sum(increase(http_requests_total{path=~"/admin/qdrant/.*",status=~"5.."}[10m]))
+            /
+            clamp_min(sum(increase(http_requests_total{path=~"/admin/qdrant/.*"}[10m])), 1)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: legal-api
+          component: qdrant-control-plane
+        annotations:
+          summary: "High /admin/qdrant 5xx rate"
+          description: "5xx ratio on /admin/qdrant routes exceeded 5% for 10m. Check Qdrant dependencies and deploy health."
+
+      - alert: QdrantHealthScanLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(vector_health_scan_duration_seconds_bucket[10m]))) > 8
+        for: 15m
+        labels:
+          severity: warning
+          service: legal-api
+          component: qdrant-control-plane
+        annotations:
+          summary: "Vector health scans are slow"
+          description: "p95 vector health scan latency > 8s for 15m. Reduce scan scope or investigate Qdrant/store performance."
+
+      - alert: QdrantReindexTriggerRateHigh
+        expr: increase(vector_reindex_all_total[10m]) > 6
+        for: 5m
+        labels:
+          severity: warning
+          service: legal-api
+          component: qdrant-control-plane
+        annotations:
+          summary: "Excessive reindex_all trigger rate"
+          description: "reindex_all endpoint called more than 6 times in 10m. Verify no runaway automation is triggering bulk reindex."
+
+      - alert: QdrantDeleteByFilterFailures
+        expr: increase(http_requests_total{path="/admin/qdrant/delete_by_filter",status=~"5.."}[15m]) >= 3
+        for: 5m
+        labels:
+          severity: warning
+          service: legal-api
+          component: qdrant-control-plane
+        annotations:
+          summary: "delete_by_filter is repeatedly failing"
+          description: "delete_by_filter returned 5xx at least 3 times in 15m. Investigate Qdrant write path and guardrail violations."

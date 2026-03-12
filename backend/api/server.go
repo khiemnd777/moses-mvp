@@ -77,6 +77,7 @@ func (s *Server) RegisterRoutes() {
 	s.App.Post("/document-versions/:id/ingest", h.EnqueueIngest)
 	s.App.Post("/search", h.Search)
 	s.App.Get("/health", s.Health)
+	s.App.Get("/metrics", observability.MetricsHandler)
 	s.App.Post("/answer", traceMiddleware, h.Answer)
 	s.App.Post("/answer/stream", traceMiddleware, h.AnswerStream)
 
@@ -95,7 +96,9 @@ func (s *Server) RegisterRoutes() {
 	}
 	retrievalConfigHandler := adminapi.NewRetrievalConfigHandler(retrievalCfgSvc, onRetrievalConfigChanged)
 	answerTraceHandler := adminapi.NewAIAnswerTraceHandler(s.TraceRepo)
-	adminapi.RegisterRoutes(adminGroup, guardHandler, promptHandler, retrievalConfigHandler, answerTraceHandler)
+	qdrantControlSvc := adminservice.NewQdrantControlPlaneService(s.Store, s.Qdrant, s.Embedder, s.Logger)
+	qdrantHandler := adminapi.NewQdrantControlPlaneHandler(qdrantControlSvc, s.Logger)
+	adminapi.RegisterRoutes(adminGroup, guardHandler, promptHandler, retrievalConfigHandler, answerTraceHandler, qdrantHandler)
 }
 
 func (s *Server) Start(ctx context.Context, addr string) error {

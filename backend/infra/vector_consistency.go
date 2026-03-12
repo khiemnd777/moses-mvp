@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -25,6 +26,7 @@ type VectorConsistencyOptions struct {
 	MaxChunks       int
 	MaxVectors      int
 	SampleLimit     int
+	MaxDuration     time.Duration
 }
 
 type VectorConsistencyReport struct {
@@ -50,6 +52,7 @@ type VectorConsistencyReport struct {
 
 	ChunkVectorCountMismatch bool
 	Bounded                  bool
+	DurationLimited          bool
 }
 
 func CheckVectorConsistency(ctx context.Context, store *Store, qdrant *QdrantClient, expectedDimension int) (VectorConsistencyReport, error) {
@@ -97,6 +100,11 @@ func CheckVectorConsistencyWithOptions(ctx context.Context, store *Store, qdrant
 	for {
 		if err := ctx.Err(); err != nil {
 			return report, err
+		}
+		if opts.MaxDuration > 0 && time.Since(started) >= opts.MaxDuration {
+			report.Bounded = true
+			report.DurationLimited = true
+			break
 		}
 		if opts.MaxChunks > 0 && report.ScannedChunkCount >= opts.MaxChunks {
 			report.Bounded = true
@@ -150,6 +158,11 @@ func CheckVectorConsistencyWithOptions(ctx context.Context, store *Store, qdrant
 		maxVectors = 0
 	}
 	_, err = qdrant.IteratePointPayloads(ctx, qdrant.Collection, nil, opts.VectorBatchSize, maxVectors, func(batch []PointPayload) error {
+		if opts.MaxDuration > 0 && time.Since(started) >= opts.MaxDuration {
+			report.Bounded = true
+			report.DurationLimited = true
+			return context.Canceled
+		}
 		report.ScannedVectorCount += len(batch)
 		chunkIDs := make([]string, 0, len(batch))
 		pointIDs := make([]string, 0, len(batch))
@@ -181,6 +194,11 @@ func CheckVectorConsistencyWithOptions(ctx context.Context, store *Store, qdrant
 		}
 		return nil
 	})
+	if err != nil {
+		if opts.MaxDuration > 0 && report.DurationLimited && errors.Is(err, context.Canceled) {
+			err = nil
+		}
+	}
 	if err != nil {
 		return report, err
 	}
@@ -225,12 +243,18 @@ func normalizeScanOptions(opts VectorConsistencyOptions) VectorConsistencyOption
 		if opts.MaxVectors <= 0 {
 			opts.MaxVectors = 1000
 		}
+		if opts.MaxDuration <= 0 {
+			opts.MaxDuration = 8 * time.Second
+		}
 	case VectorScanFull:
 		if opts.MaxChunks < 0 {
 			opts.MaxChunks = 0
 		}
 		if opts.MaxVectors < 0 {
 			opts.MaxVectors = 0
+		}
+		if opts.MaxDuration <= 0 {
+			opts.MaxDuration = 30 * time.Second
 		}
 	}
 	return opts

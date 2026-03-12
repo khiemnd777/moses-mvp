@@ -26,6 +26,12 @@ type ChunkVectorRow struct {
 	EmbeddingJSON     []byte
 }
 
+type ReindexScopeQuery struct {
+	DocTypeCode string
+	Status      string
+	Limit       int
+}
+
 type jobErrorMeta struct {
 	Attempt int    `json:"attempt"`
 	Message string `json:"message,omitempty"`
@@ -752,6 +758,44 @@ ORDER BY idx ASC
 			return nil, err
 		}
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListDocumentVersionIDsForReindex(ctx context.Context, scope ReindexScopeQuery) ([]string, error) {
+	limit := scope.Limit
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT dv.id
+FROM document_versions dv
+JOIN documents d ON d.id = dv.document_id
+JOIN doc_types dt ON dt.id = d.doc_type_id
+LEFT JOIN LATERAL (
+	SELECT ij.status
+	FROM ingest_jobs ij
+	WHERE ij.document_version_id = dv.id
+	ORDER BY ij.created_at DESC
+	LIMIT 1
+) latest ON TRUE
+WHERE ($1 = '' OR dt.code = $1)
+  AND ($2 = '' OR COALESCE(latest.status, 'never_ingested') = $2)
+ORDER BY dv.created_at DESC
+LIMIT $3
+`, scope.DocTypeCode, scope.Status, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
 	}
 	return out, rows.Err()
 }

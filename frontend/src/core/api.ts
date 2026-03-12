@@ -4,10 +4,20 @@ import type {
   AIPrompt,
   AIRetrievalConfig,
   ChatFilters,
+  DeleteByFilterRequest,
+  DeleteByFilterResponse,
   DocType,
   DocTypeForm,
   DocumentItem,
-  IngestJob
+  IngestJob,
+  QdrantCollectionDetailResponse,
+  QdrantCollectionsResponse,
+  ReindexAcceptedResponse,
+  ReindexAllRequest,
+  ReindexDocumentRequest,
+  SearchDebugRequest,
+  SearchDebugResponse,
+  VectorHealthResponse
 } from './types';
 
 const api = axios.create({
@@ -17,6 +27,10 @@ const api = axios.create({
 const adminApiKey = import.meta.env.VITE_ADMIN_API_KEY;
 if (adminApiKey) {
   api.defaults.headers.common['X-Admin-Key'] = adminApiKey;
+}
+const adminBearerToken = import.meta.env.VITE_ADMIN_BEARER_TOKEN;
+if (adminBearerToken) {
+  api.defaults.headers.common.Authorization = `Bearer ${adminBearerToken}`;
 }
 
 export type ApiError = {
@@ -195,6 +209,50 @@ export const disableAIRetrievalConfig = async (id: string) => {
 
 export const deleteAIRetrievalConfig = async (id: string) => {
   await api.delete(`/admin/ai/retrieval-configs/${id}`);
+};
+
+export const listQdrantCollections = async () => {
+  const { data } = await api.get('/admin/qdrant/collections');
+  return data as QdrantCollectionsResponse;
+};
+
+export const getQdrantCollection = async (name: string) => {
+  const { data } = await api.get(`/admin/qdrant/collections/${encodeURIComponent(name)}`);
+  return data as QdrantCollectionDetailResponse;
+};
+
+export const searchDebugQdrant = async (payload: SearchDebugRequest) => {
+  const { data } = await api.post('/admin/qdrant/search_debug', payload);
+  return data as SearchDebugResponse;
+};
+
+export const getQdrantVectorHealth = async (params?: {
+  mode?: 'quick' | 'full';
+  full_scan?: boolean;
+  batch_size?: number;
+  chunk_batch_size?: number;
+  vector_batch_size?: number;
+  max_vectors_scanned?: number;
+  max_chunks?: number;
+  max_scan_duration_ms?: number;
+}) => {
+  const { data } = await api.get('/admin/qdrant/vector_health', { params });
+  return data as VectorHealthResponse;
+};
+
+export const deleteByFilterQdrant = async (payload: DeleteByFilterRequest) => {
+  const { data } = await api.post('/admin/qdrant/delete_by_filter', payload);
+  return data as DeleteByFilterResponse;
+};
+
+export const reindexQdrantDocument = async (payload: ReindexDocumentRequest) => {
+  const { data } = await api.post('/admin/qdrant/reindex_document', payload);
+  return data as ReindexAcceptedResponse;
+};
+
+export const reindexQdrantAll = async (payload: ReindexAllRequest) => {
+  const { data } = await api.post('/admin/qdrant/reindex_all', payload);
+  return data as ReindexAcceptedResponse;
 };
 
 export default api;

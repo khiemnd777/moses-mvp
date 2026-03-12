@@ -22,6 +22,21 @@ const AdminLayout = () => {
         <NavLink to="/admin/ai/retrieval-configs" className={({ isActive }) => (isActive ? 'active' : '')}>
           AI Retrieval Configs
         </NavLink>
+        <NavLink to="/admin/vectors/collections" className={({ isActive }) => (isActive ? 'active' : '')}>
+          Vector Collections
+        </NavLink>
+        <NavLink to="/admin/vectors/search-debug" className={({ isActive }) => (isActive ? 'active' : '')}>
+          Vector Search Debug
+        </NavLink>
+        <NavLink to="/admin/vectors/health" className={({ isActive }) => (isActive ? 'active' : '')}>
+          Vector Health
+        </NavLink>
+        <NavLink to="/admin/vectors/delete" className={({ isActive }) => (isActive ? 'active' : '')}>
+          Vector Delete
+        </NavLink>
+        <NavLink to="/admin/vectors/reindex" className={({ isActive }) => (isActive ? 'active' : '')}>
+          Vector Reindex
+        </NavLink>
         {/* <NavLink to="/admin/playground" className={({ isActive }) => (isActive ? 'active' : '')}>
           Playground
         </NavLink> */}

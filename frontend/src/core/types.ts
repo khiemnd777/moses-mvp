@@ -135,3 +135,166 @@ export type AIRetrievalConfig = {
   created_at?: string;
   updated_at?: string;
 };
+
+export type QdrantCollectionValidation = {
+  available: boolean;
+  expected_dimension?: number;
+  passed?: boolean;
+  message?: string;
+};
+
+export type QdrantPayloadSchemaField = {
+  key: string;
+  type?: string;
+};
+
+export type QdrantCollectionSummary = {
+  collection_name: string;
+  status: string;
+  points_count?: number;
+  vector_count?: number;
+  indexed_vectors_count?: number;
+  vector_dimension?: number;
+  distance_metric?: string;
+  validation: QdrantCollectionValidation;
+  payload_schema_summary?: QdrantPayloadSchemaField[];
+};
+
+export type QdrantCollectionsResponse = {
+  status: string;
+  summary: string;
+  collections: QdrantCollectionSummary[];
+};
+
+export type QdrantCollectionDetailResponse = {
+  status: string;
+  summary: string;
+  found: boolean;
+  collection?: QdrantCollectionSummary;
+};
+
+export type SearchDebugMetadataFilters = {
+  legal_domain?: string[];
+  document_type?: string[];
+  effective_status?: string[];
+  document_number?: string[];
+  article_number?: string[];
+};
+
+export type SearchDebugRequest = {
+  query_text: string;
+  top_k?: number;
+  metadata_filters?: SearchDebugMetadataFilters;
+  collection?: string;
+  include_payload?: boolean;
+  include_chunk_preview?: boolean;
+};
+
+export type SearchDebugChunk = {
+  chunk_id: string;
+  document_version_id?: string;
+  chunk_index?: number;
+  preview?: string;
+  citation?: string;
+};
+
+export type SearchDebugHit = {
+  rank: number;
+  point_id: string;
+  score: number;
+  payload?: Record<string, unknown>;
+  chunk?: SearchDebugChunk;
+};
+
+export type SearchDebugResponse = {
+  status: string;
+  summary: string;
+  query_hash: string;
+  top_k: number;
+  filter_summary: string;
+  collection: string;
+  duration_ms: number;
+  hit_count: number;
+  hits: SearchDebugHit[];
+};
+
+export type VectorHealthResponse = {
+  status: string;
+  summary: string;
+  scan_mode: string;
+  scanned_batches: number;
+  scanned_vectors: number;
+  scanned_chunks: number;
+  duration_ms: number;
+  bounded: boolean;
+  orphan_vectors_count: number;
+  missing_vectors_count: number;
+  chunk_vector_count_mismatch: boolean;
+  dimension_mismatch_detected: boolean;
+  repairable_issues_detected: boolean;
+  repair_recommendation: string;
+  samples?: string[];
+};
+
+export type DeleteByFilterFilter = {
+  must: Array<{
+    key: string;
+    match: {
+      value?: unknown;
+      any?: string[];
+    };
+  }>;
+};
+
+export type DeleteByFilterRequest = {
+  collection?: string;
+  filter: DeleteByFilterFilter;
+  confirm: boolean;
+  dry_run: boolean;
+  reason?: string;
+};
+
+export type DeleteByFilterResponse = {
+  status: string;
+  summary: string;
+  collection: string;
+  dry_run: boolean;
+  confirmed: boolean;
+  filter_summary: string;
+  estimated_scope?: number;
+  scope_estimated: boolean;
+};
+
+export type ReindexDocumentRequest = {
+  document_id?: string;
+  document_version_id?: string;
+  force?: boolean;
+  reason?: string;
+};
+
+export type ReindexAllRequest = {
+  confirm: boolean;
+  force?: boolean;
+  doc_type_code?: string;
+  collection?: string;
+  status?: string;
+  limit?: number;
+  reason: string;
+};
+
+export type ReindexEnqueueItem = {
+  document_version_id: string;
+  job_id: string;
+  job_status: string;
+  created: boolean;
+};
+
+export type ReindexAcceptedResponse = {
+  status: string;
+  summary: string;
+  scope?: Record<string, string>;
+  accepted_count: number;
+  created_count: number;
+  skipped_count: number;
+  items?: ReindexEnqueueItem[];
+};

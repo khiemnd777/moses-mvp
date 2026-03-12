@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -26,6 +28,7 @@ func RegisterRoutes(
 	promptHandler *PromptHandler,
 	retrievalConfigHandler *RetrievalConfigHandler,
 	answerTraceHandler *AIAnswerTraceHandler,
+	qdrantHandler *QdrantControlPlaneHandler,
 ) {
 	group.Get("/ai/guard-policies", guardHandler.List)
 	group.Get("/ai/guard-policies/:id", guardHandler.Get)
@@ -50,4 +53,13 @@ func RegisterRoutes(
 
 	group.Get("/ai/answer-traces", answerTraceHandler.List)
 	group.Get("/ai/answer-traces/:traceID", answerTraceHandler.Get)
+
+	qdrantGroup := group.Group("/qdrant")
+	qdrantGroup.Get("/collections", qdrantHandler.ListCollections)
+	qdrantGroup.Get("/collections/:name", qdrantHandler.GetCollection)
+	qdrantGroup.Post("/search_debug", qdrantRateLimitMiddleware(qdrantRatePolicy{Limit: 5, Window: time.Second}), qdrantHandler.SearchDebug)
+	qdrantGroup.Get("/vector_health", qdrantRateLimitMiddleware(qdrantRatePolicy{Limit: 2, Window: time.Second}), qdrantHandler.VectorHealth)
+	qdrantGroup.Post("/delete_by_filter", qdrantRateLimitMiddleware(qdrantRatePolicy{Limit: 1, Window: time.Second}), qdrantHandler.DeleteByFilter)
+	qdrantGroup.Post("/reindex_document", qdrantRateLimitMiddleware(qdrantRatePolicy{Limit: 1, Window: 10 * time.Second}), qdrantHandler.ReindexDocument)
+	qdrantGroup.Post("/reindex_all", qdrantRateLimitMiddleware(qdrantRatePolicy{Limit: 1, Window: 10 * time.Second}), qdrantHandler.ReindexAll)
 }

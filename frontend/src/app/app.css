@@ -255,6 +255,8 @@ a {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: calc(100vh - 110px);
+  overflow: auto;
 }
 
 .side-nav a {
@@ -292,4 +294,59 @@ a {
   background: #efe7db;
   padding: 2px 4px;
   border-radius: 6px;
+}
+
+.vector-row-btn {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: #fff;
+  cursor: pointer;
+}
+
+.vector-row-btn:hover {
+  border-color: var(--accent);
+}
+
+.vector-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.vector-pre {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fffdf9;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.vector-textarea {
+  min-height: 220px;
+  font-family: 'SFMono-Regular', ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
+  font-size: 12px;
+}
+
+.status-ok {
+  background: #e1f3e9;
+  color: #1f6d43;
+}
+
+.status-warn {
+  background: #fff1dd;
+  color: #8e5b16;
+}
+
+.health-card.ok {
+  border-color: #b9dfc9;
+}
+
+.health-card.warn {
+  border-color: #f0cd99;
 }

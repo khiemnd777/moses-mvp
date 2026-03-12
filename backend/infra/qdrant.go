@@ -61,6 +61,7 @@ type createCollectionRequest struct {
 
 type CollectionInfo struct {
 	VectorSize int
+	Distance   string
 }
 
 func (c *QdrantClient) EnsureCollection(ctx context.Context, vectorSize int) error {
@@ -100,60 +101,138 @@ func (c *QdrantClient) ValidateCollectionDimension(ctx context.Context, expected
 }
 
 func (c *QdrantClient) GetCollectionInfo(ctx context.Context) (CollectionInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL+"/collections/"+c.Collection, nil)
+	info, err := c.GetCollectionDetails(ctx, c.Collection)
 	if err != nil {
 		return CollectionInfo{}, err
 	}
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return CollectionInfo{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return CollectionInfo{}, fmt.Errorf("qdrant get collection info failed: status=%s body=%s", resp.Status, strings.TrimSpace(string(body)))
-	}
+	return CollectionInfo{
+		VectorSize: info.VectorSize,
+		Distance:   info.Distance,
+	}, nil
+}
 
+type CollectionListItem struct {
+	Name string `json:"name"`
+}
+
+type CollectionDetails struct {
+	Name                string                 `json:"name"`
+	Status              string                 `json:"status,omitempty"`
+	PointsCount         *int64                 `json:"points_count,omitempty"`
+	VectorsCount        *int64                 `json:"vectors_count,omitempty"`
+	IndexedVectorsCount *int64                 `json:"indexed_vectors_count,omitempty"`
+	VectorSize          int                    `json:"vector_size,omitempty"`
+	Distance            string                 `json:"distance,omitempty"`
+	PayloadSchema       map[string]interface{} `json:"payload_schema,omitempty"`
+}
+
+func (c *QdrantClient) ListCollections(ctx context.Context) ([]CollectionListItem, error) {
 	var out struct {
 		Result struct {
-			Config struct {
+			Collections []CollectionListItem `json:"collections"`
+		} `json:"result"`
+	}
+	if err := c.doWithRetry(ctx, "list_collections", "_meta", func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL+"/collections", nil)
+		if err != nil {
+			return err
+		}
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(resp.Body)
+			return qdrantHTTPError{Op: "list_collections", StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+		}
+		return json.NewDecoder(resp.Body).Decode(&out)
+	}); err != nil {
+		return nil, err
+	}
+	return out.Result.Collections, nil
+}
+
+func (c *QdrantClient) GetCollectionDetails(ctx context.Context, collection string) (CollectionDetails, error) {
+	if strings.TrimSpace(collection) == "" {
+		collection = c.Collection
+	}
+	var out struct {
+		Result struct {
+			Status              string                 `json:"status"`
+			PointsCount         *int64                 `json:"points_count"`
+			VectorsCount        *int64                 `json:"vectors_count"`
+			IndexedVectorsCount *int64                 `json:"indexed_vectors_count"`
+			PayloadSchema       map[string]interface{} `json:"payload_schema"`
+			Config              struct {
 				Params struct {
 					Vectors json.RawMessage `json:"vectors"`
 				} `json:"params"`
 			} `json:"config"`
 		} `json:"result"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return CollectionInfo{}, err
+	if err := c.doWithRetry(ctx, "get_collection", collection, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL+"/collections/"+collection, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(resp.Body)
+			return qdrantHTTPError{Op: "get_collection", StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+		}
+		return json.NewDecoder(resp.Body).Decode(&out)
+	}); err != nil {
+		return CollectionDetails{}, err
 	}
-	size, err := extractVectorSize(out.Result.Config.Params.Vectors)
+	size, distance, err := extractVectorConfig(out.Result.Config.Params.Vectors)
 	if err != nil {
-		return CollectionInfo{}, err
+		return CollectionDetails{}, err
 	}
-	return CollectionInfo{VectorSize: size}, nil
+	return CollectionDetails{
+		Name:                collection,
+		Status:              out.Result.Status,
+		PointsCount:         out.Result.PointsCount,
+		VectorsCount:        out.Result.VectorsCount,
+		IndexedVectorsCount: out.Result.IndexedVectorsCount,
+		VectorSize:          size,
+		Distance:            distance,
+		PayloadSchema:       out.Result.PayloadSchema,
+	}, nil
 }
 
 func extractVectorSize(raw json.RawMessage) (int, error) {
+	size, _, err := extractVectorConfig(raw)
+	return size, err
+}
+
+func extractVectorConfig(raw json.RawMessage) (int, string, error) {
 	if len(raw) == 0 {
-		return 0, errors.New("qdrant collection vectors config missing")
+		return 0, "", errors.New("qdrant collection vectors config missing")
 	}
 	var single struct {
-		Size int `json:"size"`
+		Size     int    `json:"size"`
+		Distance string `json:"distance"`
 	}
 	if err := json.Unmarshal(raw, &single); err == nil && single.Size > 0 {
-		return single.Size, nil
+		return single.Size, single.Distance, nil
 	}
 	var named map[string]struct {
-		Size int `json:"size"`
+		Size     int    `json:"size"`
+		Distance string `json:"distance"`
 	}
 	if err := json.Unmarshal(raw, &named); err == nil {
 		for _, cfg := range named {
 			if cfg.Size > 0 {
-				return cfg.Size, nil
+				return cfg.Size, cfg.Distance, nil
 			}
 		}
 	}
-	return 0, fmt.Errorf("unable to parse qdrant vector size from config: %s", string(raw))
+	return 0, "", fmt.Errorf("unable to parse qdrant vector size from config: %s", string(raw))
 }
 
 type PointInput struct {
@@ -236,6 +315,13 @@ type FieldMatch struct {
 }
 
 func (c *QdrantClient) Search(ctx context.Context, vector []float64, limit int, filter *SearchFilter) ([]SearchResult, error) {
+	return c.SearchInCollection(ctx, c.Collection, vector, limit, filter)
+}
+
+func (c *QdrantClient) SearchInCollection(ctx context.Context, collection string, vector []float64, limit int, filter *SearchFilter) ([]SearchResult, error) {
+	if strings.TrimSpace(collection) == "" {
+		collection = c.Collection
+	}
 	payload := searchRequest{Vector: vector, Limit: limit, WithPayload: true}
 	if qf := toQFilter(filter); qf != nil {
 		payload.Filter = qf
@@ -245,8 +331,8 @@ func (c *QdrantClient) Search(ctx context.Context, vector []float64, limit int, 
 		return nil, err
 	}
 	var out searchResponse
-	if err := c.doWithRetry(ctx, "search", c.Collection, func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+"/collections/"+c.Collection+"/points/search", bytes.NewReader(b))
+	if err := c.doWithRetry(ctx, "search", collection, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+"/collections/"+collection+"/points/search", bytes.NewReader(b))
 		if err != nil {
 			return err
 		}
@@ -484,6 +570,10 @@ func validateDeleteFilter(filter Filter) error {
 	return nil
 }
 
+func ValidateDeleteFilter(filter Filter) error {
+	return validateDeleteFilter(filter)
+}
+
 func isStrongDeleteScope(filter Filter) bool {
 	for _, cond := range filter.Must {
 		if cond.Key == "document_version_id" || cond.Key == "chunk_id" {
@@ -503,6 +593,10 @@ func summarizeFilter(filter Filter) string {
 		parts = append(parts, fmt.Sprintf("%s:value", cond.Key))
 	}
 	return strings.Join(parts, ",")
+}
+
+func SummarizeFilter(filter Filter) string {
+	return summarizeFilter(filter)
 }
 
 func (c *QdrantClient) doDeletePayloadWithRetry(ctx context.Context, op, collection string, payload []byte) error {
@@ -684,6 +778,14 @@ type qdrantHTTPError struct {
 	Op         string
 	StatusCode int
 	Body       string
+}
+
+func IsQdrantNotFoundError(err error) bool {
+	var httpErr qdrantHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode == http.StatusNotFound
+	}
+	return false
 }
 
 func (e qdrantHTTPError) Error() string {
