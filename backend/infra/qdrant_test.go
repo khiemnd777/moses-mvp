@@ -3,6 +3,8 @@ package infra
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -191,5 +193,64 @@ func TestUpsert_DoesNotRetryOn400(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Fatalf("expected no retry for 4xx, got %d calls", got)
+	}
+}
+
+func TestUpsert_SplitsPayloadIntoMultipleRequests(t *testing.T) {
+	t.Parallel()
+
+	const payloadLimit = 1024
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if len(body) > payloadLimit {
+			t.Fatalf("request body exceeded test limit: %d > %d", len(body), payloadLimit)
+		}
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+
+	points := make([]PointInput, 0, 12)
+	for i := 0; i < 12; i++ {
+		points = append(points, PointInput{
+			ID:     fmt.Sprintf("p-%d", i),
+			Vector: []float64{0.1, 0.2, 0.3, 0.4},
+			Payload: map[string]interface{}{
+				"chunk_id": fmt.Sprintf("c-%d", i),
+				"blob":     strings.Repeat("x", 180),
+			},
+		})
+	}
+
+	client := NewQdrantClient(srv.URL, "legal_chunks")
+	client.UpsertPayloadMaxBytes = payloadLimit
+	if err := client.Upsert(context.Background(), points); err != nil {
+		t.Fatalf("Upsert returned error: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got <= 1 {
+		t.Fatalf("expected multiple batched requests, got %d", got)
+	}
+}
+
+func TestUpsert_ReturnsErrorWhenSinglePointExceedsPayloadLimit(t *testing.T) {
+	t.Parallel()
+
+	client := NewQdrantClient("http://example.invalid", "legal_chunks")
+	client.UpsertPayloadMaxBytes = 256
+	err := client.Upsert(context.Background(), []PointInput{{
+		ID:     "p1",
+		Vector: []float64{0.1, 0.2, 0.3},
+		Payload: map[string]interface{}{
+			"chunk_id": "c1",
+			"blob":     strings.Repeat("y", 2000),
+		},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "single point exceeds qdrant upsert payload limit") {
+		t.Fatalf("expected oversized-point error, got %v", err)
 	}
 }

@@ -24,6 +24,13 @@ var defaultLevelPatterns = map[hierarchyLevel]string{
 	levelPoint:   `(?im)^\s*(?:điểm\s+)?(?:[0-9]+\.)?([a-zđ])(?:[\)\.])\s*(.+)?$`,
 }
 
+func submatch(matches []string, idx int) string {
+	if idx < 0 || idx >= len(matches) {
+		return ""
+	}
+	return strings.TrimSpace(matches[idx])
+}
+
 type legalDocument struct {
 	Articles []articleNode
 }
@@ -171,7 +178,11 @@ func (p legalStructureParser) Parse(text string) legalDocument {
 
 		if p.has(levelChapter) {
 			if matches := p.patterns[levelChapter].FindStringSubmatch(trimmed); matches != nil {
-				currentChapter = strings.TrimSpace(matches[1])
+				chapter := submatch(matches, 1)
+				if chapter == "" {
+					chapter = strings.TrimSpace(trimmed)
+				}
+				currentChapter = chapter
 				continue
 			}
 		}
@@ -179,9 +190,10 @@ func (p legalStructureParser) Parse(text string) legalDocument {
 		if p.has(levelArticle) {
 			if matches := p.patterns[levelArticle].FindStringSubmatch(trimmed); matches != nil {
 				flushArticle()
+				number := submatch(matches, 1)
 				current = articleNode{
 					Chapter: currentChapter,
-					Number:  strings.TrimSpace(matches[1]),
+					Number:  number,
 					Header:  trimmed,
 				}
 				hasArticle = true
@@ -242,9 +254,14 @@ func (p legalStructureParser) parseClauses(text string) []clauseNode {
 
 		if matches := p.patterns[levelClause].FindStringSubmatch(trimmed); matches != nil {
 			flushClause()
-			current = clauseNode{Number: strings.TrimSpace(matches[1])}
+			number := submatch(matches, 1)
+			if number == "" {
+				buffer = append(buffer, trimmed)
+				continue
+			}
+			current = clauseNode{Number: number}
 			hasClause = true
-			if tail := strings.TrimSpace(matches[2]); tail != "" {
+			if tail := submatch(matches, 2); tail != "" {
 				buffer = append(buffer, tail)
 			}
 			continue
@@ -289,12 +306,15 @@ func (p legalStructureParser) parsePoints(text string) []pointNode {
 		}
 		if matches := p.patterns[levelPoint].FindStringSubmatch(trimmed); matches != nil {
 			flushPoint()
-			current = pointNode{Marker: strings.TrimSpace(matches[1])}
+			marker := submatch(matches, 1)
+			if marker == "" {
+				buffer = append(buffer, trimmed)
+				continue
+			}
+			current = pointNode{Marker: marker}
 			hasPoint = true
-			if len(matches) > 2 {
-				if tail := strings.TrimSpace(matches[2]); tail != "" {
-					buffer = append(buffer, tail)
-				}
+			if tail := submatch(matches, 2); tail != "" {
+				buffer = append(buffer, tail)
 			}
 			continue
 		}

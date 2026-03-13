@@ -155,6 +155,32 @@ func TestLegalStructureParserPointRegexDoesNotOvermatch(t *testing.T) {
 	}
 }
 
+func TestLegalStructureParserClausePatternSingleCaptureGroupDoesNotPanic(t *testing.T) {
+	parser := newLegalStructureParser(schema.SegmentRules{
+		Strategy:      "legal_article",
+		Hierarchy:     "article>clause>point",
+		Normalization: "basic",
+		LevelPatterns: map[string]string{
+			"clause": `(?im)^\s*(?:khoản\s+)?([0-9]+)\s*[\.\)]?\s*.*$`,
+		},
+	})
+	text := `
+	Điều 10. Quyền trẻ em
+	1. Cha mẹ có nghĩa vụ bảo vệ con.
+	2. Nhà nước bảo hộ.
+	`
+	doc := parser.Parse(text)
+	if len(doc.Articles) != 1 {
+		t.Fatalf("expected 1 article, got %d", len(doc.Articles))
+	}
+	if got := len(doc.Articles[0].Clauses); got != 2 {
+		t.Fatalf("expected 2 clauses, got %d", got)
+	}
+	if doc.Articles[0].Clauses[0].Number != "1" || doc.Articles[0].Clauses[1].Number != "2" {
+		t.Fatalf("unexpected clause numbering: %+v", doc.Articles[0].Clauses)
+	}
+}
+
 func TestTokenSafeSplitterSplitsOversizedText(t *testing.T) {
 	parts, err := tokenSafeSplitter{
 		maxTokens:    40,

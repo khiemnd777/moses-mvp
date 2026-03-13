@@ -21,6 +21,7 @@ const (
 	qdrantBaseBackoff             = 200 * time.Millisecond
 	qdrantDeleteMaxAnyValues      = 1000
 	qdrantMaxEstimatedDeleteScope = 20000
+	qdrantDefaultUpsertMaxBytes   = 30 * 1024 * 1024
 )
 
 var allowedDeleteFilterFields = map[string]struct{}{
@@ -30,18 +31,20 @@ var allowedDeleteFilterFields = map[string]struct{}{
 }
 
 type QdrantClient struct {
-	URL        string
-	Collection string
-	HTTP       *http.Client
-	Logger     *slog.Logger
+	URL                   string
+	Collection            string
+	HTTP                  *http.Client
+	Logger                *slog.Logger
+	UpsertPayloadMaxBytes int
 }
 
 func NewQdrantClient(url, collection string) *QdrantClient {
 	return &QdrantClient{
-		URL:        url,
-		Collection: collection,
-		HTTP:       &http.Client{Timeout: 30 * time.Second},
-		Logger:     slog.Default(),
+		URL:                   url,
+		Collection:            collection,
+		HTTP:                  &http.Client{Timeout: 30 * time.Second},
+		Logger:                slog.Default(),
+		UpsertPayloadMaxBytes: qdrantDefaultUpsertMaxBytes,
 	}
 }
 
@@ -246,28 +249,88 @@ type upsertRequest struct {
 }
 
 func (c *QdrantClient) Upsert(ctx context.Context, points []PointInput) error {
-	payload := upsertRequest{Points: points}
-	b, err := json.Marshal(payload)
+	batches, err := splitUpsertPoints(points, c.upsertPayloadLimit())
 	if err != nil {
 		return err
 	}
-	return c.doWithRetry(ctx, "upsert", c.Collection, func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.URL+"/collections/"+c.Collection+"/points?wait=true", bytes.NewReader(b))
+	for _, batch := range batches {
+		payload := upsertRequest{Points: batch}
+		b, err := json.Marshal(payload)
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := c.HTTP.Do(req)
-		if err != nil {
+		if err := c.doWithRetry(ctx, "upsert", c.Collection, func() error {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.URL+"/collections/"+c.Collection+"/points?wait=true", bytes.NewReader(b))
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := c.HTTP.Do(req)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode >= 300 {
+				body, _ := io.ReadAll(resp.Body)
+				return qdrantHTTPError{Op: "upsert", StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
-		defer resp.Body.Close()
-		if resp.StatusCode >= 300 {
-			body, _ := io.ReadAll(resp.Body)
-			return qdrantHTTPError{Op: "upsert", StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+	}
+	return nil
+}
+
+func (c *QdrantClient) upsertPayloadLimit() int {
+	if c.UpsertPayloadMaxBytes > 0 {
+		return c.UpsertPayloadMaxBytes
+	}
+	return qdrantDefaultUpsertMaxBytes
+}
+
+func splitUpsertPoints(points []PointInput, maxPayloadBytes int) ([][]PointInput, error) {
+	if len(points) == 0 {
+		return nil, nil
+	}
+	if maxPayloadBytes <= 16 {
+		return nil, fmt.Errorf("invalid upsert payload size limit: %d", maxPayloadBytes)
+	}
+
+	const envelopeOverhead = 16 // conservative for {"points":[ ... ]}
+	maxPointsBytes := maxPayloadBytes - envelopeOverhead
+
+	batches := make([][]PointInput, 0, len(points)/128+1)
+	current := make([]PointInput, 0, 128)
+	currentBytes := 0
+	for i, point := range points {
+		pb, err := json.Marshal(point)
+		if err != nil {
+			return nil, err
 		}
-		return nil
-	})
+		pointBytes := len(pb)
+		if pointBytes > maxPointsBytes {
+			return nil, fmt.Errorf("single point exceeds qdrant upsert payload limit: index=%d size=%d limit=%d", i, pointBytes+envelopeOverhead, maxPayloadBytes)
+		}
+
+		// Account for the comma separator between points in the array.
+		needed := pointBytes
+		if len(current) > 0 {
+			needed++
+		}
+		if currentBytes+needed > maxPointsBytes {
+			batches = append(batches, current)
+			current = make([]PointInput, 0, 128)
+			currentBytes = 0
+			needed = pointBytes
+		}
+		current = append(current, point)
+		currentBytes += needed
+	}
+	if len(current) > 0 {
+		batches = append(batches, current)
+	}
+	return batches, nil
 }
 
 type searchRequest struct {

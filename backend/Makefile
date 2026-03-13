@@ -53,7 +53,7 @@ migrate-status:
 	psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "SELECT version, applied_at FROM $(MIGRATION_TABLE) ORDER BY version;"
 
 docker-up:
-	docker compose -f docker/docker-compose.yml up --build
+	docker compose --env-file .env -f docker/docker-compose.yml up --build
 
 docker-down:
-	docker compose -f docker/docker-compose.yml down
+	docker compose --env-file .env -f docker/docker-compose.yml down

@@ -19,11 +19,11 @@ services:
     build:
       context: ..
       dockerfile: docker/api.Dockerfile
+    env_file:
+      - ../.env
     environment:
       CONFIG_PATH: /app/config/config.yaml
       PORT: "8080"
-      JWT_SECRET: ${JWT_SECRET:-dev-insecure-jwt-secret-change-me}
-      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-dev-admin-password-change-me}
     ports:
       - "8080:8080"
     depends_on:
@@ -35,10 +35,10 @@ services:
     build:
       context: ..
       dockerfile: docker/worker.Dockerfile
+    env_file:
+      - ../.env
     environment:
       CONFIG_PATH: /app/config/config.yaml
-      JWT_SECRET: ${JWT_SECRET:-dev-insecure-jwt-secret-change-me}
-      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-dev-admin-password-change-me}
     depends_on:
       - postgres
       - qdrant
