@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/khiemnd777/legal_api/domain"
@@ -880,6 +881,221 @@ func (s *Store) LogQuery(ctx context.Context, q string) error {
 func (s *Store) LogAnswer(ctx context.Context, q, a string) error {
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO answer_logs (query, answer) VALUES ($1,$2)`, q, a)
 	return err
+}
+
+func (s *Store) CreateConversation(ctx context.Context, title string, userID *string) (domain.Conversation, error) {
+	var convo domain.Conversation
+	err := s.DB.QueryRowContext(ctx, `
+INSERT INTO conversations (title, user_id)
+VALUES ($1, $2)
+RETURNING id, title, user_id, created_at, updated_at
+`, title, userID).Scan(&convo.ID, &convo.Title, &convo.UserID, &convo.CreatedAt, &convo.UpdatedAt)
+	return convo, err
+}
+
+func (s *Store) ListConversations(ctx context.Context, userID *string) ([]domain.Conversation, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	baseQuery := `
+SELECT
+	c.id,
+	c.title,
+	c.user_id,
+	lm.content AS last_message,
+	lm.created_at AS last_message_at,
+	COALESCE(mc.message_count, 0) AS message_count,
+	c.created_at,
+	c.updated_at
+FROM conversations c
+LEFT JOIN LATERAL (
+	SELECT m.content, m.created_at
+	FROM messages m
+	WHERE m.conversation_id = c.id
+	ORDER BY m.created_at DESC
+	LIMIT 1
+) lm ON TRUE
+LEFT JOIN LATERAL (
+	SELECT COUNT(1) AS message_count
+	FROM messages m
+	WHERE m.conversation_id = c.id
+) mc ON TRUE
+`
+	if userID != nil && strings.TrimSpace(*userID) != "" {
+		rows, err = s.DB.QueryContext(ctx, baseQuery+`WHERE c.user_id = $1 ORDER BY c.updated_at DESC, c.created_at DESC`, *userID)
+	} else {
+		rows, err = s.DB.QueryContext(ctx, baseQuery+`ORDER BY c.updated_at DESC, c.created_at DESC`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.Conversation, 0)
+	for rows.Next() {
+		var convo domain.Conversation
+		if err := rows.Scan(
+			&convo.ID,
+			&convo.Title,
+			&convo.UserID,
+			&convo.LastMessage,
+			&convo.LastMessageAt,
+			&convo.MessageCount,
+			&convo.CreatedAt,
+			&convo.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, convo)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetConversation(ctx context.Context, id string) (domain.Conversation, error) {
+	var convo domain.Conversation
+	err := s.DB.QueryRowContext(ctx, `
+SELECT
+	c.id,
+	c.title,
+	c.user_id,
+	lm.content AS last_message,
+	lm.created_at AS last_message_at,
+	COALESCE(mc.message_count, 0) AS message_count,
+	c.created_at,
+	c.updated_at
+FROM conversations c
+LEFT JOIN LATERAL (
+	SELECT m.content, m.created_at
+	FROM messages m
+	WHERE m.conversation_id = c.id
+	ORDER BY m.created_at DESC
+	LIMIT 1
+) lm ON TRUE
+LEFT JOIN LATERAL (
+	SELECT COUNT(1) AS message_count
+	FROM messages m
+	WHERE m.conversation_id = c.id
+) mc ON TRUE
+WHERE c.id = $1
+`, id).Scan(
+		&convo.ID,
+		&convo.Title,
+		&convo.UserID,
+		&convo.LastMessage,
+		&convo.LastMessageAt,
+		&convo.MessageCount,
+		&convo.CreatedAt,
+		&convo.UpdatedAt,
+	)
+	return convo, err
+}
+
+func (s *Store) DeleteConversation(ctx context.Context, id string) (bool, error) {
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM conversations WHERE id = $1`, id)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
+func (s *Store) UpdateConversationTitle(ctx context.Context, id, title string) error {
+	res, err := s.DB.ExecContext(ctx, `
+UPDATE conversations
+SET title = $2,
+    updated_at = NOW()
+WHERE id = $1
+`, id, title)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) CreateMessage(ctx context.Context, conversationID, role, content string, citationsJSON []byte, traceID *string) (domain.Message, error) {
+	var msg domain.Message
+	if len(citationsJSON) == 0 {
+		citationsJSON = []byte("[]")
+	}
+	err := s.DB.QueryRowContext(ctx, `
+WITH inserted AS (
+	INSERT INTO messages (conversation_id, role, content, citations_json, trace_id)
+	VALUES ($1, $2, $3, $4::jsonb, $5)
+	RETURNING id, conversation_id, role, content, citations_json, trace_id, created_at
+)
+UPDATE conversations c
+SET updated_at = NOW()
+FROM inserted
+WHERE c.id = inserted.conversation_id
+RETURNING inserted.id, inserted.conversation_id, inserted.role, inserted.content, inserted.citations_json, inserted.trace_id, inserted.created_at
+`, conversationID, role, content, citationsJSON, traceID).Scan(
+		&msg.ID,
+		&msg.ConversationID,
+		&msg.Role,
+		&msg.Content,
+		&msg.CitationsJSON,
+		&msg.TraceID,
+		&msg.CreatedAt,
+	)
+	return msg, err
+}
+
+func (s *Store) UpdateMessage(ctx context.Context, id, content string, citationsJSON []byte, traceID *string) error {
+	if len(citationsJSON) == 0 {
+		citationsJSON = []byte("[]")
+	}
+	res, err := s.DB.ExecContext(ctx, `
+UPDATE messages
+SET content = $2,
+    citations_json = $3::jsonb,
+    trace_id = $4
+WHERE id = $1
+`, id, content, citationsJSON, traceID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) ListMessagesByConversation(ctx context.Context, conversationID string) ([]domain.Message, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT id, conversation_id, role, content, citations_json, trace_id, created_at
+FROM messages
+WHERE conversation_id = $1
+ORDER BY created_at ASC, id ASC
+`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.Message, 0)
+	for rows.Next() {
+		var msg domain.Message
+		if err := rows.Scan(&msg.ID, &msg.ConversationID, &msg.Role, &msg.Content, &msg.CitationsJSON, &msg.TraceID, &msg.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, msg)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) GetActiveAIGuardPolicy(ctx context.Context) (domain.AIGuardPolicy, error) {

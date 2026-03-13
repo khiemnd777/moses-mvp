@@ -22,6 +22,15 @@ type Source struct {
 
 func (s *Service) Generate(ctx context.Context, question string, sources []Source) (string, error) {
 	msgs := s.BuildMessages(question, sources)
+	return s.generateWithMessages(ctx, msgs)
+}
+
+func (s *Service) GenerateWithHistory(ctx context.Context, history []ConversationMessage, question string, sources []Source, opts PromptBuildOptions) (string, error) {
+	msgs := s.BuildConversationMessages(history, question, sources, opts)
+	return s.generateWithMessages(ctx, msgs)
+}
+
+func (s *Service) generateWithMessages(ctx context.Context, msgs []message) (string, error) {
 	retryCount := s.Retry
 	if retryCount < 0 {
 		retryCount = 0

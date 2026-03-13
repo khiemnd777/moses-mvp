@@ -9,6 +9,8 @@ import (
 type Citation struct {
 	ID               string `json:"id"`
 	DocumentTitle    string `json:"document_title"`
+	LawName          string `json:"law_name,omitempty"`
+	Chapter          string `json:"chapter,omitempty"`
 	DocumentNumber   string `json:"document_number"`
 	DocumentType     string `json:"document_type,omitempty"`
 	IssuingAuthority string `json:"issuing_authority,omitempty"`
@@ -19,6 +21,9 @@ type Citation struct {
 	CitationLabel    string `json:"citation_label,omitempty"`
 	Excerpt          string `json:"excerpt"`
 	URL              string `json:"url"`
+	ChunkID          string `json:"chunk_id,omitempty"`
+	AssetID          string `json:"asset_id,omitempty"`
+	FileURL          string `json:"file_url,omitempty"`
 }
 
 func FormatLegalCitation(c Citation) string {
@@ -44,6 +49,15 @@ type StreamHandler interface {
 
 func (s *Service) Stream(ctx context.Context, question string, sources []Source, handler StreamHandler) error {
 	msgs := s.BuildMessages(question, sources)
+	return s.streamWithMessages(ctx, msgs, sources, handler)
+}
+
+func (s *Service) StreamWithHistory(ctx context.Context, history []ConversationMessage, question string, sources []Source, opts PromptBuildOptions, handler StreamHandler) error {
+	msgs := s.BuildConversationMessages(history, question, sources, opts)
+	return s.streamWithMessages(ctx, msgs, sources, handler)
+}
+
+func (s *Service) streamWithMessages(ctx context.Context, msgs []message, sources []Source, handler StreamHandler) error {
 	retryCount := s.Retry
 	if retryCount < 0 {
 		retryCount = 0

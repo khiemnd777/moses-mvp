@@ -30,12 +30,21 @@ type handlerStore interface {
 	GetDocumentAsset(ctx context.Context, id string) (domain.DocumentAsset, error)
 	CreateDocumentVersion(ctx context.Context, documentID, assetID string) (string, error)
 	GetDocumentVersion(ctx context.Context, id string) (domain.DocumentVersion, error)
+	GetDocumentVersionBundle(ctx context.Context, id string) (domain.DocumentVersion, domain.Document, domain.DocumentAsset, domain.DocType, error)
 	DeleteDocumentVersion(ctx context.Context, id string) (bool, error)
 	ListIngestJobs(ctx context.Context) ([]domain.IngestJob, error)
 	DeleteIngestJob(ctx context.Context, id string) (bool, error)
 	EnqueueIngestJob(ctx context.Context, documentVersionID string) (domain.IngestJob, bool, error)
 	LogQuery(ctx context.Context, q string) error
 	LogAnswer(ctx context.Context, q, a string) error
+	CreateConversation(ctx context.Context, title string, userID *string) (domain.Conversation, error)
+	ListConversations(ctx context.Context, userID *string) ([]domain.Conversation, error)
+	GetConversation(ctx context.Context, id string) (domain.Conversation, error)
+	DeleteConversation(ctx context.Context, id string) (bool, error)
+	UpdateConversationTitle(ctx context.Context, id, title string) error
+	CreateMessage(ctx context.Context, conversationID, role, content string, citationsJSON []byte, traceID *string) (domain.Message, error)
+	UpdateMessage(ctx context.Context, id, content string, citationsJSON []byte, traceID *string) error
+	ListMessagesByConversation(ctx context.Context, conversationID string) ([]domain.Message, error)
 	GetActiveAIGuardPolicy(ctx context.Context) (domain.AIGuardPolicy, error)
 	GetActiveAIPromptByType(ctx context.Context, promptType string) (domain.AIPrompt, error)
 }

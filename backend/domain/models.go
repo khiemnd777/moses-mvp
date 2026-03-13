@@ -80,6 +80,27 @@ type AnswerLog struct {
 	CreatedAt time.Time
 }
 
+type Conversation struct {
+	ID            string
+	Title         string
+	UserID        *string
+	LastMessage   *string
+	LastMessageAt *time.Time
+	MessageCount  int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type Message struct {
+	ID             string
+	ConversationID string
+	Role           string
+	Content        string
+	CitationsJSON  []byte
+	TraceID        *string
+	CreatedAt      time.Time
+}
+
 type User struct {
 	ID                 string
 	Username           string

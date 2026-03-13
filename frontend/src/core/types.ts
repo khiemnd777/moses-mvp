@@ -3,20 +3,43 @@ export type Role = 'user' | 'assistant' | 'system';
 export type Citation = {
   id: string;
   document_title: string;
+  law_name?: string;
+  chapter?: string;
   document_number: string;
+  document_type?: string;
+  issuing_authority?: string;
+  effective_status?: string;
   article: string;
   clause: string;
   year: number;
+  citation_label?: string;
   excerpt: string;
   url: string;
+  chunk_id?: string;
+  asset_id?: string;
+  file_url?: string;
 };
 
 export type ChatMessage = {
-  id: string;
+  message_id: string;
+  conversation_id: string;
   role: Role;
   content: string;
-  citations?: Citation[];
-  createdAt: number;
+  citations: Citation[];
+  trace_id?: string;
+  created_at: string;
+};
+
+export type Conversation = {
+  conversation_id: string;
+  title: string;
+  user_id?: string;
+  last_message_preview?: string;
+  last_message_at?: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+  messages?: ChatMessage[];
 };
 
 export type ChatFilters = {
@@ -25,6 +48,8 @@ export type ChatFilters = {
   effectiveStatus: string;
   domain: string;
   docType: string;
+  documentNumber?: string;
+  articleNumber?: string;
 };
 
 export type DocTypeForm = {

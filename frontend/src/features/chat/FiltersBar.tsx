@@ -20,26 +20,38 @@ const FiltersBar = () => {
         value={filters.topK}
         onChange={(e) => updateFilters({ topK: Number(e.target.value) })}
       />
-      {/* <Select
+      <Select
         label="Effective Status"
         value={filters.effectiveStatus}
         onChange={(e) => updateFilters({ effectiveStatus: e.target.value })}
       >
-        <option value="active">Active</option>
-        <option value="archived">Archived</option>
-      </Select> */}
-      {/* <Input
+        <option value="active">Còn hiệu lực</option>
+        <option value="archived">Lưu trữ</option>
+      </Select>
+      <Input
         label="Domain"
-        placeholder="Contracts, IP..."
+        placeholder="hon_nhan_gia_dinh"
         value={filters.domain}
         onChange={(e) => updateFilters({ domain: e.target.value })}
       />
       <Input
         label="Doc Type"
-        placeholder="Policy, Memo..."
+        placeholder="law"
         value={filters.docType}
         onChange={(e) => updateFilters({ docType: e.target.value })}
-      /> */}
+      />
+      <Input
+        label="Số văn bản"
+        placeholder="56/2014/QH13"
+        value={filters.documentNumber || ''}
+        onChange={(e) => updateFilters({ documentNumber: e.target.value })}
+      />
+      <Input
+        label="Điều"
+        placeholder="56"
+        value={filters.articleNumber || ''}
+        onChange={(e) => updateFilters({ articleNumber: e.target.value })}
+      />
     </div>
   );
 };

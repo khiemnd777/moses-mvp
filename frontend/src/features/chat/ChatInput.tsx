@@ -4,7 +4,7 @@ import { useChatStore } from './chatStore';
 
 const ChatInput = () => {
   const [value, setValue] = useState('');
-  const { sendMessage, stopStreaming, retryLast, resetChat, isStreaming } = useChatStore();
+  const { sendMessage, stopStreaming, retryLast, createConversation, isStreaming } = useChatStore();
 
   const handleSend = async () => {
     await sendMessage(value);
@@ -22,16 +22,16 @@ const ChatInput = () => {
       />
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Button onClick={handleSend} disabled={isStreaming}>
-          Send
+          Gửi câu hỏi
         </Button>
         <Button variant="secondary" onClick={stopStreaming} disabled={!isStreaming}>
-          Stop
+          Dừng stream
         </Button>
         <Button variant="outline" onClick={retryLast}>
-          Retry last
+          Gửi lại
         </Button>
-        <Button variant="outline" onClick={resetChat}>
-          Reset
+        <Button variant="outline" onClick={() => void createConversation()}>
+          Chat mới
         </Button>
       </div>
     </div>

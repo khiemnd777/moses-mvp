@@ -4,11 +4,16 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/khiemnd777/legal_api/observability"
 )
 
 func (h *Handler) startAnswerTrace(ctx context.Context, mode, question string) (context.Context, *observability.TraceService, string, error) {
 	traceID := observability.TraceIDFromContext(ctx)
+	if traceID == "" {
+		traceID = uuid.NewString()
+		ctx = observability.WithTraceID(ctx, traceID)
+	}
 	traceSvc, err := observability.NewTraceService(ctx, h.TraceRepo, h.Logger, traceID, mode, question)
 	if err != nil {
 		return ctx, nil, traceID, err

@@ -3,6 +3,8 @@ export type SseEvent = {
   data: string;
 };
 
+import { AUTH_TOKEN_KEY, CHANGE_PASSWORD_PATH, PLAYGROUND_LOGIN_PATH } from '@/playground/apiClient.js';
+
 type StreamHandlers = {
   onEvent: (evt: SseEvent) => void;
   onError?: (error: Error) => void;
@@ -15,16 +17,31 @@ export const streamSse = async (
   signal: AbortSignal,
   handlers: StreamHandlers
 ) => {
+  const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
     },
     body: JSON.stringify(body),
     signal
   });
 
   if (!response.ok || !response.body) {
+    if (response.status === 401) {
+      window.localStorage.removeItem(AUTH_TOKEN_KEY);
+      if (window.location.pathname !== PLAYGROUND_LOGIN_PATH) {
+        window.location.assign(PLAYGROUND_LOGIN_PATH);
+      }
+    }
+    if (response.status === 403) {
+      const text = await response.text();
+      if (text.includes('password_change_required') && window.location.pathname !== CHANGE_PASSWORD_PATH) {
+        window.location.assign(CHANGE_PASSWORD_PATH);
+      }
+    }
     throw new Error(`SSE request failed (${response.status})`);
   }
 

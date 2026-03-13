@@ -77,6 +77,9 @@ func (f *fakeStore) CreateDocumentVersion(ctx context.Context, documentID, asset
 func (f *fakeStore) GetDocumentVersion(ctx context.Context, id string) (domain.DocumentVersion, error) {
 	return domain.DocumentVersion{}, nil
 }
+func (f *fakeStore) GetDocumentVersionBundle(ctx context.Context, id string) (domain.DocumentVersion, domain.Document, domain.DocumentAsset, domain.DocType, error) {
+	return domain.DocumentVersion{}, domain.Document{}, domain.DocumentAsset{}, domain.DocType{}, nil
+}
 func (f *fakeStore) DeleteDocumentVersion(ctx context.Context, id string) (bool, error) {
 	return false, nil
 }
@@ -87,6 +90,28 @@ func (f *fakeStore) EnqueueIngestJob(ctx context.Context, documentVersionID stri
 }
 func (f *fakeStore) LogQuery(ctx context.Context, q string) error     { return nil }
 func (f *fakeStore) LogAnswer(ctx context.Context, q, a string) error { return nil }
+func (f *fakeStore) CreateConversation(ctx context.Context, title string, userID *string) (domain.Conversation, error) {
+	return domain.Conversation{}, nil
+}
+func (f *fakeStore) ListConversations(ctx context.Context, userID *string) ([]domain.Conversation, error) {
+	return nil, nil
+}
+func (f *fakeStore) GetConversation(ctx context.Context, id string) (domain.Conversation, error) {
+	return domain.Conversation{}, nil
+}
+func (f *fakeStore) DeleteConversation(ctx context.Context, id string) (bool, error) {
+	return true, nil
+}
+func (f *fakeStore) UpdateConversationTitle(ctx context.Context, id, title string) error { return nil }
+func (f *fakeStore) CreateMessage(ctx context.Context, conversationID, role, content string, citationsJSON []byte, traceID *string) (domain.Message, error) {
+	return domain.Message{}, nil
+}
+func (f *fakeStore) UpdateMessage(ctx context.Context, id, content string, citationsJSON []byte, traceID *string) error {
+	return nil
+}
+func (f *fakeStore) ListMessagesByConversation(ctx context.Context, conversationID string) ([]domain.Message, error) {
+	return nil, nil
+}
 func (f *fakeStore) GetActiveAIGuardPolicy(ctx context.Context) (domain.AIGuardPolicy, error) {
 	return domain.AIGuardPolicy{
 		Name:               "default",

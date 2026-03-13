@@ -155,7 +155,7 @@ func (s *Service) Search(ctx context.Context, query string, opts SearchOptions) 
 		return nil, err
 	}
 	qdrantFilter := buildQdrantFilter(plan.Filters, plan.PreferredDocTypes)
-	matches, err := s.Qdrant.Search(ctx, vectors[0], plan.CandidatePoolLimit, qdrantFilter)
+	matches, err := s.searchWithFallback(ctx, vectors[0], plan.CandidatePoolLimit, qdrantFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -259,6 +259,110 @@ func (s *Service) Search(ctx context.Context, query string, opts SearchOptions) 
 	})
 
 	return limited, nil
+}
+
+func (s *Service) searchWithFallback(ctx context.Context, vector []float64, limit int, filter *infra.SearchFilter) ([]infra.SearchResult, error) {
+	if filter == nil {
+		return s.Qdrant.Search(ctx, vector, limit, nil)
+	}
+
+	attempts := []*infra.SearchFilter{
+		filter,
+		withoutEffectiveStatus(filter),
+		withoutLegalDomain(withoutEffectiveStatus(filter)),
+		withoutDocumentType(withoutLegalDomain(withoutEffectiveStatus(filter))),
+		nil,
+	}
+
+	for idx, candidate := range uniqueSearchFilters(attempts) {
+		matches, err := s.Qdrant.Search(ctx, vector, limit, candidate)
+		if err != nil {
+			return nil, err
+		}
+		if len(matches) > 0 {
+			if idx > 0 {
+				observability.LogInfo(ctx, s.logger(), "retrieval", "retrieval fallback applied", map[string]interface{}{
+					"attempt":      idx + 1,
+					"legal_domain": candidateValueCount(candidate.LegalDomain),
+					"doc_type":     candidateValueCount(candidate.DocumentType),
+					"status":       candidateValueCount(candidate.EffectiveStatus),
+				})
+			}
+			return matches, nil
+		}
+	}
+
+	return []infra.SearchResult{}, nil
+}
+
+func withoutEffectiveStatus(filter *infra.SearchFilter) *infra.SearchFilter {
+	if filter == nil {
+		return nil
+	}
+	return &infra.SearchFilter{
+		LegalDomain:     append([]string{}, filter.LegalDomain...),
+		DocumentType:    append([]string{}, filter.DocumentType...),
+		EffectiveStatus: nil,
+		DocumentNumber:  append([]string{}, filter.DocumentNumber...),
+		ArticleNumber:   append([]string{}, filter.ArticleNumber...),
+	}
+}
+
+func withoutLegalDomain(filter *infra.SearchFilter) *infra.SearchFilter {
+	if filter == nil {
+		return nil
+	}
+	return &infra.SearchFilter{
+		LegalDomain:     nil,
+		DocumentType:    append([]string{}, filter.DocumentType...),
+		EffectiveStatus: append([]string{}, filter.EffectiveStatus...),
+		DocumentNumber:  append([]string{}, filter.DocumentNumber...),
+		ArticleNumber:   append([]string{}, filter.ArticleNumber...),
+	}
+}
+
+func withoutDocumentType(filter *infra.SearchFilter) *infra.SearchFilter {
+	if filter == nil {
+		return nil
+	}
+	return &infra.SearchFilter{
+		LegalDomain:     append([]string{}, filter.LegalDomain...),
+		DocumentType:    nil,
+		EffectiveStatus: append([]string{}, filter.EffectiveStatus...),
+		DocumentNumber:  append([]string{}, filter.DocumentNumber...),
+		ArticleNumber:   append([]string{}, filter.ArticleNumber...),
+	}
+}
+
+func uniqueSearchFilters(filters []*infra.SearchFilter) []*infra.SearchFilter {
+	out := make([]*infra.SearchFilter, 0, len(filters))
+	seen := map[string]struct{}{}
+	for _, filter := range filters {
+		key := searchFilterKey(filter)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, filter)
+	}
+	return out
+}
+
+func searchFilterKey(filter *infra.SearchFilter) string {
+	if filter == nil {
+		return "nil"
+	}
+	return strings.Join([]string{
+		strings.Join(filter.LegalDomain, ","),
+		strings.Join(filter.DocumentType, ","),
+		strings.Join(filter.EffectiveStatus, ","),
+		strings.Join(filter.DocumentNumber, ","),
+		strings.Join(filter.ArticleNumber, ","),
+	}, "|")
+}
+
+func candidateValueCount(values []string) int {
+	return len(values)
 }
 
 func UnderstandQuery(query string) QueryUnderstandingResult {

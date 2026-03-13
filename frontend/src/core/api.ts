@@ -5,6 +5,8 @@ import type {
   AIPrompt,
   AIRetrievalConfig,
   ChatFilters,
+  ChatMessage,
+  Conversation,
   DeleteByFilterRequest,
   DeleteByFilterResponse,
   DocType,
@@ -51,6 +53,40 @@ export const unwrapError = (error: unknown): string => {
 export const answer = async (question: string, filters: ChatFilters) => {
   const { data } = await api.post('/answer', { question, filters });
   return data as { answer: string; citations?: unknown[] };
+};
+
+export const createConversation = async (title?: string) => {
+  const { data } = await api.post('/conversations', title ? { title } : {});
+  return data as Conversation;
+};
+
+export const listConversations = async () => {
+  const { data } = await api.get('/conversations');
+  return (data?.items || []) as Conversation[];
+};
+
+export const getConversation = async (id: string) => {
+  const { data } = await api.get(`/conversations/${id}`);
+  return data as Conversation;
+};
+
+export const deleteConversation = async (id: string) => {
+  await api.delete(`/conversations/${id}`);
+};
+
+export const listMessages = async (conversationId: string) => {
+  const { data } = await api.get('/messages', { params: { conversation_id: conversationId } });
+  return (data?.items || []) as ChatMessage[];
+};
+
+export const createMessage = async (payload: { conversation_id?: string; content: string; filters: ChatFilters }) => {
+  const { data } = await api.post('/messages', payload);
+  return data as {
+    conversation: Conversation;
+    user_message: ChatMessage;
+    message: ChatMessage;
+    trace_id: string;
+  };
 };
 
 export const search = async (query: string) => {
