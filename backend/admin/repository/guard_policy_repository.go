@@ -163,3 +163,38 @@ WHERE id <> $1 AND enabled = TRUE
 `, exceptID)
 	return err
 }
+
+func (r *GuardPolicyRepository) DisableAllEnabled(ctx context.Context, exec dbtx) error {
+	_, err := exec.ExecContext(ctx, `
+UPDATE ai_guard_policies
+SET enabled = FALSE, updated_at = NOW()
+WHERE enabled = TRUE
+`)
+	return err
+}
+
+func (r *GuardPolicyRepository) SetEnabled(ctx context.Context, exec dbtx, id string, enabled bool) (domain.AIGuardPolicy, error) {
+	var updated domain.AIGuardPolicy
+	err := exec.QueryRowContext(ctx, `
+UPDATE ai_guard_policies
+SET enabled = $2, updated_at = NOW()
+WHERE id = $1
+RETURNING id, name, enabled, min_retrieved_chunks, min_similarity_score, on_empty_retrieval, on_low_confidence, created_at, updated_at
+`, id, enabled).Scan(
+		&updated.ID,
+		&updated.Name,
+		&updated.Enabled,
+		&updated.MinRetrievedChunks,
+		&updated.MinSimilarityScore,
+		&updated.OnEmptyRetrieval,
+		&updated.OnLowConfidence,
+		&updated.CreatedAt,
+		&updated.UpdatedAt,
+	)
+	return updated, err
+}
+
+func (r *GuardPolicyRepository) LockSingleEnabledSlot(ctx context.Context, exec dbtx) error {
+	_, err := exec.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(947210311))
+	return err
+}

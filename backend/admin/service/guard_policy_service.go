@@ -46,14 +46,18 @@ func (s *GuardPolicyService) Create(ctx context.Context, item domain.AIGuardPoli
 	}
 	defer tx.Rollback()
 
+	if item.Enabled {
+		if err := s.Repo.LockSingleEnabledSlot(ctx, tx); err != nil {
+			return domain.AIGuardPolicy{}, err
+		}
+		if err := s.Repo.DisableAllEnabled(ctx, tx); err != nil {
+			return domain.AIGuardPolicy{}, err
+		}
+	}
+
 	created, err := s.Repo.Create(ctx, tx, item)
 	if err != nil {
 		return domain.AIGuardPolicy{}, err
-	}
-	if created.Enabled {
-		if err := s.Repo.DisableOthers(ctx, tx, created.ID); err != nil {
-			return domain.AIGuardPolicy{}, err
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.AIGuardPolicy{}, err
@@ -71,18 +75,35 @@ func (s *GuardPolicyService) Update(ctx context.Context, id string, item domain.
 	}
 	defer tx.Rollback()
 
-	updated, err := s.Repo.Update(ctx, tx, id, item)
+	itemForUpdate := item
+	if item.Enabled {
+		itemForUpdate.Enabled = false
+	}
+
+	updated, err := s.Repo.Update(ctx, tx, id, itemForUpdate)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return domain.AIGuardPolicy{}, ErrGuardPolicyNotFound
 		}
 		return domain.AIGuardPolicy{}, err
 	}
-	if updated.Enabled {
-		if err := s.Repo.DisableOthers(ctx, tx, updated.ID); err != nil {
+
+	if item.Enabled {
+		if err := s.Repo.LockSingleEnabledSlot(ctx, tx); err != nil {
+			return domain.AIGuardPolicy{}, err
+		}
+		if err := s.Repo.DisableOthers(ctx, tx, id); err != nil {
+			return domain.AIGuardPolicy{}, err
+		}
+		updated, err = s.Repo.SetEnabled(ctx, tx, id, true)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return domain.AIGuardPolicy{}, ErrGuardPolicyNotFound
+			}
 			return domain.AIGuardPolicy{}, err
 		}
 	}
+
 	if err := tx.Commit(); err != nil {
 		return domain.AIGuardPolicy{}, err
 	}

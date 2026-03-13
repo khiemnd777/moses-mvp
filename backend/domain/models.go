@@ -112,28 +112,28 @@ type User struct {
 }
 
 type AIGuardPolicy struct {
-	ID                 string
-	Name               string
-	Enabled            bool
-	MinRetrievedChunks int
-	MinSimilarityScore float64
-	OnEmptyRetrieval   string
-	OnLowConfidence    string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                 string    `json:"id"`
+	Name               string    `json:"name"`
+	Enabled            bool      `json:"enabled"`
+	MinRetrievedChunks int       `json:"min_retrieved_chunks"`
+	MinSimilarityScore float64   `json:"min_similarity_score"`
+	OnEmptyRetrieval   string    `json:"on_empty_retrieval"`
+	OnLowConfidence    string    `json:"on_low_confidence"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 type AIPrompt struct {
-	ID           string
-	Name         string
-	PromptType   string
-	SystemPrompt string
-	Temperature  float64
-	MaxTokens    int
-	Retry        int
-	Enabled      bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	PromptType   string    `json:"prompt_type"`
+	SystemPrompt string    `json:"system_prompt"`
+	Temperature  float64   `json:"temperature"`
+	MaxTokens    int       `json:"max_tokens"`
+	Retry        int       `json:"retry"`
+	Enabled      bool      `json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type AIRetrievalConfig struct {
