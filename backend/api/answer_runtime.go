@@ -9,27 +9,41 @@ import (
 	"time"
 
 	"github.com/khiemnd777/legal_api/core/answer"
+	"github.com/khiemnd777/legal_api/core/guard"
 	"github.com/khiemnd777/legal_api/core/retrieval"
 	"github.com/khiemnd777/legal_api/domain"
 )
 
-const legalGuardPromptType = "legal_guard"
+const (
+	legalAnswerPromptType        = "legal_answer"
+	legalRefusalPromptType       = "legal_refusal"
+	legalClarificationPromptType = "legal_clarification"
+)
 
 const (
-	emptyRetrievalRefuseMessage = "Không tìm thấy căn cứ pháp lý phù hợp trong hệ thống."
-	lowConfidenceRefuseMessage  = "Nguồn trích dẫn hiện tại chưa đạt độ tin cậy để đưa ra kết luận pháp lý."
-	askClarificationMessage     = "Chưa đủ căn cứ pháp lý rõ ràng. Vui lòng bổ sung tình huống, văn bản, hoặc điều khoản cần tra cứu."
+	defaultRefusalMessage       = "Không đủ căn cứ pháp lý trong dữ liệu truy xuất để đưa ra kết luận."
+	defaultClarificationMessage = "Chưa đủ căn cứ pháp lý rõ ràng. Vui lòng bổ sung tình huống, văn bản, hoặc điều khoản cần tra cứu."
+	defaultValidationRefusal    = "Câu trả lời không hợp lệ vì có trích dẫn vượt ngoài nguồn truy xuất. Vui lòng cung cấp thêm dữ kiện pháp lý."
 )
 
 type runtimeAnswerConfig struct {
-	Prompt domain.AIPrompt
 	Policy domain.AIGuardPolicy
 	Tone   string
 }
 
 type guardDecision struct {
-	Allow   bool
-	Message string
+	Decision   guard.Decision
+	PromptType string
+	Message    string
+}
+
+func (d guardDecision) Allow() bool {
+	return d.Decision == guard.DecisionAllow
+}
+
+type retrievalDiagnostics struct {
+	RetrievedChunks int
+	MaxSimilarity   float64
 }
 
 func (h *Handler) loadRuntimeAnswerConfig(ctx context.Context, toneKey string) (runtimeAnswerConfig, error) {
@@ -46,14 +60,6 @@ func (h *Handler) loadRuntimeAnswerConfig(ctx context.Context, toneKey string) (
 	}
 	h.runtimeCfgMu.RUnlock()
 
-	promptCfg, err := h.Store.GetActiveAIPromptByType(ctx, legalGuardPromptType)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return runtimeAnswerConfig{}, fmt.Errorf("no active ai prompt config for prompt_type=%s", legalGuardPromptType)
-		}
-		return runtimeAnswerConfig{}, err
-	}
-
 	guardCfg, err := h.Store.GetActiveAIGuardPolicy(ctx)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -68,7 +74,6 @@ func (h *Handler) loadRuntimeAnswerConfig(ctx context.Context, toneKey string) (
 	}
 
 	out := runtimeAnswerConfig{
-		Prompt: promptCfg,
 		Policy: guardCfg,
 		Tone:   tone,
 	}
@@ -85,39 +90,64 @@ func (h *Handler) InvalidateRuntimeAnswerConfigCache() {
 	h.runtimeCfgReady = false
 	h.runtimeCfgLoadedAt = time.Time{}
 	h.runtimeCfgMu.Unlock()
+	if h.PromptRouter != nil {
+		h.PromptRouter.Invalidate()
+	}
 }
 
-func evaluateGuardPolicy(policy domain.AIGuardPolicy, results []retrieval.Result) guardDecision {
-	chunkCount := len(results)
-	maxScore := 0.0
+func computeRetrievalDiagnostics(results []retrieval.Result) retrievalDiagnostics {
+	diag := retrievalDiagnostics{RetrievedChunks: len(results)}
 	for _, result := range results {
-		if result.Score > maxScore {
-			maxScore = result.Score
+		if result.Score > diag.MaxSimilarity {
+			diag.MaxSimilarity = result.Score
 		}
 	}
-
-	if chunkCount < policy.MinRetrievedChunks {
-		return applyGuardAction(policy.OnEmptyRetrieval, emptyRetrievalRefuseMessage)
-	}
-
-	if maxScore < policy.MinSimilarityScore {
-		return applyGuardAction(policy.OnLowConfidence, lowConfidenceRefuseMessage)
-	}
-
-	return guardDecision{Allow: true}
+	return diag
 }
 
-func applyGuardAction(action string, refuseMessage string) guardDecision {
-	switch strings.TrimSpace(action) {
-	case "fallback_llm":
-		return guardDecision{Allow: true}
-	case "ask_clarification":
-		return guardDecision{Allow: false, Message: askClarificationMessage}
-	case "refuse":
+func (h *Handler) evaluateGuardPolicy(ctx context.Context, policy domain.AIGuardPolicy, results []retrieval.Result) (guardDecision, retrievalDiagnostics, error) {
+	if h.GuardEngine == nil {
+		return guardDecision{}, retrievalDiagnostics{}, fmt.Errorf("guard engine is not configured")
+	}
+	diag := computeRetrievalDiagnostics(results)
+	decision := h.GuardEngine.Decide(guard.RetrievalResult{
+		RetrievedChunks: diag.RetrievedChunks,
+		MaxSimilarity:   diag.MaxSimilarity,
+	}, policy)
+
+	switch decision {
+	case guard.DecisionAllow:
+		return guardDecision{Decision: decision, PromptType: legalAnswerPromptType}, diag, nil
+	case guard.DecisionAskClarification:
+		promptCfg, usedType, err := h.getRuntimePrompt(ctx, legalClarificationPromptType)
+		if err != nil {
+			return guardDecision{}, diag, err
+		}
+		message := strings.TrimSpace(promptCfg.SystemPrompt)
+		if message == "" {
+			message = defaultClarificationMessage
+		}
+		return guardDecision{Decision: decision, PromptType: usedType, Message: message}, diag, nil
+	case guard.DecisionRefuse:
 		fallthrough
 	default:
-		return guardDecision{Allow: false, Message: refuseMessage}
+		promptCfg, usedType, err := h.getRuntimePrompt(ctx, legalRefusalPromptType)
+		if err != nil {
+			return guardDecision{}, diag, err
+		}
+		message := strings.TrimSpace(promptCfg.SystemPrompt)
+		if message == "" {
+			message = defaultRefusalMessage
+		}
+		return guardDecision{Decision: guard.DecisionRefuse, PromptType: usedType, Message: message}, diag, nil
 	}
+}
+
+func (h *Handler) getRuntimePrompt(ctx context.Context, promptType string) (domain.AIPrompt, string, error) {
+	if h.PromptRouter == nil {
+		return domain.AIPrompt{}, "", fmt.Errorf("prompt router is not configured")
+	}
+	return h.PromptRouter.GetPrompt(ctx, promptType)
 }
 
 func buildAnswerSources(results []retrieval.Result) []answer.Source {

@@ -47,6 +47,7 @@ type handlerStore interface {
 	ListMessagesByConversation(ctx context.Context, conversationID string) ([]domain.Message, error)
 	GetActiveAIGuardPolicy(ctx context.Context) (domain.AIGuardPolicy, error)
 	GetActiveAIPromptByType(ctx context.Context, promptType string) (domain.AIPrompt, error)
+	ListEnabledAIPrompts(ctx context.Context) ([]domain.AIPrompt, error)
 }
 
 type retriever interface {

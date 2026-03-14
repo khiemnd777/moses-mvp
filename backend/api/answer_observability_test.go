@@ -133,6 +133,46 @@ func (f *fakeStore) GetActiveAIPromptByType(ctx context.Context, promptType stri
 		Enabled:      true,
 	}, nil
 }
+func (f *fakeStore) ListEnabledAIPrompts(ctx context.Context) ([]domain.AIPrompt, error) {
+	return []domain.AIPrompt{
+		{
+			Name:         "legal_guard_prompt",
+			PromptType:   "legal_guard",
+			SystemPrompt: "You are a legal assistant.",
+			Temperature:  0.2,
+			MaxTokens:    256,
+			Retry:        1,
+			Enabled:      true,
+		},
+		{
+			Name:         "legal_answer_prompt",
+			PromptType:   "legal_answer",
+			SystemPrompt: "You are a legal assistant. Answer with legal reasoning format.",
+			Temperature:  0.2,
+			MaxTokens:    256,
+			Retry:        1,
+			Enabled:      true,
+		},
+		{
+			Name:         "legal_refusal_prompt",
+			PromptType:   "legal_refusal",
+			SystemPrompt: "Không đủ căn cứ pháp lý trong dữ liệu truy xuất để trả lời chắc chắn.",
+			Temperature:  0.2,
+			MaxTokens:    64,
+			Retry:        0,
+			Enabled:      true,
+		},
+		{
+			Name:         "legal_clarification_prompt",
+			PromptType:   "legal_clarification",
+			SystemPrompt: "Vui lòng cung cấp thêm dữ kiện pháp lý hoặc điều khoản cụ thể cần tra cứu.",
+			Temperature:  0.2,
+			MaxTokens:    64,
+			Retry:        0,
+			Enabled:      true,
+		},
+	}, nil
+}
 
 type fakeRetriever struct {
 	results []retrieval.Result

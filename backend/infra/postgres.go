@@ -1145,6 +1145,40 @@ LIMIT 1
 	return prompt, err
 }
 
+func (s *Store) ListEnabledAIPrompts(ctx context.Context) ([]domain.AIPrompt, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT id, name, prompt_type, system_prompt, temperature, max_tokens, retry, enabled, created_at, updated_at
+FROM ai_prompts
+WHERE enabled = TRUE
+ORDER BY prompt_type ASC, updated_at DESC, created_at DESC
+`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.AIPrompt, 0)
+	for rows.Next() {
+		var item domain.AIPrompt
+		if err := rows.Scan(
+			&item.ID,
+			&item.Name,
+			&item.PromptType,
+			&item.SystemPrompt,
+			&item.Temperature,
+			&item.MaxTokens,
+			&item.Retry,
+			&item.Enabled,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) GetActiveAIRetrievalConfig(ctx context.Context) (domain.AIRetrievalConfig, error) {
 	var cfg domain.AIRetrievalConfig
 	var preferredRaw []byte

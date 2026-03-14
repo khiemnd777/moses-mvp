@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/khiemnd777/legal_api/core/answer"
+	"github.com/khiemnd777/legal_api/core/guard"
 	"github.com/khiemnd777/legal_api/core/ingest"
+	cprompt "github.com/khiemnd777/legal_api/core/prompt"
 	"github.com/khiemnd777/legal_api/core/retrieval"
 	"github.com/khiemnd777/legal_api/core/schema"
 	"github.com/khiemnd777/legal_api/domain"
@@ -24,15 +26,17 @@ import (
 )
 
 type Handler struct {
-	Store     handlerStore
-	Storage   *infra.Storage
-	Qdrant    *infra.QdrantClient
-	Retriever retriever
-	AnswerCli *answer.Client
-	Tones     map[string]string
-	IngestSvc *ingest.Service
-	Logger    *slog.Logger
-	TraceRepo observability.TraceRepository
+	Store        handlerStore
+	Storage      *infra.Storage
+	Qdrant       *infra.QdrantClient
+	Retriever    retriever
+	AnswerCli    *answer.Client
+	Tones        map[string]string
+	IngestSvc    *ingest.Service
+	Logger       *slog.Logger
+	TraceRepo    observability.TraceRepository
+	PromptRouter *cprompt.Router
+	GuardEngine  *guard.Engine
 
 	runtimeCfgMu       sync.RWMutex
 	runtimeCfg         runtimeAnswerConfig
@@ -42,6 +46,7 @@ type Handler struct {
 }
 
 func NewHandler(store handlerStore, storage *infra.Storage, qdrant *infra.QdrantClient, retriever retriever, ans *answer.Client, tones map[string]string, ingestSvc *ingest.Service, logger *slog.Logger, traceRepo observability.TraceRepository) *Handler {
+	ttl := 30 * time.Second
 	return &Handler{
 		Store:         store,
 		Storage:       storage,
@@ -52,7 +57,9 @@ func NewHandler(store handlerStore, storage *infra.Storage, qdrant *infra.Qdrant
 		IngestSvc:     ingestSvc,
 		Logger:        logger,
 		TraceRepo:     traceRepo,
-		runtimeCfgTTL: 30 * time.Second,
+		PromptRouter:  cprompt.NewRouter(store, ttl, cprompt.DefaultPromptType),
+		GuardEngine:   guard.NewEngine(),
+		runtimeCfgTTL: ttl,
 	}
 }
 
@@ -667,35 +674,72 @@ func (h *Handler) Answer(c *fiber.Ctx) error {
 		traceSvc.OnError(err, traceLatency(started))
 		return respondError(c, 500, "search_error", "failed to search", err.Error())
 	}
+	decision, diag, err := h.evaluateGuardPolicy(ctx, runtimeCfg.Policy, results)
+	if err != nil {
+		traceSvc.OnError(err, traceLatency(started))
+		return respondError(c, 500, "config_error", "failed to evaluate guard decision", err.Error())
+	}
+	promptTypeUsed := decision.PromptType
+	if decision.Allow() {
+		if _, usedPromptType, routeErr := h.getRuntimePrompt(ctx, legalAnswerPromptType); routeErr == nil {
+			promptTypeUsed = usedPromptType
+		}
+	}
 	traceSvc.OnRetrieval(retrieval.UnderstandQuery(question).NormalizedQuery, map[string]interface{}{
 		"legal_domain":     filters.Domain,
 		"document_type":    filters.DocType,
 		"effective_status": filters.EffectiveStatus,
 		"document_number":  filters.DocumentNumber,
 		"article_number":   filters.ArticleNumber,
+		"retrieved_chunks": diag.RetrievedChunks,
+		"max_similarity":   diag.MaxSimilarity,
+		"guard_decision":   string(decision.Decision),
+		"prompt_type_used": promptTypeUsed,
+		"retrieval": fiber.Map{
+			"chunks":         diag.RetrievedChunks,
+			"max_similarity": diag.MaxSimilarity,
+		},
+		"guard": fiber.Map{
+			"decision": string(decision.Decision),
+		},
+		"prompt": fiber.Map{
+			"type": promptTypeUsed,
+		},
 	}, traceChunkIDs(results))
-	decision := evaluateGuardPolicy(runtimeCfg.Policy, results)
-	if !decision.Allow {
+	if !decision.Allow() {
 		traceSvc.OnResponse(decision.Message, true, traceLatency(started))
 		return c.JSON(fiber.Map{"answer": decision.Message, "citations": []answer.Citation{}, "trace_id": traceID})
+	}
+	promptCfg, _, err := h.getRuntimePrompt(ctx, legalAnswerPromptType)
+	if err != nil {
+		traceSvc.OnError(err, traceLatency(started))
+		return respondError(c, 500, "config_error", "failed to route legal answer prompt", err.Error())
 	}
 	sources := buildAnswerSources(results)
 	ansSvc := &answer.Service{
 		Client:       h.AnswerCli,
-		SystemPrompt: runtimeCfg.Prompt.SystemPrompt,
+		SystemPrompt: promptCfg.SystemPrompt,
 		Tone:         runtimeCfg.Tone,
-		Temperature:  runtimeCfg.Prompt.Temperature,
-		MaxTokens:    runtimeCfg.Prompt.MaxTokens,
-		Retry:        runtimeCfg.Prompt.Retry,
+		Temperature:  promptCfg.Temperature,
+		MaxTokens:    promptCfg.MaxTokens,
+		Retry:        promptCfg.Retry,
 	}
 	traceSvc.OnPromptSnapshot(ansSvc.PromptSnapshot(question, sources))
-	traceSvc.OnLLMCall(h.AnswerCli.Model, runtimeCfg.Prompt.Temperature, runtimeCfg.Prompt.MaxTokens, runtimeCfg.Prompt.Retry)
+	traceSvc.OnLLMCall(h.AnswerCli.Model, promptCfg.Temperature, promptCfg.MaxTokens, promptCfg.Retry)
 	ans, err := ansSvc.Generate(ctx, question, sources)
 	if err != nil {
 		traceSvc.OnError(err, traceLatency(started))
 		return respondError(c, 500, "answer_error", "failed to generate answer", err.Error())
 	}
-	_ = h.Store.LogAnswer(ctx, question, ans)
-	traceSvc.OnResponse(ans, true, traceLatency(started))
-	return c.JSON(fiber.Map{"answer": ans, "citations": citationsFromSources(sources), "trace_id": traceID})
+	finalAnswer, citations, valid, validationErr := h.validateGeneratedLegalAnswer(ctx, ans, sources)
+	if validationErr != nil {
+		traceSvc.OnError(validationErr, traceLatency(started))
+		return respondError(c, 500, "validation_error", "failed to validate legal answer", validationErr.Error())
+	}
+	if !valid {
+		citations = []answer.Citation{}
+	}
+	_ = h.Store.LogAnswer(ctx, question, finalAnswer)
+	traceSvc.OnResponse(finalAnswer, true, traceLatency(started))
+	return c.JSON(fiber.Map{"answer": finalAnswer, "citations": citations, "trace_id": traceID})
 }

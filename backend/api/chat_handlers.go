@@ -286,7 +286,7 @@ func (h *Handler) StreamMessage(c *fiber.Ctx) error {
 		}()
 		defer close(heartbeatDone)
 
-		if !decision.Allow {
+		if !decision.Allow() {
 			state.OnToken(decision.Message)
 			_ = state.OnCitations([]answer.Citation{})
 			state.OnDone()
@@ -296,24 +296,24 @@ func (h *Handler) StreamMessage(c *fiber.Ctx) error {
 			return
 		}
 
-		state.sendErrors = true
 		llmStarted := time.Now()
-		err := ansSvc.StreamWithHistory(streamCtx, history, content, sources, promptOpts, state)
+		finalContent, err := ansSvc.GenerateWithHistory(streamCtx, history, content, sources, promptOpts)
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				_ = h.Store.UpdateMessage(streamCtx, assistantMsg.ID, state.builder.String(), marshalCitations(state.citations), &traceID)
-				traceSvc.OnError(err, traceLatency(started))
-				h.logChatLifecycle(streamCtx, "chat_stream_cancelled", convo.ID, assistantMsg.ID, traceID, results, llmStarted, state.builder.String(), err)
-				return
-			}
-			_ = h.Store.UpdateMessage(streamCtx, assistantMsg.ID, state.builder.String(), marshalCitations(state.citations), &traceID)
 			traceSvc.OnError(err, traceLatency(started))
-			h.logChatLifecycle(streamCtx, "chat_stream_error", convo.ID, assistantMsg.ID, traceID, results, llmStarted, state.builder.String(), err)
+			h.logChatLifecycle(streamCtx, "chat_stream_error", convo.ID, assistantMsg.ID, traceID, results, llmStarted, "", err)
 			return
 		}
+		finalContent, finalCitations, _, validationErr := h.validateGeneratedLegalAnswer(streamCtx, finalContent, sources)
+		if validationErr != nil {
+			traceSvc.OnError(validationErr, traceLatency(started))
+			h.logChatLifecycle(streamCtx, "chat_stream_validation_error", convo.ID, assistantMsg.ID, traceID, results, llmStarted, finalContent, validationErr)
+			return
+		}
+		state.OnToken(finalContent)
+		_ = state.OnCitations(finalCitations)
+		state.OnDone()
 
-		finalContent := state.builder.String()
-		if updateErr := h.Store.UpdateMessage(streamCtx, assistantMsg.ID, finalContent, marshalCitations(state.citations), &traceID); updateErr != nil {
+		if updateErr := h.Store.UpdateMessage(streamCtx, assistantMsg.ID, finalContent, marshalCitations(finalCitations), &traceID); updateErr != nil {
 			traceSvc.OnError(updateErr, traceLatency(started))
 			h.logChatLifecycle(streamCtx, "chat_stream_persist_error", convo.ID, assistantMsg.ID, traceID, results, llmStarted, finalContent, updateErr)
 			return
@@ -374,7 +374,7 @@ func (h *Handler) runChatTurn(ctx context.Context, userID *string, conversationI
 
 	var assistantContent string
 	var citations []answer.Citation
-	if !decision.Allow {
+	if !decision.Allow() {
 		assistantContent = decision.Message
 		citations = []answer.Citation{}
 		traceSvc.OnResponse(assistantContent, true, traceLatency(started))
@@ -386,7 +386,12 @@ func (h *Handler) runChatTurn(ctx context.Context, userID *string, conversationI
 			h.logChatLifecycle(traceCtx, "chat_completion_error", convo.ID, "", traceID, results, llmStarted, "", err)
 			return chatTurnResult{}, err
 		}
-		citations = validateCitations(citationsFromSources(sources))
+		assistantContent, citations, _, err = h.validateGeneratedLegalAnswer(traceCtx, assistantContent, sources)
+		if err != nil {
+			traceSvc.OnError(err, traceLatency(started))
+			h.logChatLifecycle(traceCtx, "chat_completion_validation_error", convo.ID, "", traceID, results, llmStarted, assistantContent, err)
+			return chatTurnResult{}, err
+		}
 		traceSvc.OnResponse(assistantContent, true, traceLatency(started))
 		h.logChatLifecycle(traceCtx, "chat_completion_done", convo.ID, "", traceID, results, llmStarted, assistantContent, nil)
 	}
@@ -463,6 +468,21 @@ func (h *Handler) prepareChatResponse(
 		return nil, nil, guardDecision{}, nil, answer.PromptBuildOptions{}, nil, err
 	}
 
+	decision, diag, err := h.evaluateGuardPolicy(ctx, runtimeCfg.Policy, results)
+	if err != nil {
+		traceSvc.OnError(err, traceLatency(started))
+		return nil, nil, guardDecision{}, nil, answer.PromptBuildOptions{}, nil, err
+	}
+	promptTypeUsed := decision.PromptType
+	var promptCfg domain.AIPrompt
+	if decision.Allow() {
+		promptCfg, promptTypeUsed, err = h.getRuntimePrompt(ctx, legalAnswerPromptType)
+		if err != nil {
+			traceSvc.OnError(err, traceLatency(started))
+			return nil, nil, guardDecision{}, nil, answer.PromptBuildOptions{}, nil, err
+		}
+	}
+
 	traceSvc.OnRetrieval(retrieval.UnderstandQuery(content).NormalizedQuery, map[string]interface{}{
 		"conversation_id":     conversationID,
 		"legal_domain":        normalizedFilters.Domain,
@@ -470,32 +490,47 @@ func (h *Handler) prepareChatResponse(
 		"effective_status":    normalizedFilters.EffectiveStatus,
 		"document_number":     normalizedFilters.DocumentNumber,
 		"article_number":      normalizedFilters.ArticleNumber,
+		"retrieved_chunks":    diag.RetrievedChunks,
+		"max_similarity":      diag.MaxSimilarity,
+		"guard_decision":      string(decision.Decision),
+		"prompt_type_used":    promptTypeUsed,
 		"retrieved_chunk_ids": traceChunkIDs(results),
+		"retrieval": fiber.Map{
+			"chunks":         diag.RetrievedChunks,
+			"max_similarity": diag.MaxSimilarity,
+		},
+		"guard": fiber.Map{
+			"decision": string(decision.Decision),
+		},
+		"prompt": fiber.Map{
+			"type": promptTypeUsed,
+		},
 	}, traceChunkIDs(results))
-
-	decision := evaluateGuardPolicy(runtimeCfg.Policy, results)
 	history, err := h.loadConversationHistory(ctx, conversationID)
 	if err != nil {
 		return nil, nil, guardDecision{}, nil, answer.PromptBuildOptions{}, nil, err
 	}
+	if !decision.Allow() {
+		return results, history, decision, nil, answer.PromptBuildOptions{}, nil, nil
+	}
 	sources := h.buildChatAnswerSources(ctx, results)
 	promptOpts := answer.PromptBuildOptions{
 		MaxInputTokens:   7000,
-		ReservedTokens:   max(1200, runtimeCfg.Prompt.MaxTokens),
+		ReservedTokens:   max(1200, promptCfg.MaxTokens),
 		MaxHistoryTurns:  16,
 		MaxSourceChars:   10000,
 		MaxQuestionChars: 2000,
 	}
 	ansSvc := &answer.Service{
 		Client:       h.AnswerCli,
-		SystemPrompt: runtimeCfg.Prompt.SystemPrompt,
+		SystemPrompt: promptCfg.SystemPrompt,
 		Tone:         runtimeCfg.Tone,
-		Temperature:  runtimeCfg.Prompt.Temperature,
-		MaxTokens:    runtimeCfg.Prompt.MaxTokens,
-		Retry:        runtimeCfg.Prompt.Retry,
+		Temperature:  promptCfg.Temperature,
+		MaxTokens:    promptCfg.MaxTokens,
+		Retry:        promptCfg.Retry,
 	}
 	traceSvc.OnPromptSnapshot(ansSvc.PromptSnapshotWithHistory(history, content, sources, promptOpts))
-	traceSvc.OnLLMCall(h.AnswerCli.Model, runtimeCfg.Prompt.Temperature, runtimeCfg.Prompt.MaxTokens, runtimeCfg.Prompt.Retry)
+	traceSvc.OnLLMCall(h.AnswerCli.Model, promptCfg.Temperature, promptCfg.MaxTokens, promptCfg.Retry)
 	return results, history, decision, sources, promptOpts, ansSvc, nil
 }
 
