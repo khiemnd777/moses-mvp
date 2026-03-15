@@ -14,8 +14,8 @@ const SourcesPanel = ({ citations }: { citations: Citation[] }) => {
           </div>
           {citation.law_name && <div className="badge">{citation.law_name}</div>}
           {citation.chapter && <div className="badge">Chương: {citation.chapter}</div>}
-          {citation.document_number && <div className="badge">So: {citation.document_number}</div>}
-          {citation.clause && <div className="badge">Khoan: {citation.clause}</div>}
+          {citation.document_number && <div className="badge">Số: {citation.document_number}</div>}
+          {citation.clause && <div className="badge">Khoản: {citation.clause}</div>}
           {citation.chunk_id && <div className="badge">Chunk: {citation.chunk_id}</div>}
           {(citation.file_url || citation.url) && (
             <a href={citation.file_url || citation.url} target="_blank" rel="noreferrer">

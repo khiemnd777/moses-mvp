@@ -26,7 +26,7 @@ const ChatPage = () => {
   return (
     <div className="chat-layout">
       <ConversationSidebar />
-      <Panel className="chat-main-panel" title="Legal AI Chat">
+      <Panel bodyClassName="chat-main-panel-body" className="chat-main-panel" title="Trợ lý pháp lý">
         <div className="chat-main">
           <div className="chat-column">
             <FiltersBar />
@@ -49,8 +49,10 @@ const ChatPage = () => {
             </div>
             <ChatInput />
           </div>
-          <Panel className="source-panel" title="Nguồn pháp lý">
-            <SourcesPanel citations={selectedCitations.length > 0 ? selectedCitations : latestAssistantCitations} />
+          <Panel bodyClassName="source-panel-content" className="source-panel" title="Nguồn pháp lý">
+            <div className="source-panel-body">
+              <SourcesPanel citations={selectedCitations.length > 0 ? selectedCitations : latestAssistantCitations} />
+            </div>
           </Panel>
         </div>
         {isStreaming && <div className="chat-stream-indicator">Đang nhận phản hồi trực tuyến...</div>}

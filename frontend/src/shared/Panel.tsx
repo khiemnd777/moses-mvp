@@ -4,13 +4,15 @@ type Props = {
   title?: ReactNode;
   children: ReactNode;
   className?: string;
+  headerClassName?: string;
+  bodyClassName?: string;
 };
 
-const Panel = ({ title, children, className = '' }: Props) => {
+const Panel = ({ title, children, className = '', headerClassName = '', bodyClassName = '' }: Props) => {
   return (
     <section className={`card ${className}`.trim()}>
-      {title && <header style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>{title}</header>}
-      <div style={{ padding: '16px 18px' }}>{children}</div>
+      {title && <header className={`panel-header ${headerClassName}`.trim()}>{title}</header>}
+      <div className={`panel-body ${bodyClassName}`.trim()}>{children}</div>
     </section>
   );
 };
