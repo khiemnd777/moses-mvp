@@ -3,6 +3,7 @@
 backend/data/postgres/
 backend/data/qdrant/
 backend/data/uploads/
+backend/.gocache/
 frontend/dist/
 backend/vendor/
 .env

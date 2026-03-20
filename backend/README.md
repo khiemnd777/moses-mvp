@@ -125,3 +125,15 @@ Then use `make migrate` normally for new migration files.
 Notes:
 - Default API port is `8080`.
 - If you run the API in Docker, it uses `config/config.yaml` and the service hostnames (`postgres`, `qdrant`).
+- Backend CORS is configured by env var `CORS_ALLOWED_ORIGINS`, defaulting to `http://localhost:5173`.
+- Example local run with a custom frontend origin:
+
+```bash
+cd backend
+
+CORS_ALLOWED_ORIGINS=http://localhost:5173,https://ai.dailyturning.com \
+CONFIG_PATH=config/config.local.yaml \
+JWT_SECRET=your-secret \
+ADMIN_BOOTSTRAP_PASSWORD=your-admin-password \
+go run ./cmd/api
+```

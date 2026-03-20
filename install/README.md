@@ -37,3 +37,5 @@ cp install/config.sh.sample install/config.sh
 - SSL is issued for `ai.dailyturning.com` by Certbot.
 - Installers clone or update the repo from Git on the VPS before running.
 - All VPS install variables live in `install/config.sh`.
+- Configure backend CORS with `CORS_ALLOWED_ORIGINS` in `install/config.sh`.
+- If you keep the default same-origin deployment (`VITE_API_BASE_URL` equals `https://ai.dailyturning.com` and Nginx proxies API routes), production usually does not need cross-origin browser calls.

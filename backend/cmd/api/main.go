@@ -125,7 +125,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := api.NewServer(store, storage, embed, qdrant, ansClient, authService, tones, logger, ingest.Config{ChunkSize: cfg.Ingest.ChunkSize, ChunkOverlap: cfg.Ingest.ChunkOverlap})
+	server := api.NewServerWithCORS(
+		store,
+		storage,
+		embed,
+		qdrant,
+		ansClient,
+		authService,
+		tones,
+		logger,
+		ingest.Config{ChunkSize: cfg.Ingest.ChunkSize, ChunkOverlap: cfg.Ingest.ChunkOverlap},
+		envCfg.CORSAllowedOrigins,
+	)
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, envCfg.ServerPort)
 	logger.Info("api server starting", slog.String("addr", addr))
 	if err := server.Start(context.Background(), addr); err != nil {
