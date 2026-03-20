@@ -2,9 +2,9 @@ server:
   host: "0.0.0.0"
   port: 8080
 postgres:
-  dsn: "postgres://legal:legal@postgres:5432/legal_rag?sslmode=disable"
+  dsn: "postgres://legal:legal@localhost:5433/legal_rag?sslmode=disable"
 qdrant:
-  url: "http://qdrant:6333"
+  url: "http://localhost:6333"
   collection: "legal_chunks"
 openai:
   api_key: "YOUR_OPENAI_API_KEY"

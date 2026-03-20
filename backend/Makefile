@@ -1,6 +1,4 @@
 APP_NAME=github.com/khiemnd777/legal_api
-CONFIG_PATH?=config/config.yaml
-POSTGRES_DSN?=postgres://legal:legal@localhost:5433/legal_rag?sslmode=disable
 MIGRATIONS_DIR?=infra/migrations
 MIGRATION_TABLE?=schema_migrations
 MIGRATION_FILES?=\
@@ -23,35 +21,42 @@ worker:
 	go build -o bin/worker ./cmd/worker
 
 run:
-	CONFIG_PATH=$(CONFIG_PATH) go run ./cmd/api
+	go run ./cmd/api
 
 migrate:
 	@set -eu; \
-	psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS $(MIGRATION_TABLE) (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"; \
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	POSTGRES_DSN="postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@$${POSTGRES_HOST}:$${POSTGRES_PORT}/$${POSTGRES_DB}?sslmode=$${POSTGRES_SSLMODE}"; \
+	psql "$$POSTGRES_DSN" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS $(MIGRATION_TABLE) (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"; \
 	for file in $(MIGRATION_FILES); do \
 		version=$$(basename "$$file"); \
-		applied=$$(psql "$(POSTGRES_DSN)" -At -v ON_ERROR_STOP=1 -c "SELECT 1 FROM $(MIGRATION_TABLE) WHERE version = '$$version' LIMIT 1;"); \
+		applied=$$(psql "$$POSTGRES_DSN" -At -v ON_ERROR_STOP=1 -c "SELECT 1 FROM $(MIGRATION_TABLE) WHERE version = '$$version' LIMIT 1;"); \
 		if [ "$$applied" = "1" ]; then \
 			echo "Skipping $$version (already applied)"; \
 			continue; \
 		fi; \
 		echo "Applying $$version"; \
-		psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -f "$$file"; \
-		psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "INSERT INTO $(MIGRATION_TABLE) (version) VALUES ('$$version');"; \
+		psql "$$POSTGRES_DSN" -v ON_ERROR_STOP=1 -f "$$file"; \
+		psql "$$POSTGRES_DSN" -v ON_ERROR_STOP=1 -c "INSERT INTO $(MIGRATION_TABLE) (version) VALUES ('$$version');"; \
 	done
 
 migrate-baseline:
 	@set -eu; \
-	psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS $(MIGRATION_TABLE) (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"; \
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	POSTGRES_DSN="postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@$${POSTGRES_HOST}:$${POSTGRES_PORT}/$${POSTGRES_DB}?sslmode=$${POSTGRES_SSLMODE}"; \
+	psql "$$POSTGRES_DSN" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS $(MIGRATION_TABLE) (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"; \
 	for file in $(MIGRATION_FILES); do \
 		version=$$(basename "$$file"); \
-		psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "INSERT INTO $(MIGRATION_TABLE) (version) VALUES ('$$version') ON CONFLICT (version) DO NOTHING;"; \
+		psql "$$POSTGRES_DSN" -v ON_ERROR_STOP=1 -c "INSERT INTO $(MIGRATION_TABLE) (version) VALUES ('$$version') ON CONFLICT (version) DO NOTHING;"; \
 		echo "Baselined $$version"; \
 	done
 
 migrate-status:
-	psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS $(MIGRATION_TABLE) (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"
-	psql "$(POSTGRES_DSN)" -v ON_ERROR_STOP=1 -c "SELECT version, applied_at FROM $(MIGRATION_TABLE) ORDER BY version;"
+	@set -eu; \
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	POSTGRES_DSN="postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@$${POSTGRES_HOST}:$${POSTGRES_PORT}/$${POSTGRES_DB}?sslmode=$${POSTGRES_SSLMODE}"; \
+	psql "$$POSTGRES_DSN" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS $(MIGRATION_TABLE) (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"; \
+	psql "$$POSTGRES_DSN" -v ON_ERROR_STOP=1 -c "SELECT version, applied_at FROM $(MIGRATION_TABLE) ORDER BY version;"
 
 docker-up:
 	docker compose --env-file .env -f docker/docker-compose.yml up --build

@@ -32,10 +32,12 @@ cp install/config.sh.sample install/config.sh
 
 - Backend runs with Docker Compose.
 - Backend installer uses the repo's `backend/docker/docker-compose.yml`.
+- Production host storage paths are declared in `install/config.sh` via `POSTGRES_DATA_DIR`, `QDRANT_STORAGE_DIR`, and `UPLOADS_DATA_DIR`.
+- The app still reads uploads from `STORAGE_ROOT_DIR`, which should stay `/app/data/uploads` for the Docker deployment.
 - Frontend is served by Nginx.
 - Frontend installer builds from the repo source on the VPS.
 - SSL is issued for `ai.dailyturning.com` by Certbot.
 - Installers clone or update the repo from Git on the VPS before running.
-- All VPS install variables live in `install/config.sh`.
+- All VPS install variables live in `install/config.sh`, and the installer renders them into `backend/.env`. The backend then derives `config/config.yaml` from that same `.env`.
 - Configure backend CORS with `CORS_ALLOWED_ORIGINS` in `install/config.sh`.
 - If you keep the default same-origin deployment (`VITE_API_BASE_URL` equals `https://ai.dailyturning.com` and Nginx proxies API routes), production usually does not need cross-origin browser calls.

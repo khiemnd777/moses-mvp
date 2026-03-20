@@ -20,6 +20,4 @@ COPY config /app/config
 
 EXPOSE 8080
 
-ENV CONFIG_PATH=/app/config/config.yaml
-
 CMD ["/app/api"]

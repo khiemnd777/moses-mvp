@@ -1,20 +1,20 @@
 services:
   postgres:
-    image: postgres:15
+    image: ${POSTGRES_IMAGE}
     environment:
-      POSTGRES_USER: legal
-      POSTGRES_PASSWORD: legal
-      POSTGRES_DB: legal_rag
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT}:5432"
     volumes:
-      - ../data/postgres:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_DIR}:/var/lib/postgresql/data
   qdrant:
-    image: qdrant/qdrant:v1.9.3
+    image: ${QDRANT_IMAGE}
     ports:
-      - "6333:6333"
+      - "${QDRANT_PORT}:6333"
     volumes:
-      - ../data/qdrant:/qdrant/storage
+      - ${QDRANT_STORAGE_DIR}:/qdrant/storage
   api:
     build:
       context: ..
@@ -22,15 +22,17 @@ services:
     env_file:
       - ../.env
     environment:
-      CONFIG_PATH: /app/config/config.yaml
-      PORT: "8080"
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      POSTGRES_PORT: ${DOCKER_POSTGRES_PORT}
+      QDRANT_HOST: ${DOCKER_QDRANT_HOST}
+      STORAGE_ROOT_DIR: ${DOCKER_STORAGE_ROOT_DIR}
     ports:
-      - "8080:8080"
+      - "${PORT}:8080"
     depends_on:
       - postgres
       - qdrant
     volumes:
-      - ../data/uploads:/app/data/uploads
+      - ${UPLOADS_DATA_DIR}:/app/data/uploads
   worker:
     build:
       context: ..
@@ -38,9 +40,12 @@ services:
     env_file:
       - ../.env
     environment:
-      CONFIG_PATH: /app/config/config.yaml
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      POSTGRES_PORT: ${DOCKER_POSTGRES_PORT}
+      QDRANT_HOST: ${DOCKER_QDRANT_HOST}
+      STORAGE_ROOT_DIR: ${DOCKER_STORAGE_ROOT_DIR}
     depends_on:
       - postgres
       - qdrant
     volumes:
-      - ../data/uploads:/app/data/uploads
+      - ${UPLOADS_DATA_DIR}:/app/data/uploads

@@ -20,6 +20,4 @@ RUN apk add --no-cache ca-certificates antiword
 COPY --from=build /bin/worker /app/worker
 COPY config /app/config
 
-ENV CONFIG_PATH=/app/config/config.yaml
-
 CMD ["/app/worker"]

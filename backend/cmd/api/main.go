@@ -28,6 +28,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := envconfig.RenderAppConfig(envCfg); err != nil {
+		log.Fatal(err)
+	}
 
 	logger := logging.New()
 	slog.SetDefault(logger)
@@ -36,15 +39,7 @@ func main() {
 		logger.Error("failed to load config", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
-	databaseURL := cfg.Postgres.DSN
-	if envCfg.DatabaseURL != "" {
-		databaseURL = envCfg.DatabaseURL
-	}
-	if databaseURL == "" {
-		logger.Error("database connection is empty; set DATABASE_URL or postgres.dsn")
-		os.Exit(1)
-	}
-	db, err := sql.Open("postgres", databaseURL)
+	db, err := sql.Open("postgres", cfg.Postgres.DSN)
 	if err != nil {
 		logger.Error("failed to open db", slog.String("error", err.Error()))
 		os.Exit(1)

@@ -29,6 +29,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := envconfig.RenderAppConfig(envCfg); err != nil {
+		log.Fatal(err)
+	}
 
 	logger := logging.New()
 	cfg, err := appconfig.Load(envCfg.ConfigPath)

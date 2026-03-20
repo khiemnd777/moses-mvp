@@ -1,6 +1,6 @@
 # Backend
 
-This backend uses Postgres and Qdrant. The easiest way to run infra is Docker Compose.
+This backend uses Postgres and Qdrant. `backend/.env` is the single source of truth; `config/config.yaml` is rendered from it at runtime, and local migration commands also read `backend/.env`.
 
 ## 1) Install infra: Postgres, Qdrant
 
@@ -16,8 +16,20 @@ docker compose -f docker/docker-compose.yml up -d postgres qdrant
 ```
 
 This exposes:
-- Postgres on `localhost:5432` (user `legal`, password `legal`, db `legal_rag`)
+- Postgres on `localhost:5433` (user `legal`, password `legal`, db `legal_rag`)
 - Qdrant on `localhost:6333`
+- Data paths default to `backend/data/postgres`, `backend/data/qdrant`, and `backend/data/uploads`
+
+If you need different host-side bind mounts, set them in `backend/.env`:
+- `POSTGRES_DATA_DIR`
+- `QDRANT_STORAGE_DIR`
+- `UPLOADS_DATA_DIR`
+
+If you run the backend in Docker, the container runtime endpoints also come from `backend/.env`:
+- `DOCKER_POSTGRES_HOST`
+- `DOCKER_POSTGRES_PORT`
+- `DOCKER_QDRANT_HOST`
+- `DOCKER_STORAGE_ROOT_DIR`
 
 ### Option B: Native installs
 
@@ -25,7 +37,7 @@ If you prefer native installs, install:
 - Postgres 15
 - Qdrant v1.9.x
 
-Then update `config/config.yaml` (or create a local copy) to point at your local endpoints.
+Then update `backend/.env` to point at your local endpoints. The app will render `config/config.yaml` from that file automatically.
 
 ## 2) Start/stop Qdrant
 
@@ -73,25 +85,27 @@ docker compose -f docker/docker-compose.yml stop api
 ### Option B: Run API locally with Go
 
 1. Ensure Postgres and Qdrant are running.
-2. Create a local config file and point it to localhost:
+2. Create a local env file:
 
 ```bash
 cd backend
 
-cp config/config.yaml config/config.local.yaml
+cp .env.example .env
 ```
 
-Edit `config/config.local.yaml`:
-- `postgres.dsn`: use `postgres://legal:legal@localhost:5432/legal_rag?sslmode=disable`
-- `qdrant.url`: use `http://localhost:6333`
-- `openai.api_key`: set your API key
+Edit `backend/.env`:
+- `POSTGRES_HOST`: use `localhost`
+- `POSTGRES_PORT`: use `5433`
+- `QDRANT_HOST`: use `localhost`
+- `QDRANT_PORT`: use `6333`
+- `OPENAI_API_KEY`: set your API key
 
 3. Run the API:
 
 ```bash
 cd backend
 
-CONFIG_PATH=config/config.local.yaml go run ./cmd/api
+go run ./cmd/api
 ```
 
 Stop it with `Ctrl+C`.
@@ -124,16 +138,12 @@ Then use `make migrate` normally for new migration files.
 
 Notes:
 - Default API port is `8080`.
-- If you run the API in Docker, it uses `config/config.yaml` and the service hostnames (`postgres`, `qdrant`).
+- If you run the API in Docker, Compose reads `backend/.env`, and the app renders `config/config.yaml` from the same values on startup.
 - Backend CORS is configured by env var `CORS_ALLOWED_ORIGINS`, defaulting to `http://localhost:5173`.
 - Example local run with a custom frontend origin:
 
 ```bash
 cd backend
 
-CORS_ALLOWED_ORIGINS=http://localhost:5173,https://ai.dailyturning.com \
-CONFIG_PATH=config/config.local.yaml \
-JWT_SECRET=your-secret \
-ADMIN_BOOTSTRAP_PASSWORD=your-admin-password \
-go run ./cmd/api
+CORS_ALLOWED_ORIGINS=http://localhost:5173,https://ai.dailyturning.com go run ./cmd/api
 ```
