@@ -1,0 +1,79 @@
+server {
+    listen 80;
+    server_name __DOMAIN__;
+
+    root __FRONTEND_ROOT__;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /auth/ {
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+
+    location /admin/ {
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+
+    location /documents {
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+
+    location /document-versions/ {
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+
+    location /doc-types {
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+
+    location /ingest-jobs {
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+
+    location /conversations {
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+
+    location /messages {
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+
+    location /search {
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+
+    location /answer {
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+
+    location /health {
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+
+    location /metrics {
+        proxy_pass __BACKEND_UPSTREAM__;
+        include proxy_params;
+    }
+}

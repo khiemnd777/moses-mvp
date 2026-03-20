@@ -7,3 +7,6 @@ frontend/dist/
 backend/vendor/
 .env
 **/.env
+secret.sh
+**/secret.sh
+install/config.sh
