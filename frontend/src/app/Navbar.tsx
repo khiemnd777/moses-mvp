@@ -14,6 +14,9 @@ const Navbar = () => {
       <NavLink to="/tuning" className={({ isActive }) => (isActive ? 'active' : '')}>
         Tuning
       </NavLink>
+      <NavLink to="/how-to-rag" className={({ isActive }) => (isActive ? 'active' : '')}>
+        How to RAG
+      </NavLink>
       <Button type="button" variant="outline" onClick={logout} disabled={isLoginPage}>
         Logout
       </Button>

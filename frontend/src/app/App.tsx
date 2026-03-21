@@ -18,6 +18,7 @@ import DeleteByFilterPage from '@/features/admin/vectors/DeleteByFilterPage';
 import ReindexControlsPage from '@/features/admin/vectors/ReindexControlsPage';
 import Navbar from './Navbar';
 import ChatPage from '@/features/chat/ChatPage';
+import GuidePreviewPage from '@/features/guide/GuidePreviewPage';
 
 const App = () => {
   return (
@@ -29,6 +30,7 @@ const App = () => {
       <main className="app-main">
         <Routes>
           <Route path="/" element={<Navigate to="/playground" replace />} />
+          <Route path="/how-to-rag" element={<GuidePreviewPage />} />
           <Route path="/playground/login" element={<PlaygroundLoginPage />} />
           <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route element={<PlaygroundAuthGuard />}>

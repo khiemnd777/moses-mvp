@@ -71,6 +71,146 @@ a {
   min-height: 0;
 }
 
+.guide-page {
+  width: min(1100px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 18px;
+}
+
+.guide-hero {
+  overflow: hidden;
+}
+
+.guide-hero-body {
+  display: grid;
+  gap: 10px;
+}
+
+.guide-hero-body h1 {
+  margin: 0;
+  font-size: clamp(28px, 5vw, 42px);
+  line-height: 1.05;
+}
+
+.guide-hero-body p {
+  margin: 0;
+  max-width: 70ch;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.guide-markdown-shell {
+  overflow: hidden;
+}
+
+.guide-markdown {
+  padding: clamp(18px, 3vw, 34px);
+  max-width: 78ch;
+  margin: 0 auto;
+}
+
+.guide-markdown :is(h1, h2, h3, h4, h5, h6) {
+  scroll-margin-top: 112px;
+  line-height: 1.2;
+}
+
+.guide-markdown h1 {
+  font-size: clamp(30px, 4vw, 38px);
+  margin-top: 0;
+}
+
+.guide-markdown h2 {
+  margin-top: 2em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.35em;
+}
+
+.guide-markdown p,
+.guide-markdown li {
+  line-height: 1.75;
+}
+
+.guide-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.guide-markdown code {
+  background: #f4ebdf;
+  color: #7a4a16;
+  border-radius: 6px;
+  padding: 0.15em 0.35em;
+}
+
+.guide-markdown pre {
+  overflow: auto;
+  padding: 16px;
+  border-radius: 14px;
+  background: #1f1c17;
+  color: #f8f3eb;
+}
+
+.guide-markdown pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.guide-markdown blockquote {
+  margin: 1.25em 0;
+  padding: 0.25em 0 0.25em 1em;
+  border-left: 4px solid var(--accent-2);
+  color: var(--muted);
+}
+
+.guide-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+.guide-markdown th,
+.guide-markdown td {
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  vertical-align: top;
+}
+
+.guide-markdown img {
+  max-width: 100%;
+  height: auto;
+}
+
+.guide-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 2em 0;
+}
+
+@media (max-width: 720px) {
+  .app-header {
+    padding: 14px 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .top-nav {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .app-main {
+    padding: 16px;
+  }
+
+  .guide-markdown {
+    padding: 16px;
+  }
+}
+
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
