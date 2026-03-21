@@ -33,17 +33,27 @@ VITE_ADMIN_BEARER_TOKEN=$VITE_ADMIN_BEARER_TOKEN
 EOF
 fi
 
-if command -v bun >/dev/null 2>&1; then
-  log "Building frontend with Bun"
-  bun install
-  bun run build
-else
-  if ! command -v npm >/dev/null 2>&1; then
-    log "Installing Node.js and npm"
-    sudo apt-get update -y
-    sudo apt-get install -y nodejs npm
-  fi
-  log "Building frontend with npm"
-  npm install
-  npm run build
+if ! command -v bun >/dev/null 2>&1; then
+  log "Installing Bun"
+  curl -fsSL https://bun.sh/install | bash
+  export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+  export PATH="$BUN_INSTALL/bin:$PATH"
 fi
+
+if ! command -v bun >/dev/null 2>&1; then
+  err "Bun installation failed"
+fi
+
+if [[ -d "$FRONTEND_DIR/node_modules" ]]; then
+  log "Removing existing frontend/node_modules before Bun install"
+  rm -rf "$FRONTEND_DIR/node_modules"
+fi
+
+if [[ -f "$FRONTEND_DIR/package-lock.json" ]]; then
+  log "Removing frontend/package-lock.json to avoid npm lockfile conflicts"
+  rm -f "$FRONTEND_DIR/package-lock.json"
+fi
+
+log "Building frontend with Bun"
+bun install --frozen-lockfile
+bun run build

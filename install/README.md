@@ -35,7 +35,7 @@ cp install/config.sh.sample install/config.sh
 - Production host storage paths are declared in `install/config.sh` via `POSTGRES_DATA_DIR`, `QDRANT_STORAGE_DIR`, and `UPLOADS_DATA_DIR`.
 - The app still reads uploads from `STORAGE_ROOT_DIR`, which should stay `/app/data/uploads` for the Docker deployment.
 - Frontend is served by Nginx.
-- Frontend installer builds from the repo source on the VPS.
+- Frontend installer builds from the repo source on the VPS with Bun.
 - SSL is issued for `ai.dailyturning.com` by Certbot.
 - Installers clone or update the repo from Git on the VPS before running.
 - All VPS install variables live in `install/config.sh`, and the installer renders them into `backend/.env`. The backend then derives `config/config.yaml` from that same `.env`.
