@@ -9,8 +9,13 @@ source "$INSTALL_DIR/lib/common.sh"
 load_install_config "$INSTALL_DIR"
 require_vars DOMAIN LETSENCRYPT_EMAIL
 
+render_nginx_site() {
+  "$SCRIPT_DIR/install.sh"
+}
+
 if [[ -d "/etc/letsencrypt/live/$DOMAIN" ]]; then
   log "SSL certificate already exists for $DOMAIN"
+  render_nginx_site
   sudo nginx -t
   sudo systemctl reload nginx
   exit 0
@@ -32,5 +37,6 @@ sudo certbot --nginx \
   -m "$LETSENCRYPT_EMAIL" \
   --redirect
 
+render_nginx_site
 sudo nginx -t
 sudo systemctl reload nginx
