@@ -161,31 +161,30 @@ const DocumentsPage = () => {
           {error && <div className="badge">Error: {error}</div>}
           <div className="grid">
             {documents.map((doc) => (
-              <div key={doc.id} className="source-item">
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div
+                key={doc.id}
+                className={`source-item admin-list-item ${lastOpenedDocumentId === doc.id ? 'selected' : ''}`}
+              >
+                <div className="admin-list-item-header">
                   <button
-                    className={`button outline ${lastOpenedDocumentId === doc.id ? 'secondary' : ''}`}
+                    className="button outline admin-list-item-button"
                     onClick={() => setLastOpenedDocumentId(doc.id)}
-                    style={{ flex: 1, textAlign: 'left' }}
                   >
                     {doc.title}
                   </button>
                   <Button
-                    variant="outline"
+                    variant={lastOpenedDocumentId === doc.id ? 'secondary' : 'outline'}
                     onClick={() => void handleDeleteDocument(doc.id)}
                     disabled={deletingDocumentId === doc.id}
                   >
                     {deletingDocumentId === doc.id ? 'Deleting...' : 'Delete'}
                   </Button>
                 </div>
-                <div style={{ marginTop: 10 }} className="grid">
+                <div className="grid admin-document-assets">
                   {doc.assets && doc.assets.length > 0 ? (
                     doc.assets.map((asset, index) => (
-                      <div
-                        key={`${doc.id}-${asset.file_name}-${asset.created_at ?? index}`}
-                        style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 8, background: '#fffdf9' }}
-                      >
-                        <div style={{ fontWeight: 600 }}>{asset.file_name}</div>
+                      <div key={`${doc.id}-${asset.file_name}-${asset.created_at ?? index}`} className="admin-document-asset">
+                        <div className="admin-document-asset-title">{asset.file_name}</div>
                         <div className="badge">Type: {asset.content_type || '-'}</div>
                         <div className="badge">Created: {formatCreatedAt(asset.created_at)}</div>
                         <div className="badge">

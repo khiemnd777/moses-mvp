@@ -640,6 +640,56 @@ a {
   font-weight: 700;
 }
 
+.admin-list-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.source-item.admin-list-item {
+  display: grid;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.admin-list-item.selected {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, #f4fbf9 0%, #e8f3ef 100%);
+  box-shadow: 0 12px 24px rgba(27, 107, 99, 0.12);
+}
+
+.admin-list-item-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.admin-list-item-button {
+  flex: 1;
+  text-align: left;
+}
+
+.admin-list-item.selected .admin-list-item-button {
+  border-color: rgba(27, 107, 99, 0.28);
+  background: rgba(27, 107, 99, 0.08);
+}
+
+.admin-document-assets {
+  margin-top: 10px;
+}
+
+.admin-document-asset {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  background: #fffdf9;
+}
+
+.admin-document-asset-title {
+  font-weight: 600;
+}
+
 .chat-stream-indicator {
   margin-top: 16px;
   color: var(--accent);

@@ -1,28 +1,11 @@
 package ingest
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/khiemnd777/legal_api/core/schema"
 	"golang.org/x/text/unicode/norm"
 )
-
-type hierarchyLevel string
-
-const (
-	levelChapter hierarchyLevel = "chapter"
-	levelArticle hierarchyLevel = "article"
-	levelClause  hierarchyLevel = "clause"
-	levelPoint   hierarchyLevel = "point"
-)
-
-var defaultLevelPatterns = map[hierarchyLevel]string{
-	levelChapter: `(?im)^\s*(?:chương|chuong)\s*([ivxlcdm0-9]+[a-zA-Z]*)\s*[\.:]?\s*(.*)$`,
-	levelArticle: `(?im)^\s*điều\s*([0-9]+[a-zA-Z]*)\s*[\.:]?\s*(.*)$`,
-	levelClause:  `(?im)^\s*(?:khoản\s+)?([0-9]+)\s*[\.\)]?\s*(.*)$`,
-	levelPoint:   `(?im)^\s*(?:điểm\s+)?(?:[0-9]+\.)?([a-zđ])(?:[\)\.])\s*(.+)?$`,
-}
 
 func submatch(matches []string, idx int) string {
 	if idx < 0 || idx >= len(matches) {
@@ -32,7 +15,17 @@ func submatch(matches []string, idx int) string {
 }
 
 type legalDocument struct {
+	Nodes    []segmentNode
 	Articles []articleNode
+}
+
+type segmentNode struct {
+	Level    string
+	Value    string
+	Header   string
+	Content  string
+	Path     structuralPath
+	Children []segmentNode
 }
 
 type articleNode struct {
@@ -55,278 +48,194 @@ type pointNode struct {
 }
 
 type legalStructureParser struct {
-	levels        []hierarchyLevel
-	normalization string
-	patterns      map[hierarchyLevel]*regexp.Regexp
+	plan segmentPlan
 }
 
-func newLegalStructureParser(rules schema.SegmentRules) legalStructureParser {
-	levels := parseHierarchyLevels(rules.Hierarchy)
-	patterns := compileLevelPatterns(rules.LevelPatterns)
-	normalization := strings.TrimSpace(strings.ToLower(rules.Normalization))
-	if normalization == "" {
-		normalization = "basic"
+func newLegalStructureParser(rules schema.SegmentRules) (legalStructureParser, error) {
+	plan, err := compileSegmentPlan(rules)
+	if err != nil {
+		return legalStructureParser{}, err
 	}
-	return legalStructureParser{
-		levels:        levels,
-		normalization: normalization,
-		patterns:      patterns,
-	}
+	return legalStructureParser{plan: plan}, nil
 }
 
-func parseHierarchyLevels(hierarchy string) []hierarchyLevel {
-	hierarchy = strings.TrimSpace(strings.ToLower(hierarchy))
-	if hierarchy == "" {
-		return []hierarchyLevel{levelArticle, levelClause, levelPoint}
-	}
-	parts := strings.FieldsFunc(hierarchy, func(r rune) bool {
-		return r == '>' || r == ',' || r == '/' || r == '|' || r == ';'
-	})
-	out := make([]hierarchyLevel, 0, len(parts))
-	seen := map[hierarchyLevel]struct{}{}
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		switch hierarchyLevel(part) {
-		case levelChapter, levelArticle, levelClause, levelPoint:
-			lv := hierarchyLevel(part)
-			if _, ok := seen[lv]; ok {
-				continue
-			}
-			seen[lv] = struct{}{}
-			out = append(out, lv)
+func (p legalStructureParser) Parse(text string) legalDocument {
+	normalized := p.normalize(text)
+	if len(p.plan.Levels) == 0 {
+		raw := segmentNode{
+			Content: normalized,
+			Path:    newStructuralPath(nil),
+		}
+		return legalDocument{
+			Nodes:    []segmentNode{raw},
+			Articles: projectArticles([]segmentNode{raw}),
 		}
 	}
-	if len(out) == 0 {
-		return []hierarchyLevel{levelArticle, levelClause, levelPoint}
+	lines := strings.Split(normalized, "\n")
+	paths := newStructuralPath(planLevelNames(p.plan))
+	nodes := p.parseLevel(lines, 0, paths)
+	if len(nodes) == 0 {
+		raw := segmentNode{
+			Content: normalized,
+			Path:    paths,
+		}
+		nodes = []segmentNode{raw}
+	}
+	return legalDocument{
+		Nodes:    nodes,
+		Articles: projectArticles(nodes),
+	}
+}
+
+func (p legalStructureParser) parseLevel(lines []string, depth int, parentPath structuralPath) []segmentNode {
+	if depth >= len(p.plan.Levels) {
+		return nil
+	}
+	level := p.plan.Levels[depth]
+	type section struct {
+		header string
+		value  string
+		body   []string
+	}
+	sections := make([]section, 0)
+	preamble := make([]string, 0)
+	current := section{}
+	hasCurrent := false
+
+	flushCurrent := func() {
+		if !hasCurrent {
+			return
+		}
+		sections = append(sections, current)
+		current = section{}
+		hasCurrent = false
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if matches := level.Pattern.FindStringSubmatch(trimmed); matches != nil {
+			flushCurrent()
+			current = section{
+				header: trimmed,
+				value:  submatch(matches, 1),
+				body:   make([]string, 0),
+			}
+			if depth >= len(p.plan.Levels)-2 {
+				if tail := submatch(matches, 2); tail != "" {
+					current.body = append(current.body, tail)
+				}
+			}
+			hasCurrent = true
+			continue
+		}
+		if hasCurrent {
+			current.body = append(current.body, trimmed)
+			continue
+		}
+		preamble = append(preamble, trimmed)
+	}
+	flushCurrent()
+
+	nodes := make([]segmentNode, 0, len(sections)+1)
+	preambleText := joinNonEmpty(preamble)
+	if preambleText != "" && len(sections) == 0 {
+		rawPath := parentPath
+		rawNode := segmentNode{
+			Content: preambleText,
+			Path:    rawPath,
+		}
+		if depth+1 < len(p.plan.Levels) {
+			rawNode.Children = p.parseLevel(strings.Split(preambleText, "\n"), depth+1, rawPath)
+		}
+		nodes = append(nodes, rawNode)
+	}
+	for _, section := range sections {
+		path := parentPath.With(level.Name, section.value)
+		content := joinNonEmpty(section.body)
+		node := segmentNode{
+			Level:   level.Name,
+			Value:   section.value,
+			Header:  section.header,
+			Content: content,
+			Path:    path,
+		}
+		if depth+1 < len(p.plan.Levels) && content != "" {
+			node.Children = p.parseLevel(strings.Split(content, "\n"), depth+1, path)
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+func projectArticles(nodes []segmentNode) []articleNode {
+	articles := make([]articleNode, 0)
+	var walk func([]segmentNode)
+	walk = func(items []segmentNode) {
+		for _, node := range items {
+			if node.Level == "article" {
+				articles = append(articles, articleNode{
+					Chapter: node.Path.Value("chapter"),
+					Number:  node.Value,
+					Header:  node.Header,
+					Content: node.Content,
+					Clauses: projectClauses(node.Children),
+				})
+			}
+			if len(node.Children) > 0 {
+				walk(node.Children)
+			}
+		}
+	}
+	walk(nodes)
+	if len(articles) == 0 && len(nodes) > 0 {
+		articles = append(articles, articleNode{
+			Chapter: nodes[0].Path.Value("chapter"),
+			Content: nodes[0].Content,
+			Clauses: projectClauses(nodes[0].Children),
+		})
+	}
+	return articles
+}
+
+func projectClauses(nodes []segmentNode) []clauseNode {
+	clauses := make([]clauseNode, 0)
+	for _, node := range nodes {
+		if node.Level != "clause" {
+			continue
+		}
+		clauses = append(clauses, clauseNode{
+			Number:  node.Value,
+			Content: node.Content,
+			Points:  projectPoints(node.Children),
+		})
+	}
+	return clauses
+}
+
+func projectPoints(nodes []segmentNode) []pointNode {
+	points := make([]pointNode, 0)
+	for _, node := range nodes {
+		if node.Level != "point" {
+			continue
+		}
+		points = append(points, pointNode{
+			Marker:  node.Value,
+			Content: node.Content,
+		})
+	}
+	return points
+}
+
+func planLevelNames(plan segmentPlan) []string {
+	out := make([]string, 0, len(plan.Levels))
+	for _, level := range plan.Levels {
+		out = append(out, level.Name)
 	}
 	return out
 }
 
-func compileLevelPatterns(overrides map[string]string) map[hierarchyLevel]*regexp.Regexp {
-	patterns := make(map[hierarchyLevel]*regexp.Regexp, len(defaultLevelPatterns))
-	for lv, raw := range defaultLevelPatterns {
-		patterns[lv] = regexp.MustCompile(raw)
-	}
-	for k, pattern := range overrides {
-		lv := hierarchyLevel(strings.TrimSpace(strings.ToLower(k)))
-		if _, ok := patterns[lv]; !ok {
-			continue
-		}
-		compiled, err := regexp.Compile(pattern)
-		if err != nil {
-			continue
-		}
-		patterns[lv] = compiled
-	}
-	return patterns
-}
-
-func (p legalStructureParser) has(level hierarchyLevel) bool {
-	for _, lv := range p.levels {
-		if lv == level {
-			return true
-		}
-	}
-	return false
-}
-
-func (p legalStructureParser) Parse(text string) legalDocument {
-	if len(p.levels) == 0 || len(p.patterns) == 0 {
-		p = newLegalStructureParser(schema.SegmentRules{
-			Strategy:      "legal_article",
-			Hierarchy:     "article>clause>point",
-			Normalization: "basic",
-		})
-	}
-	normalized := p.normalize(text)
-	lines := strings.Split(normalized, "\n")
-	articles := make([]articleNode, 0)
-
-	currentChapter := ""
-	current := articleNode{}
-	hasArticle := false
-	buffer := make([]string, 0)
-	flushArticle := func() {
-		if !hasArticle && len(buffer) == 0 {
-			return
-		}
-		if !hasArticle {
-			current = articleNode{
-				Chapter: currentChapter,
-				Header:  "",
-				Number:  "",
-				Content: joinNonEmpty(buffer),
-			}
-		} else {
-			current.Content = joinNonEmpty(buffer)
-		}
-		current.Clauses = p.parseClauses(current.Content)
-		articles = append(articles, current)
-		buffer = buffer[:0]
-		current = articleNode{}
-		hasArticle = false
-	}
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			if len(buffer) > 0 && buffer[len(buffer)-1] != "" {
-				buffer = append(buffer, "")
-			}
-			continue
-		}
-
-		if p.has(levelChapter) {
-			if matches := p.patterns[levelChapter].FindStringSubmatch(trimmed); matches != nil {
-				chapter := submatch(matches, 1)
-				if chapter == "" {
-					chapter = strings.TrimSpace(trimmed)
-				}
-				currentChapter = chapter
-				continue
-			}
-		}
-
-		if p.has(levelArticle) {
-			if matches := p.patterns[levelArticle].FindStringSubmatch(trimmed); matches != nil {
-				flushArticle()
-				number := submatch(matches, 1)
-				current = articleNode{
-					Chapter: currentChapter,
-					Number:  number,
-					Header:  trimmed,
-				}
-				hasArticle = true
-				continue
-			}
-		}
-
-		buffer = append(buffer, trimmed)
-	}
-
-	flushArticle()
-	if len(articles) == 0 {
-		articles = append(articles, articleNode{
-			Chapter: currentChapter,
-			Content: normalized,
-			Clauses: p.parseClauses(normalized),
-		})
-	}
-	return legalDocument{Articles: articles}
-}
-
-func (p legalStructureParser) parseClauses(text string) []clauseNode {
-	if !p.has(levelClause) {
-		return nil
-	}
-	lines := strings.Split(text, "\n")
-	clauses := make([]clauseNode, 0)
-	current := clauseNode{}
-	hasClause := false
-	buffer := make([]string, 0)
-
-	flushClause := func() {
-		content := joinNonEmpty(buffer)
-		if !hasClause {
-			if content == "" {
-				buffer = buffer[:0]
-				return
-			}
-			current = clauseNode{Content: content}
-		} else {
-			current.Content = content
-		}
-		current.Points = p.parsePoints(current.Content)
-		clauses = append(clauses, current)
-		buffer = buffer[:0]
-		current = clauseNode{}
-		hasClause = false
-	}
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			if len(buffer) > 0 && buffer[len(buffer)-1] != "" {
-				buffer = append(buffer, "")
-			}
-			continue
-		}
-
-		if matches := p.patterns[levelClause].FindStringSubmatch(trimmed); matches != nil {
-			flushClause()
-			number := submatch(matches, 1)
-			if number == "" {
-				buffer = append(buffer, trimmed)
-				continue
-			}
-			current = clauseNode{Number: number}
-			hasClause = true
-			if tail := submatch(matches, 2); tail != "" {
-				buffer = append(buffer, tail)
-			}
-			continue
-		}
-
-		buffer = append(buffer, trimmed)
-	}
-
-	flushClause()
-	return clauses
-}
-
-func (p legalStructureParser) parsePoints(text string) []pointNode {
-	if !p.has(levelPoint) {
-		return nil
-	}
-	lines := strings.Split(text, "\n")
-	points := make([]pointNode, 0)
-	current := pointNode{}
-	hasPoint := false
-	buffer := make([]string, 0)
-
-	flushPoint := func() {
-		if !hasPoint {
-			buffer = buffer[:0]
-			return
-		}
-		current.Content = joinNonEmpty(buffer)
-		points = append(points, current)
-		buffer = buffer[:0]
-		current = pointNode{}
-		hasPoint = false
-	}
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			if len(buffer) > 0 && buffer[len(buffer)-1] != "" {
-				buffer = append(buffer, "")
-			}
-			continue
-		}
-		if matches := p.patterns[levelPoint].FindStringSubmatch(trimmed); matches != nil {
-			flushPoint()
-			marker := submatch(matches, 1)
-			if marker == "" {
-				buffer = append(buffer, trimmed)
-				continue
-			}
-			current = pointNode{Marker: marker}
-			hasPoint = true
-			if tail := submatch(matches, 2); tail != "" {
-				buffer = append(buffer, tail)
-			}
-			continue
-		}
-		buffer = append(buffer, trimmed)
-	}
-
-	flushPoint()
-	return points
-}
-
 func (p legalStructureParser) normalize(in string) string {
-	switch p.normalization {
+	switch p.plan.Normalization {
 	case "none":
 		return strings.TrimSpace(strings.ReplaceAll(in, "\r", ""))
 	default:
