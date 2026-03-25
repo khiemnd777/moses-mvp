@@ -32,6 +32,20 @@ type SegmentRules struct {
 	LevelPatterns map[string]string `json:"level_patterns,omitempty"`
 }
 
+func (r SegmentRules) HierarchyLevels() []string {
+	parts := splitHierarchyLevels(r.Hierarchy)
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		out = append(out, part)
+	}
+	return out
+}
+
 type MetadataSchema struct {
 	Fields []MetadataField `json:"fields"`
 }
@@ -104,6 +118,17 @@ func (f DocTypeForm) Validate() error {
 	if f.SegmentRules.Strategy == "" {
 		return errors.New("segment_rules.strategy is required")
 	}
+	rawHierarchy := splitHierarchyLevels(f.SegmentRules.Hierarchy)
+	if strings.TrimSpace(f.SegmentRules.Hierarchy) != "" && strings.TrimSpace(strings.ToLower(f.SegmentRules.Hierarchy)) != "none" && len(rawHierarchy) == 0 {
+		return errors.New("segment_rules.hierarchy must contain at least one non-empty level")
+	}
+	seenLevels := make(map[string]struct{}, len(rawHierarchy))
+	for _, level := range rawHierarchy {
+		if _, ok := seenLevels[level]; ok {
+			return fmt.Errorf("segment_rules.hierarchy level %q is duplicated", level)
+		}
+		seenLevels[level] = struct{}{}
+	}
 	for level, pattern := range f.SegmentRules.LevelPatterns {
 		if strings.TrimSpace(level) == "" || strings.TrimSpace(pattern) == "" {
 			return errors.New("segment_rules.level_patterns keys and values must be non-empty")
@@ -152,6 +177,25 @@ func (f DocTypeForm) Validate() error {
 		}
 	}
 	return nil
+}
+
+func splitHierarchyLevels(hierarchy string) []string {
+	hierarchy = strings.TrimSpace(strings.ToLower(hierarchy))
+	if hierarchy == "" || hierarchy == "none" {
+		return nil
+	}
+	parts := strings.FieldsFunc(hierarchy, func(ch rune) bool {
+		return ch == '>' || ch == ',' || ch == '/' || ch == '|' || ch == ';' || ch == '.'
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
 }
 
 func (f DocTypeForm) Hash() (string, error) {

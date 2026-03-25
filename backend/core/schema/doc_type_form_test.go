@@ -4,10 +4,10 @@ import "testing"
 
 func TestDocTypeFormHashDeterministic(t *testing.T) {
 	form := DocTypeForm{
-		Version: 1,
-		DocType: DocType{Code: "legal_normative", Name: "Legal Normative"},
+		Version:      1,
+		DocType:      DocType{Code: "legal_normative", Name: "Legal Normative"},
 		SegmentRules: SegmentRules{Strategy: "free_text", Hierarchy: "none", Normalization: "basic"},
-		Metadata: MetadataSchema{Fields: []MetadataField{{Name: "title", Type: "string"}, {Name: "date", Type: "date"}}},
+		Metadata:     MetadataSchema{Fields: []MetadataField{{Name: "title", Type: "string"}, {Name: "date", Type: "date"}}},
 		MappingRules: []MappingRule{
 			{Field: "title", Regex: "^Title:(.*)$", Group: 1},
 			{Field: "date", Regex: "^Date:(.*)$", Group: 1},
@@ -48,7 +48,7 @@ func TestDocTypeFormValidateMappingRulesAligned(t *testing.T) {
 				Regex: "(Luật|Nghị định)",
 				Group: 1,
 				ValueMap: map[string]string{
-					"Luật":     "LAW",
+					"Luật":      "LAW",
 					"Nghị định": "DECREE",
 				},
 			},
@@ -125,5 +125,39 @@ func TestDocTypeFormAlignMappingRules(t *testing.T) {
 	}
 	if aligned.MappingRules[1].Group != 1 {
 		t.Fatalf("expected default group for synthesized mapping rule")
+	}
+}
+
+func TestSegmentRulesHierarchyLevelsSupportsDotNotation(t *testing.T) {
+	rules := SegmentRules{Hierarchy: "part.chapter.article.clause.point"}
+	got := rules.HierarchyLevels()
+	want := []string{"part", "chapter", "article", "clause", "point"}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected hierarchy length: got=%v want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected hierarchy order: got=%v want=%v", got, want)
+		}
+	}
+}
+
+func TestDocTypeFormValidateRejectsDuplicateHierarchyLevels(t *testing.T) {
+	form := DocTypeForm{
+		Version: 1,
+		DocType: DocType{Code: "legal_normative", Name: "Legal Normative"},
+		SegmentRules: SegmentRules{
+			Strategy:      "legal_article",
+			Hierarchy:     "article.article.clause",
+			Normalization: "basic",
+		},
+		Metadata: MetadataSchema{
+			Fields: []MetadataField{{Name: "doc_category", Type: "string"}},
+		},
+		MappingRules:  []MappingRule{{Field: "doc_category", Regex: "(Luật)", Group: 1}},
+		ReindexPolicy: ReindexPolicy{OnContentChange: true, OnFormChange: true},
+	}
+	if err := form.Validate(); err == nil {
+		t.Fatalf("expected duplicate hierarchy validation error")
 	}
 }

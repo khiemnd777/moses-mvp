@@ -48,7 +48,15 @@ b) Chăm sóc con.
 2. Nhà nước bảo hộ.
 `
 
-	doc := legalStructureParser{}.Parse(text)
+	parser, err := newLegalStructureParser(schema.SegmentRules{
+		Strategy:      "legal_article",
+		Hierarchy:     "article>clause>point",
+		Normalization: "basic",
+	})
+	if err != nil {
+		t.Fatalf("newLegalStructureParser() error = %v", err)
+	}
+	doc := parser.Parse(text)
 	if len(doc.Articles) != 1 {
 		t.Fatalf("expected 1 article, got %d", len(doc.Articles))
 	}
@@ -73,11 +81,14 @@ b) Bảo vệ lợi ích hợp pháp của con.
 2. Nhà nước bảo hộ quyền trẻ em.
 `
 	base := map[string]interface{}{"document_type": "law"}
-	generator := newLegalChunkGenerator(schema.SegmentRules{
+	generator, err := newLegalChunkGenerator(schema.SegmentRules{
 		Strategy:      "legal_article",
 		Hierarchy:     "article>clause>point",
 		Normalization: "basic",
 	})
+	if err != nil {
+		t.Fatalf("newLegalChunkGenerator() error = %v", err)
+	}
 
 	first, statsA, err := generator.Generate("doc-1", "54", text, base)
 	if err != nil {
@@ -117,11 +128,14 @@ b) Bảo vệ lợi ích hợp pháp của con.
 }
 
 func TestLegalStructureParserRespectsConfiguredHierarchy(t *testing.T) {
-	parser := newLegalStructureParser(schema.SegmentRules{
+	parser, err := newLegalStructureParser(schema.SegmentRules{
 		Strategy:      "legal_article",
 		Hierarchy:     "article",
 		Normalization: "basic",
 	})
+	if err != nil {
+		t.Fatalf("newLegalStructureParser() error = %v", err)
+	}
 	text := `
 Điều 5. Quyền
 1. Cha mẹ có nghĩa vụ.
@@ -137,11 +151,14 @@ func TestLegalStructureParserRespectsConfiguredHierarchy(t *testing.T) {
 }
 
 func TestLegalStructureParserPointRegexDoesNotOvermatch(t *testing.T) {
-	parser := newLegalStructureParser(schema.SegmentRules{
+	parser, err := newLegalStructureParser(schema.SegmentRules{
 		Strategy:      "legal_article",
 		Hierarchy:     "article>clause>point",
 		Normalization: "basic",
 	})
+	if err != nil {
+		t.Fatalf("newLegalStructureParser() error = %v", err)
+	}
 	text := `
 Điều 10. Quyền trẻ em
 1. Cha mẹ có nghĩa vụ bảo vệ con.
@@ -156,7 +173,7 @@ func TestLegalStructureParserPointRegexDoesNotOvermatch(t *testing.T) {
 }
 
 func TestLegalStructureParserClausePatternSingleCaptureGroupDoesNotPanic(t *testing.T) {
-	parser := newLegalStructureParser(schema.SegmentRules{
+	parser, err := newLegalStructureParser(schema.SegmentRules{
 		Strategy:      "legal_article",
 		Hierarchy:     "article>clause>point",
 		Normalization: "basic",
@@ -164,6 +181,9 @@ func TestLegalStructureParserClausePatternSingleCaptureGroupDoesNotPanic(t *test
 			"clause": `(?im)^\s*(?:khoản\s+)?([0-9]+)\s*[\.\)]?\s*.*$`,
 		},
 	})
+	if err != nil {
+		t.Fatalf("newLegalStructureParser() error = %v", err)
+	}
 	text := `
 	Điều 10. Quyền trẻ em
 	1. Cha mẹ có nghĩa vụ bảo vệ con.
@@ -185,7 +205,7 @@ func TestTokenSafeSplitterSplitsOversizedText(t *testing.T) {
 	parts, err := tokenSafeSplitter{
 		maxTokens:    40,
 		targetTokens: 20,
-	}.Split(strings.Repeat("nghia vu cua cong dan; ", 50), "")
+	}.Split(strings.Repeat("nghia vu cua cong dan; ", 50), newStructuralPath(nil))
 	if err != nil {
 		t.Fatalf("Split() error = %v", err)
 	}
@@ -196,6 +216,45 @@ func TestTokenSafeSplitterSplitsOversizedText(t *testing.T) {
 		if tokens := estimateTokenCount(part.Text); tokens > 40 {
 			t.Fatalf("part exceeds limit: %d", tokens)
 		}
+	}
+}
+
+func TestLegalStructureParserHonorsDynamicHierarchy(t *testing.T) {
+	parser, err := newLegalStructureParser(schema.SegmentRules{
+		Strategy:      "legal_article",
+		Hierarchy:     "part.chapter.article.clause.point",
+		Normalization: "basic",
+		LevelPatterns: map[string]string{
+			"part":    `(?im)^\s*Phần\s+thứ\s+([a-zà-ỹ]+)\s*$`,
+			"chapter": `(?im)^\s*Chương\s+([IVXLCDM]+)\s*$`,
+			"article": `(?im)^\s*Điều\s+([0-9]+)\.?\s*(.*)$`,
+			"clause":  `(?m)^\s*([0-9]+)\.\s*(.*)$`,
+			"point":   `(?m)^\s*([a-zđ])\)\s*(.*)$`,
+		},
+	})
+	if err != nil {
+		t.Fatalf("newLegalStructureParser() error = %v", err)
+	}
+	text := `
+Phần thứ nhất
+Chương I
+Điều 1. Phạm vi điều chỉnh
+1. Nội dung khoản một
+a) Ý thứ nhất
+`
+	doc := parser.Parse(text)
+	if len(doc.Nodes) < 1 {
+		t.Fatalf("expected parsed nodes, got %+v", doc)
+	}
+	article := doc.Articles[0]
+	if article.Chapter != "I" {
+		t.Fatalf("expected chapter I, got %q", article.Chapter)
+	}
+	if article.Number != "1" {
+		t.Fatalf("expected article 1, got %q", article.Number)
+	}
+	if len(article.Clauses) != 1 || len(article.Clauses[0].Points) != 1 {
+		t.Fatalf("unexpected dynamic hierarchy projection: %+v", article)
 	}
 }
 

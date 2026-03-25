@@ -324,7 +324,11 @@ func chunkSegments(segments []string, size, overlap int) []string {
 
 func (s *Service) generateChunks(documentID, versionID, normalized string, segmentRules schema.SegmentRules, metadata map[string]interface{}) ([]generatedChunk, chunkGenerationStats, error) {
 	if segmentRules.Strategy == "legal_article" {
-		return newLegalChunkGenerator(segmentRules).Generate(documentID, versionID, normalized, metadata)
+		generator, err := newLegalChunkGenerator(segmentRules)
+		if err != nil {
+			return nil, chunkGenerationStats{}, err
+		}
+		return generator.Generate(documentID, versionID, normalized, metadata)
 	}
 
 	segments := segment(normalized, segmentRules.Strategy)
@@ -342,7 +346,7 @@ func (s *Service) generateChunks(documentID, versionID, normalized string, segme
 		if tokens > hardAbortChunkTokens {
 			return nil, chunkGenerationStats{}, fmt.Errorf("chunk exceeds hard safety limit: estimated_tokens=%d limit=%d", tokens, hardAbortChunkTokens)
 		}
-		metaRaw, metaMap, err := builder.Build(metadata, documentID, versionID, idx, chunkLocation{})
+		metaRaw, metaMap, err := builder.Build(metadata, documentID, versionID, idx, newStructuralPath(nil))
 		if err != nil {
 			return nil, chunkGenerationStats{}, err
 		}

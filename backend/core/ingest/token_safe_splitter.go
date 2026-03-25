@@ -2,7 +2,6 @@ package ingest
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -20,26 +19,24 @@ type tokenSafeSplitter struct {
 }
 
 type chunkPart struct {
-	Text  string
-	Point string
+	Text string
+	Path structuralPath
 }
 
-var pointLinePattern = regexp.MustCompile(defaultLevelPatterns[levelPoint])
-
-func (s tokenSafeSplitter) Split(text string, point string) ([]chunkPart, error) {
+func (s tokenSafeSplitter) Split(text string, path structuralPath) ([]chunkPart, error) {
 	if tokens := estimateTokenCount(text); tokens > hardAbortChunkTokens {
 		return nil, fmt.Errorf("chunk exceeds hard safety limit: estimated_tokens=%d limit=%d", tokens, hardAbortChunkTokens)
 	}
-	return s.splitRecursive(text, point, splitByPointLines, splitBySentences, splitByParagraphs)
+	return s.splitRecursive(text, path, splitBySentences, splitByParagraphs)
 }
 
-func (s tokenSafeSplitter) splitRecursive(text string, point string, splitters ...func(string) []string) ([]chunkPart, error) {
+func (s tokenSafeSplitter) splitRecursive(text string, path structuralPath, splitters ...func(string) []string) ([]chunkPart, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, nil
 	}
 	if tokens := estimateTokenCount(text); tokens <= s.maxTokens {
-		return []chunkPart{{Text: text, Point: point}}, nil
+		return []chunkPart{{Text: text, Path: path}}, nil
 	} else if tokens > hardAbortChunkTokens {
 		return nil, fmt.Errorf("chunk exceeds hard safety limit: estimated_tokens=%d limit=%d", tokens, hardAbortChunkTokens)
 	}
@@ -55,7 +52,7 @@ func (s tokenSafeSplitter) splitRecursive(text string, point string, splitters .
 		}
 		out := make([]chunkPart, 0, len(grouped))
 		for _, groupedText := range grouped {
-			split, err := s.splitRecursive(groupedText, point, splitters[idx+1:]...)
+			split, err := s.splitRecursive(groupedText, path, splitters[idx+1:]...)
 			if err != nil {
 				return nil, err
 			}
@@ -103,36 +100,6 @@ func groupByTokenBudget(parts []string, target int) []string {
 	}
 	if len(current) > 0 {
 		out = append(out, strings.TrimSpace(strings.Join(current, "\n")))
-	}
-	return out
-}
-
-func splitByPointLines(text string) []string {
-	lines := strings.Split(text, "\n")
-	if len(lines) == 0 {
-		return []string{text}
-	}
-	out := make([]string, 0)
-	current := make([]string, 0)
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			if len(current) > 0 {
-				current = append(current, "")
-			}
-			continue
-		}
-		if pointLinePattern.MatchString(trimmed) && len(current) > 0 {
-			out = append(out, strings.TrimSpace(strings.Join(current, "\n")))
-			current = current[:0]
-		}
-		current = append(current, trimmed)
-	}
-	if len(current) > 0 {
-		out = append(out, strings.TrimSpace(strings.Join(current, "\n")))
-	}
-	if len(out) == 0 {
-		return []string{text}
 	}
 	return out
 }
