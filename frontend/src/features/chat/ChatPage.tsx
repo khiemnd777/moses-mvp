@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { downloadCitationAsset, getCitationDetail, unwrapError } from '@/core/api';
 import Panel from '@/shared/Panel';
 import ChatInput from './ChatInput';
@@ -18,6 +18,7 @@ const ChatPage = () => {
   const [citationDetailError, setCitationDetailError] = useState<string>();
   const [isCitationDetailLoading, setIsCitationDetailLoading] = useState(false);
   const [downloadNotice, setDownloadNotice] = useState<string>();
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void hydrate();
@@ -63,6 +64,14 @@ const ChatPage = () => {
 
   const messages = currentConversationId ? messagesByConversation[currentConversationId] || [] : [];
 
+  useEffect(() => {
+    if (!isStreaming && messages.length === 0) return;
+    chatEndRef.current?.scrollIntoView({
+      block: 'end',
+      behavior: isStreaming ? 'auto' : 'smooth'
+    });
+  }, [isStreaming, messages]);
+
   const latestAssistantCitations = useMemo(() => {
     const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
     return lastAssistant?.citations || [];
@@ -105,6 +114,7 @@ const ChatPage = () => {
                   }}
                 />
               ))}
+              <div ref={chatEndRef} />
               {error && <div className="badge">{error}</div>}
             </div>
             <ChatInput />

@@ -67,6 +67,7 @@ type chatStreamState struct {
 	writer     *sseWriter
 	builder    strings.Builder
 	citations  []answer.Citation
+	done       bool
 	tokenSent  bool
 	lastErr    error
 	sendErrors bool
@@ -88,7 +89,7 @@ func (s *chatStreamState) OnToken(delta string) error {
 
 func (s *chatStreamState) OnCitations(citations []answer.Citation) error {
 	s.citations = citations
-	return s.writer.writeEvent("citations", citations)
+	return nil
 }
 
 func (s *chatStreamState) OnError(err error) {
@@ -100,7 +101,17 @@ func (s *chatStreamState) OnError(err error) {
 }
 
 func (s *chatStreamState) OnDone() {
-	_ = s.writer.writeEvent("done", fiber.Map{"ok": true})
+	s.done = true
+}
+
+func (s *chatStreamState) EmitCitations(citations []answer.Citation) error {
+	s.citations = citations
+	return s.writer.writeEvent("citations", citations)
+}
+
+func (s *chatStreamState) EmitDone() error {
+	s.done = true
+	return s.writer.writeEvent("done", fiber.Map{"ok": true})
 }
 
 func (h *Handler) CreateConversation(c *fiber.Ctx) error {
@@ -311,21 +322,38 @@ func (h *Handler) StreamMessage(c *fiber.Ctx) error {
 		}
 
 		llmStarted := time.Now()
-		finalContent, err := ansSvc.GenerateWithHistory(streamCtx, history, content, sources, promptOpts)
-		if err != nil {
+		if err := ansSvc.StreamWithHistory(streamCtx, history, content, sources, promptOpts, state); err != nil {
 			traceSvc.OnError(err, traceLatency(started))
-			h.logChatLifecycle(streamCtx, "chat_stream_error", convo.ID, assistantMsg.ID, traceID, results, llmStarted, "", err)
+			h.logChatLifecycle(streamCtx, "chat_stream_error", convo.ID, assistantMsg.ID, traceID, results, llmStarted, state.builder.String(), err)
 			return
 		}
+		streamedContent := state.builder.String()
+		finalContent := streamedContent
 		finalContent, finalCitations, _, validationErr := h.validateGeneratedLegalAnswer(streamCtx, finalContent, sources)
 		if validationErr != nil {
 			traceSvc.OnError(validationErr, traceLatency(started))
 			h.logChatLifecycle(streamCtx, "chat_stream_validation_error", convo.ID, assistantMsg.ID, traceID, results, llmStarted, finalContent, validationErr)
 			return
 		}
-		state.OnToken(finalContent)
-		_ = state.OnCitations(finalCitations)
-		state.OnDone()
+		if strings.HasPrefix(finalContent, streamedContent) {
+			if delta := strings.TrimPrefix(finalContent, streamedContent); delta != "" {
+				if err := state.OnToken(delta); err != nil {
+					traceSvc.OnError(err, traceLatency(started))
+					h.logChatLifecycle(streamCtx, "chat_stream_emit_error", convo.ID, assistantMsg.ID, traceID, results, llmStarted, finalContent, err)
+					return
+				}
+			}
+		}
+		if err := state.EmitCitations(finalCitations); err != nil {
+			traceSvc.OnError(err, traceLatency(started))
+			h.logChatLifecycle(streamCtx, "chat_stream_emit_error", convo.ID, assistantMsg.ID, traceID, results, llmStarted, finalContent, err)
+			return
+		}
+		if err := state.EmitDone(); err != nil {
+			traceSvc.OnError(err, traceLatency(started))
+			h.logChatLifecycle(streamCtx, "chat_stream_emit_error", convo.ID, assistantMsg.ID, traceID, results, llmStarted, finalContent, err)
+			return
+		}
 
 		if updateErr := h.Store.UpdateMessage(streamCtx, assistantMsg.ID, finalContent, marshalCitations(finalCitations), &traceID); updateErr != nil {
 			traceSvc.OnError(updateErr, traceLatency(started))

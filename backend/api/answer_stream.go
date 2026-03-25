@@ -17,6 +17,8 @@ type streamState struct {
 	writer     *sseWriter
 	messageID  string
 	model      string
+	citations  []answer.Citation
+	done       bool
 	tokenSent  bool
 	lastErr    error
 	sendErrors bool
@@ -30,7 +32,8 @@ func (s *streamState) OnToken(delta string) error {
 }
 
 func (s *streamState) OnCitations(citations []answer.Citation) error {
-	return s.writer.writeEvent("citations", citations)
+	s.citations = citations
+	return nil
 }
 
 func (s *streamState) OnError(err error) {
@@ -42,7 +45,17 @@ func (s *streamState) OnError(err error) {
 }
 
 func (s *streamState) OnDone() {
-	_ = s.writer.writeEvent("done", fiber.Map{"ok": true})
+	s.done = true
+}
+
+func (s *streamState) EmitCitations(citations []answer.Citation) error {
+	s.citations = citations
+	return s.writer.writeEvent("citations", citations)
+}
+
+func (s *streamState) EmitDone() error {
+	s.done = true
+	return s.writer.writeEvent("done", fiber.Map{"ok": true})
 }
 
 func (h *Handler) AnswerStream(c *fiber.Ctx) error {
@@ -178,8 +191,7 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 			"model":      model,
 		})
 
-		finalAnswer, err := ansSvc.Generate(streamCtx, question, sources)
-		if err != nil {
+		if err := ansSvc.Stream(streamCtx, question, sources, state); err != nil {
 			traceSvc.OnError(err, traceLatency(started))
 			observability.LogError(streamCtx, h.Logger, "stream", "stream error", map[string]interface{}{
 				"message_id": messageID,
@@ -187,6 +199,8 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 			})
 			return
 		}
+		streamedAnswer := state.builder.String()
+		finalAnswer := streamedAnswer
 		finalAnswer, finalCitations, _, validationErr := h.validateGeneratedLegalAnswer(streamCtx, finalAnswer, sources)
 		if validationErr != nil {
 			traceSvc.OnError(validationErr, traceLatency(started))
@@ -197,9 +211,34 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 			return
 		}
 
-		_ = state.OnToken(finalAnswer)
-		_ = state.OnCitations(finalCitations)
-		state.OnDone()
+		if strings.HasPrefix(finalAnswer, streamedAnswer) {
+			if delta := strings.TrimPrefix(finalAnswer, streamedAnswer); delta != "" {
+				if err := state.OnToken(delta); err != nil {
+					traceSvc.OnError(err, traceLatency(started))
+					observability.LogError(streamCtx, h.Logger, "stream", "stream emit error", map[string]interface{}{
+						"message_id": messageID,
+						"error":      err.Error(),
+					})
+					return
+				}
+			}
+		}
+		if err := state.EmitCitations(finalCitations); err != nil {
+			traceSvc.OnError(err, traceLatency(started))
+			observability.LogError(streamCtx, h.Logger, "stream", "stream emit error", map[string]interface{}{
+				"message_id": messageID,
+				"error":      err.Error(),
+			})
+			return
+		}
+		if err := state.EmitDone(); err != nil {
+			traceSvc.OnError(err, traceLatency(started))
+			observability.LogError(streamCtx, h.Logger, "stream", "stream emit error", map[string]interface{}{
+				"message_id": messageID,
+				"error":      err.Error(),
+			})
+			return
+		}
 		traceSvc.OnResponse(finalAnswer, true, traceLatency(started))
 		observability.LogInfo(streamCtx, h.Logger, "stream", "stream end", map[string]interface{}{
 			"message_id": messageID,
