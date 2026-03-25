@@ -53,6 +53,9 @@ func (f *fakeStore) ListDocumentVersionIDsByDocument(ctx context.Context, docume
 func (f *fakeStore) ListChunkIDsByVersion(ctx context.Context, documentVersionID string) ([]string, error) {
 	return nil, nil
 }
+func (f *fakeStore) GetChunksByIDs(ctx context.Context, ids []string) ([]domain.Chunk, error) {
+	return nil, nil
+}
 func (f *fakeStore) EnqueueDeleteVectorsRepair(ctx context.Context, collection, documentID, documentVersionID string, filter infra.Filter) (bool, error) {
 	return true, nil
 }

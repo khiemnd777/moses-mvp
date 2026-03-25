@@ -20,6 +20,14 @@ export type Citation = {
   file_url?: string;
 };
 
+export type CitationDetail = {
+  citation: Citation;
+  content: string;
+  source_type: 'chunk' | 'asset';
+  file_name?: string;
+  content_type?: string;
+};
+
 export type ChatMessage = {
   message_id: string;
   conversation_id: string;

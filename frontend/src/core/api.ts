@@ -4,6 +4,8 @@ import type {
   AIGuardPolicy,
   AIPrompt,
   AIRetrievalConfig,
+  Citation,
+  CitationDetail,
   ChatFilters,
   ChatMessage,
   Conversation,
@@ -87,6 +89,54 @@ export const createMessage = async (payload: { conversation_id?: string; content
     message: ChatMessage;
     trace_id: string;
   };
+};
+
+export const getCitationDetail = async (payload: { chunk_id?: string; asset_id?: string }) => {
+  const { data } = await api.get('/citations/detail', { params: payload });
+  return data as CitationDetail;
+};
+
+const parseFileName = (contentDisposition?: string, fallback = 'citation.txt') => {
+  if (!contentDisposition) return fallback;
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+  const plainMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+  return plainMatch?.[1] || fallback;
+};
+
+const extractAssetId = (citation: Citation) => {
+  if (citation.asset_id) return citation.asset_id;
+  const matched = (citation.file_url || citation.url || '').match(/\/assets\/([^/]+)\/download/);
+  return matched?.[1];
+};
+
+export const downloadCitationAsset = async (citation: Citation, fallbackFileName?: string) => {
+  const assetId = extractAssetId(citation);
+  if (assetId) {
+    const response = await api.get(`/assets/${assetId}/download`, { responseType: 'blob' });
+    const blobUrl = window.URL.createObjectURL(response.data as Blob);
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = parseFileName(
+      typeof response.headers['content-disposition'] === 'string' ? response.headers['content-disposition'] : undefined,
+      fallbackFileName || citation.document_title || 'citation'
+    );
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(blobUrl);
+    return;
+  }
+
+  const fallbackUrl = citation.file_url || citation.url;
+  if (fallbackUrl) {
+    window.open(fallbackUrl, '_blank', 'noopener,noreferrer');
+    return;
+  }
+
+  throw new Error('Không tìm thấy tài liệu để tải xuống.');
 };
 
 export const search = async (query: string) => {

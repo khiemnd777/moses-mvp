@@ -22,6 +22,7 @@ type handlerStore interface {
 	DeleteDocument(ctx context.Context, id string) (bool, error)
 	ListDocumentVersionIDsByDocument(ctx context.Context, documentID string) ([]string, error)
 	ListChunkIDsByVersion(ctx context.Context, documentVersionID string) ([]string, error)
+	GetChunksByIDs(ctx context.Context, ids []string) ([]domain.Chunk, error)
 	EnqueueDeleteVectorsRepair(ctx context.Context, collection, documentID, documentVersionID string, filter infra.Filter) (bool, error)
 	EnqueueRebuildVectorsRepair(ctx context.Context, collection, documentVersionID string) (bool, error)
 	ListDocumentAssetPaths(ctx context.Context, documentID string) ([]string, error)

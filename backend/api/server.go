@@ -107,6 +107,7 @@ func (s *Server) RegisterRoutes() {
 	protectedGroup.Post("/messages", h.CreateMessage)
 	protectedGroup.Get("/messages", h.ListMessages)
 	protectedGroup.Post("/messages/stream", h.StreamMessage)
+	protectedGroup.Get("/citations/detail", h.GetCitationDetail)
 	protectedGroup.Get("/assets/:id/download", h.DownloadAsset)
 
 	adminGroup := s.App.Group("/admin", authMiddleware)

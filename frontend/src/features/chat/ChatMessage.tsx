@@ -12,10 +12,10 @@ const formatTimestamp = (value: string) =>
 
 const ChatMessage = ({
   message,
-  onSelectCitations
+  onOpenCitation
 }: {
   message: ChatMessageType;
-  onSelectCitations: (citations: Citation[]) => void;
+  onOpenCitation: (citation: Citation, citations: Citation[]) => void;
 }) => {
   return (
     <div className={`message ${message.role}`}>
@@ -31,7 +31,8 @@ const ChatMessage = ({
               <button
                 key={citation.id || citation.chunk_id || index}
                 className="button outline"
-                onClick={() => onSelectCitations(message.citations)}
+                onClick={() => onOpenCitation(citation, message.citations)}
+                type="button"
               >
                 [{index + 1}] {citation.article ? `Điều ${citation.article}` : citation.document_title}
               </button>

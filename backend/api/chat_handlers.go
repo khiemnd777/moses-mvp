@@ -66,6 +66,14 @@ type chatStreamState struct {
 	sendErrors bool
 }
 
+type citationDetailResponse struct {
+	Citation    answer.Citation `json:"citation"`
+	Content     string          `json:"content"`
+	SourceType  string          `json:"source_type"`
+	FileName    string          `json:"file_name,omitempty"`
+	ContentType string          `json:"content_type,omitempty"`
+}
+
 func (s *chatStreamState) OnToken(delta string) error {
 	s.tokenSent = true
 	s.builder.WriteString(delta)
@@ -340,6 +348,55 @@ func (h *Handler) DownloadAsset(c *fiber.Ctx) error {
 	return c.Download(filepath.Join(h.Storage.Root, asset.StoragePath), asset.FileName)
 }
 
+func (h *Handler) GetCitationDetail(c *fiber.Ctx) error {
+	chunkID := strings.TrimSpace(c.Query("chunk_id"))
+	assetID := strings.TrimSpace(c.Query("asset_id"))
+	if chunkID == "" && assetID == "" {
+		return respondError(c, 400, "validation", "chunk_id or asset_id is required", nil)
+	}
+
+	if chunkID != "" {
+		chunks, err := h.Store.GetChunksByIDs(c.UserContext(), []string{chunkID})
+		if err != nil {
+			return respondError(c, 500, "db_error", "failed to load citation chunk", err.Error())
+		}
+		if len(chunks) > 0 {
+			detail, err := h.buildCitationDetailFromChunk(c.UserContext(), chunks[0])
+			if err != nil {
+				return respondError(c, 500, "citation_detail_error", "failed to build citation detail", err.Error())
+			}
+			return c.JSON(detail)
+		}
+		if assetID == "" {
+			return respondError(c, 404, "not_found", "citation chunk not found", nil)
+		}
+	}
+
+	asset, err := h.Store.GetDocumentAsset(c.UserContext(), assetID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return respondError(c, 404, "not_found", "citation asset not found", nil)
+		}
+		return respondError(c, 500, "db_error", "failed to load citation asset", err.Error())
+	}
+	content, err := h.Storage.Read(asset.StoragePath)
+	if err != nil {
+		return respondError(c, 500, "storage_error", "failed to read citation asset", err.Error())
+	}
+	fileURL := "/assets/" + asset.ID + "/download"
+	return c.JSON(citationDetailResponse{
+		Citation: answer.Citation{
+			AssetID: asset.ID,
+			FileURL: fileURL,
+			URL:     fileURL,
+		},
+		Content:     content,
+		SourceType:  "asset",
+		FileName:    asset.FileName,
+		ContentType: asset.ContentType,
+	})
+}
+
 type chatTurnResult struct {
 	Conversation     domain.Conversation
 	UserMessage      domain.Message
@@ -610,6 +667,70 @@ func (h *Handler) loadConversationHistory(ctx context.Context, conversationID st
 		})
 	}
 	return out, nil
+}
+
+func (h *Handler) buildCitationDetailFromChunk(ctx context.Context, chunk domain.Chunk) (citationDetailResponse, error) {
+	var metadata map[string]interface{}
+	if len(chunk.MetadataJSON) > 0 {
+		if err := json.Unmarshal(chunk.MetadataJSON, &metadata); err != nil {
+			return citationDetailResponse{}, err
+		}
+	}
+
+	citation := answer.Citation{
+		ID:               pickString(metadata, "citation_id"),
+		ChunkID:          chunk.ID,
+		DocumentTitle:    pickString(metadata, "document_title", "title", "doc_title", "law_name"),
+		LawName:          pickString(metadata, "law_name", "document_title", "title", "doc_title"),
+		Chapter:          pickString(metadata, "chapter", "chuong"),
+		DocumentNumber:   pickString(metadata, "document_number", "number", "doc_number", "doc_code"),
+		DocumentType:     pickString(metadata, "document_type", "doc_type"),
+		IssuingAuthority: pickString(metadata, "issuing_authority", "authority", "co_quan_ban_hanh"),
+		EffectiveStatus:  pickString(metadata, "effective_status", "status", "hieu_luc"),
+		Article:          pickString(metadata, "article", "article_number", "dieu"),
+		Clause:           pickString(metadata, "clause", "clause_number", "khoan"),
+		Year:             pickInt(metadata, "year", "document_year", "signed_year", "nam"),
+		Excerpt:          excerptText(chunk.Text, 320),
+		URL:              pickString(metadata, "url", "document_url", "source_url"),
+		AssetID:          pickString(metadata, "asset_id"),
+		FileURL:          pickString(metadata, "file_url"),
+	}
+
+	var (
+		fileName    string
+		contentType string
+	)
+	if chunk.DocumentVersionID != "" {
+		_, doc, asset, _, err := h.Store.GetDocumentVersionBundle(ctx, chunk.DocumentVersionID)
+		if err == nil {
+			if citation.DocumentTitle == "" {
+				citation.DocumentTitle = doc.Title
+			}
+			if citation.LawName == "" {
+				citation.LawName = citation.DocumentTitle
+			}
+			if citation.AssetID == "" {
+				citation.AssetID = asset.ID
+			}
+			fileName = asset.FileName
+			contentType = asset.ContentType
+		}
+	}
+	if citation.FileURL == "" && citation.AssetID != "" {
+		citation.FileURL = "/assets/" + citation.AssetID + "/download"
+	}
+	if citation.URL == "" {
+		citation.URL = citation.FileURL
+	}
+	citation.CitationLabel = buildDeterministicCitationLabel(citation)
+
+	return citationDetailResponse{
+		Citation:    citation,
+		Content:     chunk.Text,
+		SourceType:  "chunk",
+		FileName:    fileName,
+		ContentType: contentType,
+	}, nil
 }
 
 func (h *Handler) logChatLifecycle(ctx context.Context, eventName, conversationID, messageID, traceID string, results []retrieval.Result, started time.Time, content string, err error) {
