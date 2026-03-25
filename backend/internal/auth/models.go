@@ -28,6 +28,12 @@ type LoginResponse struct {
 	MustChangePassword bool   `json:"must_change_password"`
 }
 
+type RefreshResponse struct {
+	AccessToken        string `json:"access_token"`
+	ExpiresIn          int    `json:"expires_in"`
+	MustChangePassword bool   `json:"must_change_password"`
+}
+
 type ChangePasswordRequest struct {
 	OldPassword string `json:"old_password"`
 	NewPassword string `json:"new_password"`
@@ -39,10 +45,16 @@ type UserStore interface {
 	GetUserByUsername(ctx context.Context, username string) (domain.User, error)
 	CreateUser(ctx context.Context, user domain.User) error
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string, changedAt time.Time) error
+	CreateRefreshSession(ctx context.Context, session domain.RefreshSession) error
+	GetRefreshSessionByTokenHash(ctx context.Context, tokenHash string) (domain.RefreshSession, error)
+	RotateRefreshSession(ctx context.Context, sessionID, currentTokenHash, nextTokenHash string, expiresAt, rotatedAt time.Time) error
+	RevokeRefreshSessionByTokenHash(ctx context.Context, tokenHash string, revokedAt time.Time) error
+	RevokeAllRefreshSessionsByUserID(ctx context.Context, userID string, revokedAt time.Time) error
 }
 
 type Config struct {
-	Secret   string
-	Issuer   string
-	TokenTTL time.Duration
+	Secret          string
+	Issuer          string
+	TokenTTL        time.Duration
+	RefreshTokenTTL time.Duration
 }

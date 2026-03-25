@@ -56,6 +56,21 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE TABLE IF NOT EXISTS auth_refresh_sessions (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  replaced_by_hash TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE auth_refresh_sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+ALTER TABLE auth_refresh_sessions ADD COLUMN IF NOT EXISTS replaced_by_hash TEXT;
+ALTER TABLE auth_refresh_sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_sessions_user_id ON auth_refresh_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_sessions_expires_at ON auth_refresh_sessions(expires_at);
 `)
 	return err
 }
@@ -112,6 +127,109 @@ func (s *Store) UpdateUserPassword(ctx context.Context, userID, passwordHash str
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+func (s *Store) CreateRefreshSession(ctx context.Context, session domain.RefreshSession) error {
+	return s.DB.QueryRowContext(
+		ctx,
+		`INSERT INTO auth_refresh_sessions (id, user_id, token_hash, expires_at, revoked_at, replaced_by_hash)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING created_at, updated_at`,
+		session.ID,
+		session.UserID,
+		session.TokenHash,
+		session.ExpiresAt,
+		session.RevokedAt,
+		session.ReplacedByHash,
+	).Scan(&session.CreatedAt, &session.UpdatedAt)
+}
+
+func (s *Store) GetRefreshSessionByTokenHash(ctx context.Context, tokenHash string) (domain.RefreshSession, error) {
+	var session domain.RefreshSession
+	err := s.DB.QueryRowContext(
+		ctx,
+		`SELECT id, user_id, token_hash, expires_at, revoked_at, replaced_by_hash, created_at, updated_at
+		 FROM auth_refresh_sessions
+		 WHERE token_hash = $1`,
+		tokenHash,
+	).Scan(
+		&session.ID,
+		&session.UserID,
+		&session.TokenHash,
+		&session.ExpiresAt,
+		&session.RevokedAt,
+		&session.ReplacedByHash,
+		&session.CreatedAt,
+		&session.UpdatedAt,
+	)
+	return session, err
+}
+
+func (s *Store) RotateRefreshSession(ctx context.Context, sessionID, currentTokenHash, nextTokenHash string, expiresAt, rotatedAt time.Time) error {
+	result, err := s.DB.ExecContext(
+		ctx,
+		`UPDATE auth_refresh_sessions
+		 SET token_hash = $1,
+		     expires_at = $2,
+		     replaced_by_hash = $1,
+		     updated_at = $3
+		 WHERE id = $4
+		   AND token_hash = $5
+		   AND revoked_at IS NULL`,
+		nextTokenHash,
+		expiresAt,
+		rotatedAt,
+		sessionID,
+		currentTokenHash,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) RevokeRefreshSessionByTokenHash(ctx context.Context, tokenHash string, revokedAt time.Time) error {
+	result, err := s.DB.ExecContext(
+		ctx,
+		`UPDATE auth_refresh_sessions
+		 SET revoked_at = COALESCE(revoked_at, $2),
+		     updated_at = $2
+		 WHERE token_hash = $1`,
+		tokenHash,
+		revokedAt,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) RevokeAllRefreshSessionsByUserID(ctx context.Context, userID string, revokedAt time.Time) error {
+	_, err := s.DB.ExecContext(
+		ctx,
+		`UPDATE auth_refresh_sessions
+		 SET revoked_at = COALESCE(revoked_at, $2),
+		     updated_at = $2
+		 WHERE user_id = $1
+		   AND revoked_at IS NULL`,
+		userID,
+		revokedAt,
+	)
+	return err
 }
 
 func (s *Store) CreateDocType(ctx context.Context, code, name string, formJSON []byte, formHash string) (string, error) {

@@ -111,6 +111,17 @@ type User struct {
 	CreatedAt          time.Time
 }
 
+type RefreshSession struct {
+	ID             string
+	UserID         string
+	TokenHash      string
+	ExpiresAt      time.Time
+	RevokedAt      *time.Time
+	ReplacedByHash *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 type AIGuardPolicy struct {
 	ID                 string    `json:"id"`
 	Name               string    `json:"name"`

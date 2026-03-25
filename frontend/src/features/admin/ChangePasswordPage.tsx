@@ -5,7 +5,7 @@ import Panel from '@/shared/Panel';
 import Input from '@/shared/Input';
 import Button from '@/shared/Button';
 import apiClient from '@/playground/apiClient.js';
-import { getSessionState } from '@/playground/auth.js';
+import { getSessionState, setToken } from '@/playground/auth.js';
 
 const ChangePasswordPage = () => {
   const navigate = useNavigate();
@@ -54,11 +54,14 @@ const ChangePasswordPage = () => {
     setLoading(true);
     setError('');
     try {
-      await apiClient.post(
+      const { data } = await apiClient.post(
         '/auth/change-password',
         { old_password: oldPassword, new_password: newPassword },
         { skipUnauthorizedRedirect: true }
       );
+      if (data?.access_token) {
+        setToken(data.access_token);
+      }
       navigate('/playground', { replace: true });
     } catch (err) {
       if (axios.isAxiosError(err)) {

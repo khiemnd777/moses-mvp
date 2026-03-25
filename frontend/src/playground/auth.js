@@ -1,20 +1,28 @@
-import apiClient, { AUTH_TOKEN_KEY, CHANGE_PASSWORD_PATH, PLAYGROUND_LOGIN_PATH } from './apiClient.js';
+import apiClient, {
+  AUTH_TOKEN_KEY,
+  CHANGE_PASSWORD_PATH,
+  PLAYGROUND_LOGIN_PATH,
+  clearStoredToken,
+  getStoredToken,
+  redirectToLogin,
+  setStoredToken
+} from './apiClient.js';
 
-export const getToken = () => window.localStorage.getItem(AUTH_TOKEN_KEY);
+export const getToken = () => getStoredToken();
 
 export const setToken = (token) => {
-  window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+  setStoredToken(token);
 };
 
 export const clearToken = () => {
-  window.localStorage.removeItem(AUTH_TOKEN_KEY);
+  clearStoredToken();
 };
 
 export const login = async (username, password) => {
   const { data } = await apiClient.post(
     '/auth/login',
     { username, password },
-    { skipUnauthorizedRedirect: true }
+    { skipUnauthorizedRedirect: true, skipAuthRefresh: true }
   );
   setToken(data.access_token);
   return data;
@@ -43,8 +51,13 @@ export const verifyToken = async () => {
 };
 
 export const logout = () => {
-  clearToken();
-  window.location.assign(PLAYGROUND_LOGIN_PATH);
+  void apiClient
+    .post('/auth/logout', undefined, { skipUnauthorizedRedirect: true, skipAuthRefresh: true })
+    .catch(() => undefined)
+    .finally(() => {
+      clearToken();
+      redirectToLogin();
+    });
 };
 
 export { AUTH_TOKEN_KEY, PLAYGROUND_LOGIN_PATH, CHANGE_PASSWORD_PATH };

@@ -17,7 +17,8 @@ import (
 )
 
 type fakeUserStore struct {
-	users map[string]domain.User
+	users           map[string]domain.User
+	refreshSessions map[string]domain.RefreshSession
 }
 
 func newFakeUserStore(t *testing.T) *fakeUserStore {
@@ -38,6 +39,7 @@ func newFakeUserStore(t *testing.T) *fakeUserStore {
 		users: map[string]domain.User{
 			user.Username: user,
 		},
+		refreshSessions: make(map[string]domain.RefreshSession),
 	}
 }
 
@@ -83,20 +85,80 @@ func (f *fakeUserStore) UpdateUserPassword(ctx context.Context, userID, password
 	return sql.ErrNoRows
 }
 
+func (f *fakeUserStore) CreateRefreshSession(ctx context.Context, session domain.RefreshSession) error {
+	session.CreatedAt = time.Now().UTC()
+	session.UpdatedAt = session.CreatedAt
+	f.refreshSessions[session.TokenHash] = session
+	return nil
+}
+
+func (f *fakeUserStore) GetRefreshSessionByTokenHash(ctx context.Context, tokenHash string) (domain.RefreshSession, error) {
+	session, ok := f.refreshSessions[tokenHash]
+	if !ok {
+		return domain.RefreshSession{}, sql.ErrNoRows
+	}
+	return session, nil
+}
+
+func (f *fakeUserStore) RotateRefreshSession(ctx context.Context, sessionID, currentTokenHash, nextTokenHash string, expiresAt, rotatedAt time.Time) error {
+	session, ok := f.refreshSessions[currentTokenHash]
+	if !ok || session.ID != sessionID || session.RevokedAt != nil {
+		return sql.ErrNoRows
+	}
+	delete(f.refreshSessions, currentTokenHash)
+	session.TokenHash = nextTokenHash
+	session.ExpiresAt = expiresAt
+	session.ReplacedByHash = &nextTokenHash
+	session.UpdatedAt = rotatedAt
+	f.refreshSessions[nextTokenHash] = session
+	return nil
+}
+
+func (f *fakeUserStore) RevokeRefreshSessionByTokenHash(ctx context.Context, tokenHash string, revokedAt time.Time) error {
+	session, ok := f.refreshSessions[tokenHash]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	session.RevokedAt = &revokedAt
+	session.UpdatedAt = revokedAt
+	f.refreshSessions[tokenHash] = session
+	return nil
+}
+
+func (f *fakeUserStore) RevokeAllRefreshSessionsByUserID(ctx context.Context, userID string, revokedAt time.Time) error {
+	for tokenHash, session := range f.refreshSessions {
+		if session.UserID == userID {
+			session.RevokedAt = &revokedAt
+			session.UpdatedAt = revokedAt
+			f.refreshSessions[tokenHash] = session
+		}
+	}
+	return nil
+}
+
 func setupAuthApp(t *testing.T, secret string) *fiber.App {
 	t.Helper()
 	store := newFakeUserStore(t)
+	return setupAuthAppWithStore(t, store, secret)
+}
+
+func setupAuthAppWithStore(t *testing.T, store *fakeUserStore, secret string) *fiber.App {
+	t.Helper()
 	service := NewService(store, Config{
-		Secret:   secret,
-		Issuer:   "test_issuer",
-		TokenTTL: time.Hour,
+		Secret:          secret,
+		Issuer:          "test_issuer",
+		TokenTTL:        time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
 	})
 	handlers := NewHandlers(service, NewLoginRateLimiter(5, time.Minute))
 	requireAuth := RequireAuth(service.JWTManager(), store)
 
 	app := fiber.New()
 	app.Post("/auth/login", handlers.Login)
+	app.Post("/auth/refresh", handlers.Refresh)
+	app.Post("/auth/logout", handlers.Logout)
 	app.Get("/auth/me", requireAuth, handlers.Me)
+	app.Post("/auth/change-password", requireAuth, handlers.ChangePassword)
 	app.Get("/admin/ping", requireAuth, func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ok": true})
 	})
@@ -125,6 +187,9 @@ func TestLoginAndMeSuccess(t *testing.T) {
 	}
 	if loginResp.AccessToken == "" {
 		t.Fatalf("expected access token")
+	}
+	if len(resp.Cookies()) == 0 {
+		t.Fatalf("expected refresh token cookie")
 	}
 	if loginResp.ExpiresIn <= 0 {
 		t.Fatalf("expected positive expires_in")
@@ -243,9 +308,10 @@ func TestProtectedRouteBlockedWhenPasswordChangeRequired(t *testing.T) {
 	store.users["admin"] = user
 
 	service := NewService(store, Config{
-		Secret:   "test-secret",
-		Issuer:   "test_issuer",
-		TokenTTL: time.Hour,
+		Secret:          "test-secret",
+		Issuer:          "test_issuer",
+		TokenTTL:        time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
 	})
 	handlers := NewHandlers(service, NewLoginRateLimiter(5, time.Minute))
 	requireAuth := RequireAuth(service.JWTManager(), store)
@@ -293,15 +359,18 @@ func TestChangePasswordFlowUnblocksProtectedRoutes(t *testing.T) {
 	store.users["admin"] = user
 
 	service := NewService(store, Config{
-		Secret:   "test-secret",
-		Issuer:   "test_issuer",
-		TokenTTL: time.Hour,
+		Secret:          "test-secret",
+		Issuer:          "test_issuer",
+		TokenTTL:        time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
 	})
 	handlers := NewHandlers(service, NewLoginRateLimiter(5, time.Minute))
 	requireAuth := RequireAuth(service.JWTManager(), store)
 
 	app := fiber.New()
 	app.Post("/auth/login", handlers.Login)
+	app.Post("/auth/refresh", handlers.Refresh)
+	app.Post("/auth/logout", handlers.Logout)
 	app.Post("/auth/change-password", requireAuth, handlers.ChangePassword)
 	app.Get("/playground/ping", requireAuth, func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ok": true})
@@ -319,6 +388,10 @@ func TestChangePasswordFlowUnblocksProtectedRoutes(t *testing.T) {
 	var tokenResp LoginResponse
 	if err := json.NewDecoder(loginResp.Body).Decode(&tokenResp); err != nil {
 		t.Fatalf("decode login response: %v", err)
+	}
+	refreshCookie := findCookie(loginResp.Cookies(), refreshTokenCookieName)
+	if refreshCookie == nil {
+		t.Fatalf("expected refresh token cookie")
 	}
 
 	changeBody, _ := json.Marshal(map[string]string{"old_password": "password", "new_password": "newpassword"})
@@ -356,4 +429,117 @@ func TestChangePasswordFlowUnblocksProtectedRoutes(t *testing.T) {
 	if oldLoginResp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected old password login to fail with 401, got %d", oldLoginResp.StatusCode)
 	}
+
+	refreshReq := httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
+	refreshReq.AddCookie(refreshCookie)
+	refreshResp, err := app.Test(refreshReq, -1)
+	if err != nil {
+		t.Fatalf("refresh request failed: %v", err)
+	}
+	defer refreshResp.Body.Close()
+	if refreshResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected revoked refresh token to fail with 401, got %d", refreshResp.StatusCode)
+	}
+}
+
+func TestRefreshRotatesSessionAndReturnsNewAccessToken(t *testing.T) {
+	app := setupAuthApp(t, "test-secret")
+
+	loginBody, _ := json.Marshal(map[string]string{"username": "admin", "password": "password"})
+	loginReq := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginResp, err := app.Test(loginReq, -1)
+	if err != nil {
+		t.Fatalf("login request failed: %v", err)
+	}
+	defer loginResp.Body.Close()
+
+	refreshCookie := findCookie(loginResp.Cookies(), refreshTokenCookieName)
+	if refreshCookie == nil {
+		t.Fatalf("expected refresh token cookie")
+	}
+
+	refreshReq := httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
+	refreshReq.AddCookie(refreshCookie)
+	refreshResp, err := app.Test(refreshReq, -1)
+	if err != nil {
+		t.Fatalf("refresh request failed: %v", err)
+	}
+	defer refreshResp.Body.Close()
+	if refreshResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", refreshResp.StatusCode)
+	}
+
+	var refreshed RefreshResponse
+	if err := json.NewDecoder(refreshResp.Body).Decode(&refreshed); err != nil {
+		t.Fatalf("decode refresh response: %v", err)
+	}
+	if refreshed.AccessToken == "" {
+		t.Fatalf("expected refreshed access token")
+	}
+
+	nextRefreshCookie := findCookie(refreshResp.Cookies(), refreshTokenCookieName)
+	if nextRefreshCookie == nil || nextRefreshCookie.Value == refreshCookie.Value {
+		t.Fatalf("expected rotated refresh token cookie")
+	}
+
+	reuseReq := httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
+	reuseReq.AddCookie(refreshCookie)
+	reuseResp, err := app.Test(reuseReq, -1)
+	if err != nil {
+		t.Fatalf("reuse refresh request failed: %v", err)
+	}
+	defer reuseResp.Body.Close()
+	if reuseResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected reused refresh token to fail with 401, got %d", reuseResp.StatusCode)
+	}
+}
+
+func TestLogoutRevokesRefreshSession(t *testing.T) {
+	app := setupAuthApp(t, "test-secret")
+
+	loginBody, _ := json.Marshal(map[string]string{"username": "admin", "password": "password"})
+	loginReq := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginResp, err := app.Test(loginReq, -1)
+	if err != nil {
+		t.Fatalf("login request failed: %v", err)
+	}
+	defer loginResp.Body.Close()
+
+	refreshCookie := findCookie(loginResp.Cookies(), refreshTokenCookieName)
+	if refreshCookie == nil {
+		t.Fatalf("expected refresh token cookie")
+	}
+
+	logoutReq := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	logoutReq.AddCookie(refreshCookie)
+	logoutResp, err := app.Test(logoutReq, -1)
+	if err != nil {
+		t.Fatalf("logout request failed: %v", err)
+	}
+	defer logoutResp.Body.Close()
+	if logoutResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", logoutResp.StatusCode)
+	}
+
+	refreshReq := httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
+	refreshReq.AddCookie(refreshCookie)
+	refreshResp, err := app.Test(refreshReq, -1)
+	if err != nil {
+		t.Fatalf("refresh request failed: %v", err)
+	}
+	defer refreshResp.Body.Close()
+	if refreshResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected logged out refresh token to fail with 401, got %d", refreshResp.StatusCode)
+	}
+}
+
+func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
 }

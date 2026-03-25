@@ -4,6 +4,11 @@ declare module '@/playground/apiClient.js' {
   export const AUTH_TOKEN_KEY: string;
   export const PLAYGROUND_LOGIN_PATH: string;
   export const CHANGE_PASSWORD_PATH: string;
+  export function getStoredToken(): string | null;
+  export function setStoredToken(token: string): void;
+  export function clearStoredToken(): void;
+  export function refreshAccessToken(): Promise<{ access_token: string; expires_in: number; must_change_password: boolean }>;
+  export function redirectToLogin(): void;
   const apiClient: AxiosInstance;
   export default apiClient;
 }

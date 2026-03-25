@@ -3,7 +3,13 @@ export type SseEvent = {
   data: string;
 };
 
-import { AUTH_TOKEN_KEY, CHANGE_PASSWORD_PATH, PLAYGROUND_LOGIN_PATH } from '@/playground/apiClient.js';
+import {
+  CHANGE_PASSWORD_PATH,
+  clearStoredToken,
+  getStoredToken,
+  PLAYGROUND_LOGIN_PATH,
+  refreshAccessToken
+} from '@/playground/apiClient.js';
 
 type StreamHandlers = {
   onEvent: (evt: SseEvent) => void;
@@ -17,21 +23,23 @@ export const streamSse = async (
   signal: AbortSignal,
   handlers: StreamHandlers
 ) => {
-  const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    },
-    body: JSON.stringify(body),
-    signal
-  });
+  let response = await createSseRequest(url, body, signal, getStoredToken());
+
+  if (response.status === 401) {
+    try {
+      const refreshed = await refreshAccessToken();
+      response = await createSseRequest(url, body, signal, refreshed.access_token);
+    } catch {
+      clearStoredToken();
+      if (window.location.pathname !== PLAYGROUND_LOGIN_PATH) {
+        window.location.assign(PLAYGROUND_LOGIN_PATH);
+      }
+    }
+  }
 
   if (!response.ok || !response.body) {
     if (response.status === 401) {
-      window.localStorage.removeItem(AUTH_TOKEN_KEY);
+      clearStoredToken();
       if (window.location.pathname !== PLAYGROUND_LOGIN_PATH) {
         window.location.assign(PLAYGROUND_LOGIN_PATH);
       }
@@ -78,3 +86,16 @@ export const streamSse = async (
 
   handlers.onDone?.();
 };
+
+const createSseRequest = (url: string, body: Record<string, unknown>, signal: AbortSignal, token: string | null) =>
+  fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
+    body: JSON.stringify(body),
+    signal
+  });

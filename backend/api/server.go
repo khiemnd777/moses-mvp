@@ -43,10 +43,11 @@ func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.C
 func NewServerWithCORS(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, authService *auth.Service, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config, allowedOrigins []string) *Server {
 	app := fiber.New()
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:  strings.Join(allowedOrigins, ","),
-		AllowMethods:  "GET,POST,PUT,DELETE,OPTIONS",
-		AllowHeaders:  "Origin, Content-Type, Accept, Authorization",
-		ExposeHeaders: "Content-Disposition, Content-Type",
+		AllowOrigins:     strings.Join(allowedOrigins, ","),
+		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		ExposeHeaders:    "Content-Disposition, Content-Type",
+		AllowCredentials: true,
 	}))
 	retriever := &retrieval.Service{Store: store, Qdrant: qdrant, Embed: embedder, Logger: logger}
 	ingestSvc := &ingest.Service{Store: store, Qdrant: qdrant, Embed: embedder, Config: ingestCfg, Logger: logger}
@@ -73,6 +74,8 @@ func (s *Server) RegisterRoutes() {
 	authHandlers := auth.NewHandlers(s.AuthService, auth.NewLoginRateLimiter(5, time.Minute))
 
 	s.App.Post("/auth/login", authHandlers.Login)
+	s.App.Post("/auth/refresh", authHandlers.Refresh)
+	s.App.Post("/auth/logout", authHandlers.Logout)
 	s.App.Get("/auth/me", authMiddleware, authHandlers.Me)
 	s.App.Post("/auth/change-password", authMiddleware, authHandlers.ChangePassword)
 

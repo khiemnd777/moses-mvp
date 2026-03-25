@@ -31,7 +31,23 @@ func (h *Handlers) ChangePassword(c *fiber.Ctx) error {
 		return respondError(c, fiber.StatusInternalServerError, "internal_error", "failed to update password")
 	}
 
+	resp, _, err := h.service.issueLoginResponse(Identity{
+		UserID:   identity.UserID,
+		Username: identity.Username,
+		Role:     identity.Role,
+	}, false)
+	if err != nil {
+		return respondError(c, fiber.StatusInternalServerError, "internal_error", "failed to issue session")
+	}
+	refreshToken, refreshExpiresAt, err := h.service.CreateSession(c.UserContext(), identity)
+	if err != nil {
+		return respondError(c, fiber.StatusInternalServerError, "internal_error", "failed to create session")
+	}
+	setRefreshTokenCookie(c, refreshToken, refreshExpiresAt)
 	return c.JSON(fiber.Map{
-		"status": "password_updated",
+		"status":               "password_updated",
+		"access_token":         resp.AccessToken,
+		"expires_in":           resp.ExpiresIn,
+		"must_change_password": false,
 	})
 }

@@ -111,9 +111,10 @@ func main() {
 		"procedure": procTone.Content,
 	}
 	authService := auth.NewService(store, auth.Config{
-		Secret:   envCfg.JWTSecret,
-		Issuer:   "legal_api",
-		TokenTTL: time.Hour,
+		Secret:          envCfg.JWTSecret,
+		Issuer:          "legal_api",
+		TokenTTL:        15 * time.Minute,
+		RefreshTokenTTL: 7 * 24 * time.Hour,
 	})
 	if err := auth.BootstrapAdmin(context.Background(), store, envCfg.AdminBootstrapPassword, logger); err != nil {
 		logger.Error("failed to bootstrap admin user", slog.String("error", err.Error()))
