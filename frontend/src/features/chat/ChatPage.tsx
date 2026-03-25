@@ -17,6 +17,7 @@ const ChatPage = () => {
   const [activeCitationDetail, setActiveCitationDetail] = useState<CitationDetail>();
   const [citationDetailError, setCitationDetailError] = useState<string>();
   const [isCitationDetailLoading, setIsCitationDetailLoading] = useState(false);
+  const [downloadNotice, setDownloadNotice] = useState<string>();
 
   useEffect(() => {
     void hydrate();
@@ -67,6 +68,18 @@ const ChatPage = () => {
     return lastAssistant?.citations || [];
   }, [messages]);
 
+  const handleDownloadCitation = (citation: Citation, fallbackFileName?: string) => {
+    setDownloadNotice('Tài liệu đang được tải về');
+    window.setTimeout(() => {
+      setDownloadNotice((current) => (current === 'Tài liệu đang được tải về' ? undefined : current));
+    }, 2500);
+
+    return downloadCitationAsset(citation, fallbackFileName).catch((downloadError) => {
+      setDownloadNotice(undefined);
+      throw downloadError;
+    });
+  };
+
   return (
     <div className="chat-layout">
       <ConversationSidebar />
@@ -98,12 +111,18 @@ const ChatPage = () => {
           </div>
           <Panel bodyClassName="source-panel-content" className="source-panel" title="Nguồn pháp lý">
             <div className="source-panel-body">
-              <SourcesPanel citations={selectedCitations.length > 0 ? selectedCitations : latestAssistantCitations} />
+              <SourcesPanel
+                citations={selectedCitations.length > 0 ? selectedCitations : latestAssistantCitations}
+                onDownload={(citation) =>
+                  void handleDownloadCitation(citation).catch((downloadError) => setCitationDetailError(unwrapError(downloadError)))
+                }
+              />
             </div>
           </Panel>
         </div>
         {isStreaming && <div className="chat-stream-indicator">Đang nhận phản hồi trực tuyến...</div>}
       </Panel>
+      {downloadNotice && <div className="download-notice-popup">{downloadNotice}</div>}
       {activeCitation && (
         <CitationDetailModal
           citation={activeCitation}
@@ -112,7 +131,7 @@ const ChatPage = () => {
           isLoading={isCitationDetailLoading}
           onClose={() => setActiveCitation(undefined)}
           onDownload={() =>
-            void downloadCitationAsset(activeCitationDetail?.citation || activeCitation, activeCitationDetail?.file_name).catch(
+            void handleDownloadCitation(activeCitationDetail?.citation || activeCitation, activeCitationDetail?.file_name).catch(
               (downloadError) => setCitationDetailError(unwrapError(downloadError))
             )
           }

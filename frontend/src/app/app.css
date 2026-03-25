@@ -646,6 +646,20 @@ a {
   font-weight: 600;
 }
 
+.download-notice-popup {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 45;
+  padding: 12px 16px;
+  border: 1px solid rgba(27, 107, 99, 0.18);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fffdf9 0%, #f4ebe0 100%);
+  box-shadow: 0 18px 36px rgba(31, 28, 23, 0.16);
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .admin-shell {
   display: grid;
   grid-template-columns: 220px 1fr;
@@ -682,6 +696,12 @@ a {
   .citation-modal {
     max-height: 88vh;
     padding: 16px;
+  }
+
+  .download-notice-popup {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
   }
 
 }

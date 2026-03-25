@@ -1,6 +1,12 @@
 import type { Citation } from '@/core/types';
 
-const SourcesPanel = ({ citations }: { citations: Citation[] }) => {
+const SourcesPanel = ({
+  citations,
+  onDownload
+}: {
+  citations: Citation[];
+  onDownload: (citation: Citation) => void;
+}) => {
   if (!citations.length) {
     return <div className="badge">Không có trích dẫn nào.</div>;
   }
@@ -18,9 +24,9 @@ const SourcesPanel = ({ citations }: { citations: Citation[] }) => {
           {citation.clause && <div className="badge">Khoản: {citation.clause}</div>}
           {citation.chunk_id && <div className="badge">Chunk: {citation.chunk_id}</div>}
           {(citation.file_url || citation.url) && (
-            <a href={citation.file_url || citation.url} target="_blank" rel="noreferrer">
-              Download original document
-            </a>
+            <button className="button outline" onClick={() => onDownload(citation)} type="button">
+              Tải về văn bản gốc
+            </button>
           )}
           {citation.excerpt && <p>{citation.excerpt}</p>}
         </div>

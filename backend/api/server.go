@@ -43,9 +43,10 @@ func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.C
 func NewServerWithCORS(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, authService *auth.Service, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config, allowedOrigins []string) *Server {
 	app := fiber.New()
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: strings.Join(allowedOrigins, ","),
-		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowOrigins:  strings.Join(allowedOrigins, ","),
+		AllowMethods:  "GET,POST,PUT,DELETE,OPTIONS",
+		AllowHeaders:  "Origin, Content-Type, Accept, Authorization",
+		ExposeHeaders: "Content-Disposition, Content-Type",
 	}))
 	retriever := &retrieval.Service{Store: store, Qdrant: qdrant, Embed: embedder, Logger: logger}
 	ingestSvc := &ingest.Service{Store: store, Qdrant: qdrant, Embed: embedder, Config: ingestCfg, Logger: logger}

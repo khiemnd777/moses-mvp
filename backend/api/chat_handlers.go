@@ -6,7 +6,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -345,7 +351,75 @@ func (h *Handler) DownloadAsset(c *fiber.Ctx) error {
 		}
 		return respondError(c, 500, "db_error", "failed to load asset", err.Error())
 	}
-	return c.Download(filepath.Join(h.Storage.Root, asset.StoragePath), asset.FileName)
+	fullPath := filepath.Join(h.Storage.Root, asset.StoragePath)
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return respondError(c, 404, "not_found", "asset file not found", nil)
+		}
+		return respondError(c, 500, "storage_error", "failed to stat asset file", err.Error())
+	}
+
+	downloadName := strings.TrimSpace(asset.FileName)
+	if downloadName == "" {
+		downloadName = filepath.Base(asset.StoragePath)
+	}
+
+	c.Set(fiber.HeaderContentType, resolveDownloadContentType(downloadName, asset.ContentType, fullPath))
+	c.Set(fiber.HeaderContentDisposition, buildAttachmentDisposition(downloadName))
+	c.Set(fiber.HeaderContentLength, strconv.FormatInt(info.Size(), 10))
+	c.Set(fiber.HeaderCacheControl, "no-store")
+	c.Set(fiber.HeaderXContentTypeOptions, "nosniff")
+	return c.SendFile(fullPath)
+}
+
+func resolveDownloadContentType(fileName, storedContentType, fullPath string) string {
+	normalizedStored := strings.TrimSpace(storedContentType)
+	ext := strings.ToLower(filepath.Ext(fileName))
+
+	if officeType := officeContentTypeByExtension(ext); officeType != "" {
+		switch normalizedStored {
+		case "", fiber.MIMEOctetStream, "application/zip", "application/x-zip-compressed", "multipart/form-data":
+			return officeType
+		}
+	}
+
+	if normalizedStored != "" {
+		return normalizedStored
+	}
+
+	if guessed := mime.TypeByExtension(ext); guessed != "" {
+		return guessed
+	}
+
+	file, err := os.Open(fullPath)
+	if err == nil {
+		defer file.Close()
+		header := make([]byte, 512)
+		n, readErr := file.Read(header)
+		if readErr == nil || errors.Is(readErr, io.EOF) {
+			return http.DetectContentType(header[:n])
+		}
+	}
+	return fiber.MIMEOctetStream
+}
+
+func officeContentTypeByExtension(ext string) string {
+	switch ext {
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	default:
+		return ""
+	}
+}
+
+func buildAttachmentDisposition(fileName string) string {
+	escapedFileName := strings.NewReplacer("\\", "\\\\", `"`, `\"`).Replace(fileName)
+	return `attachment; filename="` + escapedFileName + `"; filename*=UTF-8''` + url.PathEscape(fileName)
 }
 
 func (h *Handler) GetCitationDetail(c *fiber.Ctx) error {
