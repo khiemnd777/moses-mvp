@@ -110,16 +110,18 @@ const DocTypesPage = () => {
           </div>
           <div className="grid">
             {docTypes.map((doc) => (
-              <div key={doc.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div
+                key={doc.id}
+                className={`admin-list-item ${selectedDocTypeId === doc.id ? 'selected' : ''}`}
+              >
                 <button
-                  className={`button outline ${selectedDocTypeId === doc.id ? 'secondary' : ''}`}
+                  className="button outline admin-list-item-button"
                   onClick={() => setSelectedDocTypeId(doc.id)}
-                  style={{ flex: 1, textAlign: 'left' }}
                 >
                   {doc.name} ({doc.code})
                 </button>
                 <Button
-                  variant="outline"
+                  variant={selectedDocTypeId === doc.id ? 'secondary' : 'outline'}
                   onClick={() => void handleDelete(doc.id)}
                   disabled={deletingDocTypeId === doc.id}
                 >
