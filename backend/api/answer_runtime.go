@@ -18,6 +18,7 @@ const (
 	legalAnswerPromptType        = "legal_answer"
 	legalRefusalPromptType       = "legal_refusal"
 	legalClarificationPromptType = "legal_clarification"
+	legacyLegalQAPromptType      = "legal_qa"
 )
 
 const (
@@ -119,27 +120,27 @@ func (h *Handler) evaluateGuardPolicy(ctx context.Context, policy domain.AIGuard
 	case guard.DecisionAllow:
 		return guardDecision{Decision: decision, PromptType: legalAnswerPromptType}, diag, nil
 	case guard.DecisionAskClarification:
-		promptCfg, usedType, err := h.getRuntimePrompt(ctx, legalClarificationPromptType)
+		promptCfg, usedType, found, err := h.getRuntimePromptExact(ctx, legalClarificationPromptType)
 		if err != nil {
 			return guardDecision{}, diag, err
 		}
-		message := strings.TrimSpace(promptCfg.SystemPrompt)
-		if message == "" {
-			message = defaultClarificationMessage
+		message := defaultClarificationMessage
+		if found {
+			message = sanitizeGuardMessage(promptCfg.SystemPrompt, defaultClarificationMessage)
 		}
-		return guardDecision{Decision: decision, PromptType: usedType, Message: message}, diag, nil
+		return guardDecision{Decision: decision, PromptType: coalescePromptType(usedType, legalClarificationPromptType), Message: message}, diag, nil
 	case guard.DecisionRefuse:
 		fallthrough
 	default:
-		promptCfg, usedType, err := h.getRuntimePrompt(ctx, legalRefusalPromptType)
+		promptCfg, usedType, found, err := h.getRuntimePromptExact(ctx, legalRefusalPromptType)
 		if err != nil {
 			return guardDecision{}, diag, err
 		}
-		message := strings.TrimSpace(promptCfg.SystemPrompt)
-		if message == "" {
-			message = defaultRefusalMessage
+		message := defaultRefusalMessage
+		if found {
+			message = sanitizeGuardMessage(promptCfg.SystemPrompt, defaultRefusalMessage)
 		}
-		return guardDecision{Decision: guard.DecisionRefuse, PromptType: usedType, Message: message}, diag, nil
+		return guardDecision{Decision: guard.DecisionRefuse, PromptType: coalescePromptType(usedType, legalRefusalPromptType), Message: message}, diag, nil
 	}
 }
 
@@ -148,6 +149,61 @@ func (h *Handler) getRuntimePrompt(ctx context.Context, promptType string) (doma
 		return domain.AIPrompt{}, "", fmt.Errorf("prompt router is not configured")
 	}
 	return h.PromptRouter.GetPrompt(ctx, promptType)
+}
+
+func (h *Handler) getRuntimePromptExact(ctx context.Context, promptType string) (domain.AIPrompt, string, bool, error) {
+	if h.PromptRouter == nil {
+		return domain.AIPrompt{}, "", false, fmt.Errorf("prompt router is not configured")
+	}
+	prompt, ok, err := h.PromptRouter.GetPromptExact(ctx, promptType)
+	if err != nil {
+		return domain.AIPrompt{}, "", false, err
+	}
+	if !ok {
+		return domain.AIPrompt{}, "", false, nil
+	}
+	return prompt, promptType, true, nil
+}
+
+func (h *Handler) getAnswerPrompt(ctx context.Context) (domain.AIPrompt, string, error) {
+	for _, promptType := range []string{legalAnswerPromptType, legacyLegalQAPromptType} {
+		promptCfg, usedType, found, err := h.getRuntimePromptExact(ctx, promptType)
+		if err != nil {
+			return domain.AIPrompt{}, "", err
+		}
+		if found {
+			return promptCfg, usedType, nil
+		}
+	}
+	return domain.AIPrompt{}, "", fmt.Errorf("missing prompt for types=%q,%q", legalAnswerPromptType, legacyLegalQAPromptType)
+}
+
+func coalescePromptType(current, fallback string) string {
+	current = strings.TrimSpace(current)
+	if current != "" {
+		return current
+	}
+	return fallback
+}
+
+func sanitizeGuardMessage(systemPrompt, fallback string) string {
+	message := strings.TrimSpace(systemPrompt)
+	if message == "" {
+		return fallback
+	}
+	lower := strings.ToLower(message)
+	if len(message) > 220 ||
+		strings.Contains(message, "\n") ||
+		strings.Contains(lower, "you are ") ||
+		strings.Contains(lower, "use only") ||
+		strings.Contains(lower, "never invent") ||
+		strings.Contains(lower, "do not") ||
+		strings.Contains(lower, "always cite") ||
+		strings.Contains(lower, "rules:") ||
+		strings.Contains(lower, "examples:") {
+		return fallback
+	}
+	return message
 }
 
 func buildAnswerSources(results []retrieval.Result) []answer.Source {

@@ -85,7 +85,7 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 	}
 	promptTypeUsed := decision.PromptType
 	if decision.Allow() {
-		if _, usedPromptType, routeErr := h.getRuntimePrompt(ctx, legalAnswerPromptType); routeErr == nil {
+		if _, usedPromptType, routeErr := h.getAnswerPrompt(ctx); routeErr == nil {
 			promptTypeUsed = usedPromptType
 		}
 	}
@@ -125,7 +125,7 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 		})
 		return nil
 	}
-	promptCfg, _, err := h.getRuntimePrompt(ctx, legalAnswerPromptType)
+	promptCfg, _, err := h.getAnswerPrompt(ctx)
 	if err != nil {
 		traceSvc.OnError(err, traceLatency(started))
 		return respondError(c, 500, "config_error", "failed to route legal answer prompt", err.Error())

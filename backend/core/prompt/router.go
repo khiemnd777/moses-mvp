@@ -68,6 +68,19 @@ func (r *Router) GetPrompt(ctx context.Context, promptType string) (domain.AIPro
 	return domain.AIPrompt{}, "", fmt.Errorf("missing prompt for type=%q and default_type=%q", requested, r.defaultType)
 }
 
+func (r *Router) GetPromptExact(ctx context.Context, promptType string) (domain.AIPrompt, bool, error) {
+	cache, err := r.ensureCache(ctx)
+	if err != nil {
+		return domain.AIPrompt{}, false, err
+	}
+	requested := strings.TrimSpace(promptType)
+	if requested == "" {
+		return domain.AIPrompt{}, false, nil
+	}
+	prompt, ok := cache[requested]
+	return prompt, ok, nil
+}
+
 func (r *Router) ensureCache(ctx context.Context) (map[string]domain.AIPrompt, error) {
 	r.mu.RLock()
 	if r.ready && time.Since(r.loadedAt) <= r.ttl {

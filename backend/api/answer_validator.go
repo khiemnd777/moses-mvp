@@ -27,15 +27,14 @@ func (h *Handler) validateGeneratedLegalAnswer(ctx context.Context, answerText s
 }
 
 func (h *Handler) validationRefusalMessage(ctx context.Context) (string, error) {
-	promptCfg, _, err := h.getRuntimePrompt(ctx, legalRefusalPromptType)
+	promptCfg, _, found, err := h.getRuntimePromptExact(ctx, legalRefusalPromptType)
 	if err != nil {
 		return defaultValidationRefusal, err
 	}
-	msg := strings.TrimSpace(promptCfg.SystemPrompt)
-	if msg == "" {
+	if !found {
 		return defaultValidationRefusal, nil
 	}
-	return msg, nil
+	return sanitizeGuardMessage(promptCfg.SystemPrompt, defaultValidationRefusal), nil
 }
 
 func hasLegalAnswerStructure(value string) bool {

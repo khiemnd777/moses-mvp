@@ -607,7 +607,7 @@ func (h *Handler) prepareChatResponse(
 	promptTypeUsed := decision.PromptType
 	var promptCfg domain.AIPrompt
 	if decision.Allow() {
-		promptCfg, promptTypeUsed, err = h.getRuntimePrompt(ctx, legalAnswerPromptType)
+		promptCfg, promptTypeUsed, err = h.getAnswerPrompt(ctx)
 		if err != nil {
 			traceSvc.OnError(err, traceLatency(started))
 			return nil, nil, guardDecision{}, nil, answer.PromptBuildOptions{}, nil, err

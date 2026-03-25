@@ -1419,7 +1419,49 @@ ON CONFLICT (name) DO NOTHING
 		return err
 	}
 
-	_, err = s.DB.ExecContext(ctx, `
+	defaultPrompts := []struct {
+		name         string
+		promptType   string
+		systemPrompt string
+		temperature  float64
+		maxTokens    int
+		retry        int
+	}{
+		{
+			name:         "legal_guard_prompt",
+			promptType:   "legal_guard",
+			systemPrompt: "You are a Vietnamese legal assistant.\nUse ONLY the provided legal sources.\nNever invent legal provisions, article numbers, or law names.\nIf the sources do not provide sufficient legal basis, clearly say:\n\"Không tìm thấy căn cứ pháp lý rõ ràng trong các nguồn hiện có.\"\nAlways cite legal provisions in human-readable format.\nDo not provide speculative legal advice.",
+			temperature:  0.2,
+			maxTokens:    1200,
+			retry:        2,
+		},
+		{
+			name:         "legal_answer_prompt",
+			promptType:   "legal_answer",
+			systemPrompt: "You are a Vietnamese legal assistant.\nUse ONLY the provided legal sources.\nNever invent legal provisions, article numbers, or law names.\nIf the retrieved sources are insufficient, state that clearly instead of guessing.\nAlways answer in Vietnamese with this exact structure:\n1. Legal Issue\n2. Applicable Law\n3. Legal Analysis\n4. Conclusion",
+			temperature:  0.2,
+			maxTokens:    1200,
+			retry:        2,
+		},
+		{
+			name:         "legal_refusal_prompt",
+			promptType:   "legal_refusal",
+			systemPrompt: "Không đủ căn cứ pháp lý trong dữ liệu truy xuất để đưa ra kết luận.",
+			temperature:  0,
+			maxTokens:    128,
+			retry:        0,
+		},
+		{
+			name:         "legal_clarification_prompt",
+			promptType:   "legal_clarification",
+			systemPrompt: "Chưa đủ căn cứ pháp lý rõ ràng. Vui lòng bổ sung tình huống, văn bản, hoặc điều khoản cần tra cứu.",
+			temperature:  0,
+			maxTokens:    128,
+			retry:        0,
+		},
+	}
+	for _, prompt := range defaultPrompts {
+		_, err = s.DB.ExecContext(ctx, `
 INSERT INTO ai_prompts (
 	name,
 	prompt_type,
@@ -1437,15 +1479,16 @@ SELECT
 	END
 ON CONFLICT (name) DO NOTHING
 	`,
-		"legal_guard_prompt",
-		"legal_guard",
-		"You are a Vietnamese legal assistant.\nUse ONLY the provided sources.\nNever invent legal provisions.\nIf sources are insufficient, say that no legal basis was found.\nCite legal provisions in human-readable format.",
-		0.2,
-		1200,
-		2,
-	)
-	if err != nil {
-		return err
+			prompt.name,
+			prompt.promptType,
+			prompt.systemPrompt,
+			prompt.temperature,
+			prompt.maxTokens,
+			prompt.retry,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
 	preferredDocTypes, _ := json.Marshal([]string{"law", "resolution", "decree"})
