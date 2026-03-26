@@ -12,6 +12,8 @@ import type { Citation, CitationDetail } from '@/core/types';
 
 const ChatPage = () => {
   const { hydrate, currentConversationId, messagesByConversation, isStreaming, isLoading, error } = useChatStore();
+  const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(true);
+  const [isSourcesCollapsed, setIsSourcesCollapsed] = useState(true);
   const [selectedCitations, setSelectedCitations] = useState<Citation[]>([]);
   const [activeCitation, setActiveCitation] = useState<Citation>();
   const [activeCitationDetail, setActiveCitationDetail] = useState<CitationDetail>();
@@ -91,7 +93,7 @@ const ChatPage = () => {
 
   return (
     <div className="chat-layout">
-      <ConversationSidebar />
+      <ConversationSidebar isCollapsed={isHistoryCollapsed} onToggleCollapse={() => setIsHistoryCollapsed((value) => !value)} />
       <Panel bodyClassName="chat-main-panel-body" className="chat-main-panel" title="Trợ lý pháp lý">
         <div className="chat-main">
           <div className="chat-column">
@@ -119,7 +121,22 @@ const ChatPage = () => {
             </div>
             <ChatInput />
           </div>
-          <Panel bodyClassName="source-panel-content" className="source-panel" title="Nguồn pháp lý">
+          <Panel
+            bodyClassName={`source-panel-content mobile-collapsible-content ${isSourcesCollapsed ? 'is-collapsed' : ''}`.trim()}
+            className={`source-panel mobile-collapsible ${isSourcesCollapsed ? 'is-collapsed' : ''}`.trim()}
+            title={
+              <div className="panel-title-with-action">
+                <span>Nguồn pháp lý</span>
+                <button
+                  className="button outline panel-toggle-button"
+                  onClick={() => setIsSourcesCollapsed((value) => !value)}
+                  type="button"
+                >
+                  {isSourcesCollapsed ? 'Expand' : 'Collapse'}
+                </button>
+              </div>
+            }
+          >
             <div className="source-panel-body">
               <SourcesPanel
                 citations={selectedCitations.length > 0 ? selectedCitations : latestAssistantCitations}

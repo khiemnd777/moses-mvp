@@ -12,22 +12,40 @@ const formatTimestamp = (value?: string) => {
   }).format(date);
 };
 
-const ConversationSidebar = () => {
+const ConversationSidebar = ({
+  isCollapsed = false,
+  onToggleCollapse
+}: {
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
+}) => {
   const { conversations, currentConversationId, selectConversation, createConversation, deleteConversation, isLoading } =
     useChatStore();
 
   return (
-    <aside className="chat-sidebar card">
+    <aside className={`chat-sidebar card mobile-collapsible ${isCollapsed ? 'is-collapsed' : ''}`.trim()}>
       <div className="chat-sidebar-header">
-        <div>
-          <div className="label">Chat History</div>
-          <h2>Lịch sử hội thoại</h2>
+        <div className="panel-title-with-action">
+          <div>
+            <div className="label">Chat History</div>
+            <h2>Lịch sử hội thoại</h2>
+          </div>
+          <Button
+            variant="outline"
+            className="panel-toggle-button"
+            onClick={() => onToggleCollapse?.()}
+            type="button"
+          >
+            {isCollapsed ? 'Expand' : 'Collapse'}
+          </Button>
         </div>
-        <Button variant="outline" onClick={() => void createConversation()} disabled={isLoading}>
-          Cuộc trò chuyện mới
-        </Button>
+        <div className="chat-sidebar-actions">
+          <Button variant="outline" onClick={() => void createConversation()} disabled={isLoading}>
+            Cuộc trò chuyện mới
+          </Button>
+        </div>
       </div>
-      <div className="conversation-list">
+      <div className="conversation-list mobile-collapsible-content">
         {conversations.length === 0 && <div className="badge">Chưa có cuộc trò chuyện nào.</div>}
         {conversations.map((conversation) => (
           <div
