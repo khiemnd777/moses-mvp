@@ -22,6 +22,7 @@ const ChatInput = () => {
         rows={3}
         placeholder="Hỏi bất kỳ điều gì về luật Việt Nam..."
         value={value}
+        disabled={isStreaming}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey) {

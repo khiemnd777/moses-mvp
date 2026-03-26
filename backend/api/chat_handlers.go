@@ -617,6 +617,34 @@ func (h *Handler) prepareChatResponse(
 	started time.Time,
 ) ([]retrieval.Result, []answer.ConversationMessage, guardDecision, []answer.Source, answer.PromptBuildOptions, *answer.Service, error) {
 	normalizedFilters := normalizeChatFilters(filters, h.Tones)
+	if decision, ok := detectSmallTalkDecision(content); ok {
+		traceSvc.OnRetrieval(retrieval.UnderstandQuery(content).NormalizedQuery, map[string]interface{}{
+			"conversation_id":     conversationID,
+			"retrieval_query":     content,
+			"legal_domain":        normalizedFilters.Domain,
+			"document_type":       normalizedFilters.DocType,
+			"effective_status":    normalizedFilters.EffectiveStatus,
+			"document_number":     normalizedFilters.DocumentNumber,
+			"article_number":      normalizedFilters.ArticleNumber,
+			"retrieved_chunks":    0,
+			"max_similarity":      0.0,
+			"guard_decision":      string(decision.Decision),
+			"prompt_type_used":    decision.PromptType,
+			"retrieved_chunk_ids": []string{},
+			"smalltalk_detected":  true,
+			"retrieval": fiber.Map{
+				"chunks":         0,
+				"max_similarity": 0.0,
+			},
+			"guard": fiber.Map{
+				"decision": string(decision.Decision),
+			},
+			"prompt": fiber.Map{
+				"type": decision.PromptType,
+			},
+		}, []string{})
+		return nil, nil, decision, nil, answer.PromptBuildOptions{}, nil, nil
+	}
 	history, err := h.loadConversationHistory(ctx, conversationID)
 	if err != nil {
 		return nil, nil, guardDecision{}, nil, answer.PromptBuildOptions{}, nil, err

@@ -26,6 +26,8 @@ const DocumentsPage = () => {
   const [uploading, setUploading] = useState(false);
   const [creatingVersion, setCreatingVersion] = useState(false);
   const [enqueuing, setEnqueuing] = useState(false);
+  const [copiedTitle, setCopiedTitle] = useState<string | null>(null);
+  const [copiedDocTypeCode, setCopiedDocTypeCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { lastOpenedDocumentId, setLastOpenedDocumentId } = useAdminStore();
 
@@ -148,6 +150,20 @@ const DocumentsPage = () => {
     return d.toLocaleString();
   };
 
+  const handleCopyDocTypeCode = async (value?: string) => {
+    if (!value) return;
+    await navigator.clipboard.writeText(value);
+    setCopiedDocTypeCode(value);
+    setTimeout(() => setCopiedDocTypeCode(null), 1200);
+  };
+
+  const handleCopyTitle = async (value?: string) => {
+    if (!value) return;
+    await navigator.clipboard.writeText(value);
+    setCopiedTitle(value);
+    setTimeout(() => setCopiedTitle(null), 1200);
+  };
+
   return (
     <>
       <Panel title="Documents">
@@ -166,18 +182,39 @@ const DocumentsPage = () => {
                 className={`source-item admin-list-item ${lastOpenedDocumentId === doc.id ? 'selected' : ''}`}
               >
                 <div className="admin-list-item-header">
-                  <button
-                    className="button outline admin-list-item-button"
-                    onClick={() => setLastOpenedDocumentId(doc.id)}
-                  >
-                    {doc.title}
-                  </button>
+                  <div className="admin-list-item-title-row">
+                    <button
+                      className="button outline admin-list-item-button"
+                      onClick={() => setLastOpenedDocumentId(doc.id)}
+                    >
+                      <span className="admin-list-item-title">{doc.title}</span>
+                    </button>
+                    <Button
+                      variant="outline"
+                      className="admin-copy-button"
+                      onClick={() => void handleCopyTitle(doc.title)}
+                      disabled={!doc.title}
+                    >
+                      {copiedTitle === doc.title ? 'Copied' : 'Copy'}
+                    </Button>
+                  </div>
                   <Button
                     variant={lastOpenedDocumentId === doc.id ? 'secondary' : 'outline'}
                     onClick={() => void handleDeleteDocument(doc.id)}
                     disabled={deletingDocumentId === doc.id}
                   >
                     {deletingDocumentId === doc.id ? 'Deleting...' : 'Delete'}
+                  </Button>
+                </div>
+                <div className="admin-list-item-subtitle-row">
+                  <span className="admin-list-item-subtitle">{doc.doc_type_code || '-'}</span>
+                  <Button
+                    variant="outline"
+                    className="admin-copy-button"
+                    onClick={() => void handleCopyDocTypeCode(doc.doc_type_code)}
+                    disabled={!doc.doc_type_code}
+                  >
+                    {copiedDocTypeCode === doc.doc_type_code ? 'Copied' : 'Copy'}
                   </Button>
                 </div>
                 <div className="grid admin-document-assets">

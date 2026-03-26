@@ -662,6 +662,32 @@ func (h *Handler) Answer(c *fiber.Ctx) error {
 		traceSvc.OnError(err, traceLatency(started))
 		return respondError(c, 500, "config_error", "failed to load answer runtime config", err.Error())
 	}
+	if decision, ok := detectSmallTalkDecision(question); ok {
+		traceSvc.OnRetrieval(retrieval.UnderstandQuery(question).NormalizedQuery, map[string]interface{}{
+			"legal_domain":       filters.Domain,
+			"document_type":      filters.DocType,
+			"effective_status":   filters.EffectiveStatus,
+			"document_number":    filters.DocumentNumber,
+			"article_number":     filters.ArticleNumber,
+			"retrieved_chunks":   0,
+			"max_similarity":     0.0,
+			"guard_decision":     string(decision.Decision),
+			"prompt_type_used":   decision.PromptType,
+			"smalltalk_detected": true,
+			"retrieval": fiber.Map{
+				"chunks":         0,
+				"max_similarity": 0.0,
+			},
+			"guard": fiber.Map{
+				"decision": string(decision.Decision),
+			},
+			"prompt": fiber.Map{
+				"type": decision.PromptType,
+			},
+		}, []string{})
+		traceSvc.OnResponse(decision.Message, true, traceLatency(started))
+		return c.JSON(fiber.Map{"answer": decision.Message, "citations": []answer.Citation{}, "trace_id": traceID})
+	}
 	results, err := h.Retriever.Search(ctx, question, retrieval.SearchOptions{
 		TopK:            filters.TopK,
 		Domain:          filters.Domain,
