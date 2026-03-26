@@ -12,6 +12,7 @@ const (
 	DecisionAllow            Decision = "ALLOW"
 	DecisionRefuse           Decision = "REFUSE"
 	DecisionAskClarification Decision = "ASK_CLARIFICATION"
+	DecisionFallbackLLM      Decision = "FALLBACK_LLM"
 )
 
 type RetrievalResult struct {
@@ -27,17 +28,28 @@ func NewEngine() *Engine {
 
 func (e *Engine) Decide(result RetrievalResult, policy domain.AIGuardPolicy) Decision {
 	if result.RetrievedChunks == 0 {
-		if strings.EqualFold(strings.TrimSpace(policy.OnEmptyRetrieval), "refuse") {
-			return DecisionRefuse
-		}
+		return decideByAction(policy.OnEmptyRetrieval)
 	}
+
+	if policy.MinRetrievedChunks > 0 && result.RetrievedChunks < policy.MinRetrievedChunks {
+		return decideByAction(policy.OnLowConfidence)
+	}
+
 	if result.MaxSimilarity < policy.MinSimilarityScore {
-		switch strings.TrimSpace(strings.ToLower(policy.OnLowConfidence)) {
-		case "ask_clarification":
-			return DecisionAskClarification
-		case "refuse":
-			return DecisionRefuse
-		}
+		return decideByAction(policy.OnLowConfidence)
 	}
 	return DecisionAllow
+}
+
+func decideByAction(action string) Decision {
+	switch strings.TrimSpace(strings.ToLower(action)) {
+	case "ask_clarification":
+		return DecisionAskClarification
+	case "fallback_llm":
+		return DecisionFallbackLLM
+	case "refuse":
+		return DecisionRefuse
+	default:
+		return DecisionAllow
+	}
 }

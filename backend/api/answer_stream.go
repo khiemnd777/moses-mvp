@@ -201,7 +201,7 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 		}
 		streamedAnswer := state.builder.String()
 		finalAnswer := streamedAnswer
-		finalAnswer, finalCitations, _, validationErr := h.validateGeneratedLegalAnswer(streamCtx, finalAnswer, sources)
+		finalAnswer, finalCitations, valid, validationErr := h.validateGeneratedLegalAnswerForStream(streamCtx, finalAnswer, sources)
 		if validationErr != nil {
 			traceSvc.OnError(validationErr, traceLatency(started))
 			observability.LogError(streamCtx, h.Logger, "stream", "stream validation error", map[string]interface{}{
@@ -209,6 +209,9 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 				"error":      validationErr.Error(),
 			})
 			return
+		}
+		if !valid {
+			finalCitations = []answer.Citation{}
 		}
 
 		if strings.HasPrefix(finalAnswer, streamedAnswer) {

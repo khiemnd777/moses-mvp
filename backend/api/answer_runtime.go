@@ -39,7 +39,7 @@ type guardDecision struct {
 }
 
 func (d guardDecision) Allow() bool {
-	return d.Decision == guard.DecisionAllow
+	return d.Decision == guard.DecisionAllow || d.Decision == guard.DecisionFallbackLLM
 }
 
 type retrievalDiagnostics struct {
@@ -118,6 +118,8 @@ func (h *Handler) evaluateGuardPolicy(ctx context.Context, policy domain.AIGuard
 
 	switch decision {
 	case guard.DecisionAllow:
+		return guardDecision{Decision: decision, PromptType: legalAnswerPromptType}, diag, nil
+	case guard.DecisionFallbackLLM:
 		return guardDecision{Decision: decision, PromptType: legalAnswerPromptType}, diag, nil
 	case guard.DecisionAskClarification:
 		promptCfg, usedType, found, err := h.getRuntimePromptExact(ctx, legalClarificationPromptType)

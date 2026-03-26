@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +21,15 @@ import (
 	"github.com/khiemnd777/legal_api/pkg/logging"
 )
 
-type fakeStore struct{}
+var fakeStoreClock = time.Now().UTC()
+
+type fakeStore struct {
+	mu              sync.Mutex
+	conversationSeq int
+	messageSeq      int
+	createdMessages []domain.Message
+	updatedMessages []domain.Message
+}
 
 func (f *fakeStore) CreateDocType(ctx context.Context, code, name string, formJSON []byte, formHash string) (string, error) {
 	return "", nil
@@ -94,7 +103,17 @@ func (f *fakeStore) EnqueueIngestJob(ctx context.Context, documentVersionID stri
 func (f *fakeStore) LogQuery(ctx context.Context, q string) error     { return nil }
 func (f *fakeStore) LogAnswer(ctx context.Context, q, a string) error { return nil }
 func (f *fakeStore) CreateConversation(ctx context.Context, title string, userID *string) (domain.Conversation, error) {
-	return domain.Conversation{}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.conversationSeq++
+	now := fakeStoreClock.Add(time.Duration(f.conversationSeq) * time.Second)
+	return domain.Conversation{
+		ID:        fmt.Sprintf("conversation-%d", f.conversationSeq),
+		Title:     title,
+		UserID:    userID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, nil
 }
 func (f *fakeStore) ListConversations(ctx context.Context, userID *string) ([]domain.Conversation, error) {
 	return nil, nil
@@ -107,9 +126,31 @@ func (f *fakeStore) DeleteConversation(ctx context.Context, id string) (bool, er
 }
 func (f *fakeStore) UpdateConversationTitle(ctx context.Context, id, title string) error { return nil }
 func (f *fakeStore) CreateMessage(ctx context.Context, conversationID, role, content string, citationsJSON []byte, traceID *string) (domain.Message, error) {
-	return domain.Message{}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.messageSeq++
+	now := fakeStoreClock.Add(time.Duration(f.messageSeq) * time.Second)
+	msg := domain.Message{
+		ID:             fmt.Sprintf("message-%d", f.messageSeq),
+		ConversationID: conversationID,
+		Role:           role,
+		Content:        content,
+		CitationsJSON:  citationsJSON,
+		TraceID:        traceID,
+		CreatedAt:      now,
+	}
+	f.createdMessages = append(f.createdMessages, msg)
+	return msg, nil
 }
 func (f *fakeStore) UpdateMessage(ctx context.Context, id, content string, citationsJSON []byte, traceID *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updatedMessages = append(f.updatedMessages, domain.Message{
+		ID:            id,
+		Content:       content,
+		CitationsJSON: citationsJSON,
+		TraceID:       traceID,
+	})
 	return nil
 }
 func (f *fakeStore) ListMessagesByConversation(ctx context.Context, conversationID string) ([]domain.Message, error) {
@@ -159,7 +200,7 @@ func (f *fakeStore) ListEnabledAIPrompts(ctx context.Context) ([]domain.AIPrompt
 		{
 			Name:         "legal_refusal_prompt",
 			PromptType:   "legal_refusal",
-			SystemPrompt: "Không đủ căn cứ pháp lý trong dữ liệu truy xuất để trả lời chắc chắn.",
+			SystemPrompt: "Không đủ căn cứ pháp lý trong dữ liệu truy xuất để đưa ra kết luận.",
 			Temperature:  0.2,
 			MaxTokens:    64,
 			Retry:        0,
@@ -168,7 +209,7 @@ func (f *fakeStore) ListEnabledAIPrompts(ctx context.Context) ([]domain.AIPrompt
 		{
 			Name:         "legal_clarification_prompt",
 			PromptType:   "legal_clarification",
-			SystemPrompt: "Vui lòng cung cấp thêm dữ kiện pháp lý hoặc điều khoản cụ thể cần tra cứu.",
+			SystemPrompt: "Chưa đủ căn cứ pháp lý rõ ràng. Vui lòng bổ sung tình huống, văn bản, hoặc điều khoản cần tra cứu.",
 			Temperature:  0.2,
 			MaxTokens:    64,
 			Retry:        0,
@@ -266,7 +307,7 @@ func (m *memoryTraceRepo) snapshot(traceID string) observability.TraceRecord {
 func TestAnswerGeneratesTraceIDAndPersistsTrace(t *testing.T) {
 	openAIServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Day la cau tra loi"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"1. Vấn đề pháp lý\nXác định thủ tục ly hôn.\n\n2. Áp dụng pháp luật\nĐiều 1.\n\n3. Phân tích pháp lý\nNội dung phù hợp với nguồn truy xuất.\n\n4. Kết luận\nCó thể tiếp tục theo quy định tại Điều 1."}}]}`))
 	}))
 	defer openAIServer.Close()
 
@@ -361,6 +402,139 @@ func TestAnswerStreamGeneratesTraceIDAndPersistsTrace(t *testing.T) {
 	}
 	if record.ResponseText == "" {
 		t.Fatalf("expected stream response text to be stored")
+	}
+}
+
+func TestValidateGeneratedLegalAnswerPreservesTerminalMessages(t *testing.T) {
+	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
+
+	refusal := "Không đủ căn cứ pháp lý trong dữ liệu truy xuất để đưa ra kết luận."
+	got, citations, valid, err := handler.validateGeneratedLegalAnswer(context.Background(), refusal, nil)
+	if err != nil {
+		t.Fatalf("validate refusal: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected refusal to be treated as valid")
+	}
+	if got != refusal {
+		t.Fatalf("expected refusal to be preserved, got %q", got)
+	}
+	if len(citations) != 0 {
+		t.Fatalf("expected no citations for refusal, got %d", len(citations))
+	}
+
+	clarification := "Chưa đủ căn cứ pháp lý rõ ràng. Vui lòng bổ sung tình huống, văn bản, hoặc điều khoản cần tra cứu."
+	got, citations, valid, err = handler.validateGeneratedLegalAnswer(context.Background(), clarification, nil)
+	if err != nil {
+		t.Fatalf("validate clarification: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected clarification to be treated as valid")
+	}
+	if got != clarification {
+		t.Fatalf("expected clarification to be preserved, got %q", got)
+	}
+	if len(citations) != 0 {
+		t.Fatalf("expected no citations for clarification, got %d", len(citations))
+	}
+}
+
+func TestValidateGeneratedLegalAnswerPreservesParaphrasedTerminalMessages(t *testing.T) {
+	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
+
+	refusal := "Nguồn hiện có chưa đủ căn cứ pháp lý để kết luận chắc chắn về vấn đề này."
+	got, citations, valid, err := handler.validateGeneratedLegalAnswer(context.Background(), refusal, nil)
+	if err != nil {
+		t.Fatalf("validate paraphrased refusal: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected paraphrased refusal to be treated as valid")
+	}
+	if got != refusal {
+		t.Fatalf("expected paraphrased refusal to be preserved, got %q", got)
+	}
+	if len(citations) != 0 {
+		t.Fatalf("expected no citations for paraphrased refusal, got %d", len(citations))
+	}
+
+	clarification := "Vui lòng bổ sung thêm tình huống cụ thể hoặc điều khoản cần tra cứu để tôi đối chiếu đúng nguồn."
+	got, citations, valid, err = handler.validateGeneratedLegalAnswer(context.Background(), clarification, nil)
+	if err != nil {
+		t.Fatalf("validate paraphrased clarification: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected paraphrased clarification to be treated as valid")
+	}
+	if got != clarification {
+		t.Fatalf("expected paraphrased clarification to be preserved, got %q", got)
+	}
+	if len(citations) != 0 {
+		t.Fatalf("expected no citations for paraphrased clarification, got %d", len(citations))
+	}
+}
+
+func TestStreamMessagePersistsStreamedContentOnValidationFailure(t *testing.T) {
+	openAIServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"Day la cau tra loi khong dung format.\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer openAIServer.Close()
+
+	store := &fakeStore{}
+	traceRepo := newMemoryTraceRepo()
+	client := answer.NewClient("test-key", "gpt-test")
+	client.BaseURL = openAIServer.URL
+	handler := NewHandler(
+		store,
+		nil,
+		nil,
+		&fakeRetriever{results: []retrieval.Result{{
+			ChunkID:    "chunk-1",
+			Text:       "Dieu 1 ve thu tuc ly hon",
+			VersionID:  "version-1",
+			ChunkIndex: 1,
+			Score:      0.99,
+			Metadata: map[string]interface{}{
+				"document_title": "Luat Hon nhan va Gia dinh",
+				"article":        "1",
+				"document_type":  "law",
+			},
+		}}},
+		client,
+		map[string]string{"default": "Tra loi bang tieng Viet."},
+		nil,
+		logging.New(),
+		traceRepo,
+	)
+
+	app := fiber.New()
+	app.Post("/messages/stream", answerTraceMiddleware(logging.New()), handler.StreamMessage)
+
+	req := httptest.NewRequest(http.MethodPost, "/messages/stream", strings.NewReader(`{"content":"thu tuc ly hon","filters":{"tone":"default","topK":5,"effectiveStatus":"active","domain":"marriage_family","docType":"law"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, int(5*time.Second/time.Millisecond))
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	raw := string(body)
+
+	if !strings.Contains(raw, "Day la cau tra loi khong dung format.") {
+		t.Fatalf("expected streamed content in response, got %s", raw)
+	}
+	if strings.Contains(raw, "Không đủ căn cứ pháp lý trong dữ liệu truy xuất để đưa ra kết luận.") {
+		t.Fatalf("did not expect refusal fallback in streamed response, got %s", raw)
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.updatedMessages) == 0 {
+		t.Fatalf("expected message update to be recorded")
+	}
+	if got := store.updatedMessages[len(store.updatedMessages)-1].Content; got != "Day la cau tra loi khong dung format." {
+		t.Fatalf("expected persisted content to match streamed content, got %q", got)
 	}
 }
 

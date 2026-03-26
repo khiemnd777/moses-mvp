@@ -329,11 +329,14 @@ func (h *Handler) StreamMessage(c *fiber.Ctx) error {
 		}
 		streamedContent := state.builder.String()
 		finalContent := streamedContent
-		finalContent, finalCitations, _, validationErr := h.validateGeneratedLegalAnswer(streamCtx, finalContent, sources)
+		finalContent, finalCitations, valid, validationErr := h.validateGeneratedLegalAnswerForStream(streamCtx, finalContent, sources)
 		if validationErr != nil {
 			traceSvc.OnError(validationErr, traceLatency(started))
 			h.logChatLifecycle(streamCtx, "chat_stream_validation_error", convo.ID, assistantMsg.ID, traceID, results, llmStarted, finalContent, validationErr)
 			return
+		}
+		if !valid {
+			finalCitations = []answer.Citation{}
 		}
 		if strings.HasPrefix(finalContent, streamedContent) {
 			if delta := strings.TrimPrefix(finalContent, streamedContent); delta != "" {
@@ -614,7 +617,13 @@ func (h *Handler) prepareChatResponse(
 	started time.Time,
 ) ([]retrieval.Result, []answer.ConversationMessage, guardDecision, []answer.Source, answer.PromptBuildOptions, *answer.Service, error) {
 	normalizedFilters := normalizeChatFilters(filters, h.Tones)
-	results, err := h.Retriever.Search(ctx, content, retrieval.SearchOptions{
+	history, err := h.loadConversationHistory(ctx, conversationID)
+	if err != nil {
+		return nil, nil, guardDecision{}, nil, answer.PromptBuildOptions{}, nil, err
+	}
+
+	retrievalQuery := retrieval.BuildFollowUpSearchQuery(history, content)
+	results, err := h.Retriever.Search(ctx, retrievalQuery, retrieval.SearchOptions{
 		TopK:            normalizedFilters.TopK,
 		Domain:          normalizedFilters.Domain,
 		DocType:         normalizedFilters.DocType,
@@ -642,8 +651,9 @@ func (h *Handler) prepareChatResponse(
 		}
 	}
 
-	traceSvc.OnRetrieval(retrieval.UnderstandQuery(content).NormalizedQuery, map[string]interface{}{
+	traceSvc.OnRetrieval(retrieval.UnderstandQuery(retrievalQuery).NormalizedQuery, map[string]interface{}{
 		"conversation_id":     conversationID,
+		"retrieval_query":     retrievalQuery,
 		"legal_domain":        normalizedFilters.Domain,
 		"document_type":       normalizedFilters.DocType,
 		"effective_status":    normalizedFilters.EffectiveStatus,
@@ -665,10 +675,6 @@ func (h *Handler) prepareChatResponse(
 			"type": promptTypeUsed,
 		},
 	}, traceChunkIDs(results))
-	history, err := h.loadConversationHistory(ctx, conversationID)
-	if err != nil {
-		return nil, nil, guardDecision{}, nil, answer.PromptBuildOptions{}, nil, err
-	}
 	if !decision.Allow() {
 		return results, history, decision, nil, answer.PromptBuildOptions{}, nil, nil
 	}
