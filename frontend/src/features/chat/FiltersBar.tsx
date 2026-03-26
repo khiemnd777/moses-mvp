@@ -5,7 +5,7 @@ import { useChatStore } from './chatStore';
 
 const FiltersBar = () => {
   const { filters, updateFilters } = useChatStore();
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   return (
     <div className="filters-bar">

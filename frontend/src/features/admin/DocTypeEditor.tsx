@@ -6,6 +6,7 @@ import Input from '@/shared/Input';
 import Select from '@/shared/Select';
 import type { DocType, DocTypeForm } from '@/core/types';
 import { canonicalStringify, sha256 } from '@/core/utils';
+import { useDisplayModeStore } from '@/app/displayModeStore';
 
 const safeParseForm = (value: string): DocTypeForm | null => {
   try {
@@ -134,6 +135,7 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
   const [hash, setHash] = useState<string>('');
   const [error, setError] = useState<string | undefined>();
   const [valueMapErrors, setValueMapErrors] = useState<Record<string, string>>({});
+  const resolvedDisplayMode = useDisplayModeStore((state) => state.resolvedDisplayMode);
 
   useEffect(() => {
     setFormText(JSON.stringify(docType.form, null, 2));
@@ -395,7 +397,13 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
       <label>
         <div className="label">Doc Type Form (JSON)</div>
         <div className="codemirror">
-          <CodeMirror value={formText} height="320px" extensions={jsonExtensions} onChange={setFormText} />
+          <CodeMirror
+            value={formText}
+            height="320px"
+            theme={resolvedDisplayMode}
+            extensions={jsonExtensions}
+            onChange={setFormText}
+          />
         </div>
       </label>
       <div className="badge">Canonical JSON Hash: {hash}</div>
