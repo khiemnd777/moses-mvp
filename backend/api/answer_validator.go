@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -36,7 +37,7 @@ func (h *Handler) validateGeneratedLegalAnswerWithMode(ctx context.Context, answ
 		return originalText, []answer.Citation{}, true, nil
 	}
 
-	citations := validateCitations(citationsFromSources(sources))
+	citations := deriveSupportingCitations(trimmedText, sources)
 	if !hasLegalAnswerStructure(trimmedText) {
 		return h.validationFailureResponse(ctx, originalText, replaceOnFailure)
 	}
@@ -167,6 +168,127 @@ func normalizeArticleNumber(value string) string {
 
 func normalizeValidationText(value string) string {
 	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
+}
+
+func deriveSupportingCitations(answerText string, sources []answer.Source) []answer.Citation {
+	if len(sources) == 0 {
+		return []answer.Citation{}
+	}
+
+	normalizedAnswer := normalizeValidationText(answerText)
+	if normalizedAnswer == "" || isNegativeFindingAnswer(normalizedAnswer) {
+		return []answer.Citation{}
+	}
+
+	documentMentions := extractDocumentMentions(normalizedAnswer, sources)
+	referencedArticles := extractArticleRefs(answerText)
+	if len(referencedArticles) == 0 && len(documentMentions) == 0 {
+		return []answer.Citation{}
+	}
+
+	candidates := citationsFromSources(sources)
+	filtered := make([]answer.Citation, 0, len(candidates))
+	for _, citation := range candidates {
+		if citationSupportsAnswer(citation, referencedArticles, documentMentions) {
+			filtered = append(filtered, citation)
+		}
+	}
+	return validateCitations(filtered)
+}
+
+func extractDocumentMentions(normalizedAnswer string, sources []answer.Source) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, src := range sources {
+		for _, candidate := range citationDocumentKeys(src.Citation) {
+			if candidate == "" {
+				continue
+			}
+			if strings.Contains(normalizedAnswer, candidate) {
+				out[candidate] = struct{}{}
+			}
+		}
+	}
+	return out
+}
+
+func citationSupportsAnswer(citation answer.Citation, referencedArticles map[string]struct{}, documentMentions map[string]struct{}) bool {
+	hasDocumentMentions := len(documentMentions) > 0
+	hasArticleRefs := len(referencedArticles) > 0
+
+	citationArticle := normalizeArticleNumber(citation.Article)
+	articleMatch := !hasArticleRefs
+	if hasArticleRefs {
+		_, articleMatch = referencedArticles[citationArticle]
+	}
+
+	documentMatch := !hasDocumentMentions
+	if hasDocumentMentions {
+		for _, key := range citationDocumentKeys(citation) {
+			if _, ok := documentMentions[key]; ok {
+				documentMatch = true
+				break
+			}
+		}
+	}
+
+	switch {
+	case hasArticleRefs && hasDocumentMentions:
+		return articleMatch && documentMatch
+	case hasArticleRefs:
+		return articleMatch
+	case hasDocumentMentions:
+		return documentMatch
+	default:
+		return false
+	}
+}
+
+func citationDocumentKeys(c answer.Citation) []string {
+	keys := make([]string, 0, 4)
+	for _, candidate := range []string{c.LawName, c.DocumentTitle, c.DocumentNumber, c.DocumentType} {
+		normalized := normalizeValidationText(candidate)
+		if normalized != "" {
+			keys = append(keys, normalized)
+		}
+	}
+	sort.Strings(keys)
+	out := keys[:0]
+	seen := map[string]struct{}{}
+	for _, key := range keys {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
+}
+
+func isNegativeFindingAnswer(normalizedAnswer string) bool {
+	phrases := []string{
+		"không có quy định cụ thể",
+		"khong co quy dinh cu the",
+		"không có quy định nào",
+		"khong co quy dinh nao",
+		"không đề cập trực tiếp",
+		"khong de cap truc tiep",
+		"không đề cập gián tiếp",
+		"khong de cap gian tiep",
+		"không tìm thấy căn cứ",
+		"khong tim thay can cu",
+		"không thể xác định cụ thể",
+		"khong the xac dinh cu the",
+		"không thể kết luận",
+		"khong the ket luan",
+		"chưa đủ căn cứ pháp lý",
+		"chua du can cu phap ly",
+	}
+	for _, phrase := range phrases {
+		if strings.Contains(normalizedAnswer, normalizeValidationText(phrase)) {
+			return true
+		}
+	}
+	return false
 }
 
 func looksLikeLegalRefusal(normalized string) bool {

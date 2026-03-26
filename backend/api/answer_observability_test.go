@@ -473,6 +473,108 @@ func TestValidateGeneratedLegalAnswerPreservesParaphrasedTerminalMessages(t *tes
 	}
 }
 
+func TestValidateGeneratedLegalAnswerReturnsOnlySupportingCitations(t *testing.T) {
+	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
+	sources := []answer.Source{
+		{
+			Text: "Điều 54. Hòa giải tại Tòa án.",
+			Citation: answer.Citation{
+				ID:            "citation-54",
+				ChunkID:       "chunk-54",
+				DocumentTitle: "Luật Hôn nhân và gia đình 2014",
+				LawName:       "Luật Hôn nhân và gia đình 2014",
+				DocumentType:  "LUẬT",
+				Article:       "54",
+			},
+		},
+		{
+			Text: "Điều 95. Điều kiện mang thai hộ vì mục đích nhân đạo.",
+			Citation: answer.Citation{
+				ID:            "citation-95",
+				ChunkID:       "chunk-95",
+				DocumentTitle: "Luật Hôn nhân và gia đình 2014",
+				LawName:       "Luật Hôn nhân và gia đình 2014",
+				DocumentType:  "LUẬT",
+				Article:       "95",
+			},
+		},
+		{
+			Text: "Điều 6. Giá trị pháp lý của Giấy khai sinh.",
+			Citation: answer.Citation{
+				ID:             "citation-6",
+				ChunkID:        "chunk-6",
+				DocumentTitle:  "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				LawName:        "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				DocumentNumber: "123/2015/NĐ-CP",
+				DocumentType:   "NGHỊ ĐỊNH",
+				Article:        "6",
+			},
+		},
+	}
+
+	answerText := "1. Vấn đề pháp lý\nXác định quyền, nghĩa vụ sau ly hôn.\n\n2. Áp dụng pháp luật\nLuật Hôn nhân và gia đình 2014: Điều 54.\n\n3. Phân tích pháp lý\nĐiều 54 Luật Hôn nhân và gia đình 2014 yêu cầu hòa giải tại Tòa án.\n\n4. Kết luận\nÁp dụng Điều 54 Luật Hôn nhân và gia đình 2014."
+	got, citations, valid, err := handler.validateGeneratedLegalAnswer(context.Background(), answerText, sources)
+	if err != nil {
+		t.Fatalf("validate legal answer: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected answer to be valid")
+	}
+	if got != answerText {
+		t.Fatalf("expected answer to be preserved, got %q", got)
+	}
+	if len(citations) != 1 {
+		t.Fatalf("expected exactly 1 supporting citation, got %d", len(citations))
+	}
+	if citations[0].Article != "54" {
+		t.Fatalf("expected citation article 54, got %q", citations[0].Article)
+	}
+}
+
+func TestValidateGeneratedLegalAnswerSuppressesCitationsForNegativeFinding(t *testing.T) {
+	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
+	sources := []answer.Source{
+		{
+			Text: "Điều 95. Điều kiện mang thai hộ vì mục đích nhân đạo.",
+			Citation: answer.Citation{
+				ID:            "citation-95",
+				ChunkID:       "chunk-95",
+				DocumentTitle: "Luật Hôn nhân và gia đình 2014",
+				LawName:       "Luật Hôn nhân và gia đình 2014",
+				DocumentType:  "LUẬT",
+				Article:       "95",
+			},
+		},
+		{
+			Text: "Điều 6. Giá trị pháp lý của Giấy khai sinh.",
+			Citation: answer.Citation{
+				ID:             "citation-6",
+				ChunkID:        "chunk-6",
+				DocumentTitle:  "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				LawName:        "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				DocumentNumber: "123/2015/NĐ-CP",
+				DocumentType:   "NGHỊ ĐỊNH",
+				Article:        "6",
+			},
+		},
+	}
+
+	answerText := "1. Vấn đề pháp lý\nTư vấn về các khoản chi phí phát sinh sau khi ly hôn.\n\n2. Pháp luật áp dụng\nCác văn bản pháp luật được cung cấp không có quy định cụ thể về các khoản chi phí phát sinh hậu ly hôn.\n\n3. Phân tích pháp lý\nTrong các tài liệu pháp lý được trích dẫn, không có quy định nào đề cập trực tiếp hoặc gián tiếp về các khoản chi phí phát sinh sau khi ly hôn.\n\n4. Kết luận\nPháp luật hiện hành trong các tài liệu được cung cấp không quy định cụ thể về các khoản chi phí phát sinh sau khi ly hôn."
+	got, citations, valid, err := handler.validateGeneratedLegalAnswer(context.Background(), answerText, sources)
+	if err != nil {
+		t.Fatalf("validate negative finding answer: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected negative finding answer to stay valid")
+	}
+	if got != answerText {
+		t.Fatalf("expected answer to be preserved, got %q", got)
+	}
+	if len(citations) != 0 {
+		t.Fatalf("expected no citations for negative finding answer, got %d", len(citations))
+	}
+}
+
 func TestStreamMessagePersistsStreamedContentOnValidationFailure(t *testing.T) {
 	openAIServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

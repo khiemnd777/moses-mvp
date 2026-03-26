@@ -4,12 +4,16 @@ import { useChatStore } from './chatStore';
 
 const ChatInput = () => {
   const [value, setValue] = useState('');
-  const { sendMessage, stopStreaming, retryLast, createConversation, isStreaming } = useChatStore();
+  const { sendMessage, isStreaming } = useChatStore();
 
   const handleSend = async () => {
-    await sendMessage(value);
+    const trimmed = value.trim();
+    if (!trimmed || isStreaming) return;
+    await sendMessage(trimmed);
     setValue('');
   };
+
+  const canSend = value.trim().length > 0 && !isStreaming;
 
   return (
     <div className="chat-input">
@@ -19,19 +23,16 @@ const ChatInput = () => {
         placeholder="Hỏi bất kỳ điều gì về luật Việt Nam..."
         value={value}
         onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            void handleSend();
+          }
+        }}
       />
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Button onClick={handleSend} disabled={isStreaming}>
+        <Button onClick={() => void handleSend()} disabled={!canSend}>
           Gửi câu hỏi
-        </Button>
-        <Button variant="secondary" onClick={stopStreaming} disabled={!isStreaming}>
-          Dừng stream
-        </Button>
-        <Button variant="outline" onClick={retryLast}>
-          Gửi lại
-        </Button>
-        <Button variant="outline" onClick={() => void createConversation()}>
-          Chat mới
         </Button>
       </div>
     </div>
