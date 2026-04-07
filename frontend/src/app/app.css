@@ -988,6 +988,18 @@ a {
   white-space: nowrap;
 }
 
+.documents-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(280px, 3fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.documents-actions-panel {
+  position: sticky;
+  top: 96px;
+}
+
 .chat-stream-indicator {
   margin-top: 16px;
   color: var(--accent);
@@ -1103,6 +1115,14 @@ a {
 
   .doc-types-list-item {
     grid-template-columns: 1fr;
+  }
+
+  .documents-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .documents-actions-panel {
+    position: static;
   }
 
 }

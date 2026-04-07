@@ -166,104 +166,106 @@ const DocumentsPage = () => {
 
   return (
     <>
-      <Panel title="Documents">
-        <div className="grid">
-          <div className="grid two">
-            <Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
-            <Input label="Doc Type Code" value={docTypeCode} onChange={(e) => setDocTypeCode(e.target.value)} />
-          </div>
-          <Button onClick={handleCreate}>Create Document</Button>
-          {loading && <div className="badge">Loading documents...</div>}
-          {error && <div className="badge">Error: {error}</div>}
+      <div className="documents-layout">
+        <Panel title="Documents">
           <div className="grid">
-            {documents.map((doc) => (
-              <div
-                key={doc.id}
-                className={`source-item admin-list-item ${lastOpenedDocumentId === doc.id ? 'selected' : ''}`}
-              >
-                <div className="admin-list-item-header">
-                  <div className="admin-list-item-title-row">
-                    <button
-                      className="button outline admin-list-item-button"
-                      onClick={() => setLastOpenedDocumentId(doc.id)}
+            <div className="grid two">
+              <Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
+              <Input label="Doc Type Code" value={docTypeCode} onChange={(e) => setDocTypeCode(e.target.value)} />
+            </div>
+            <Button onClick={handleCreate}>Create Document</Button>
+            {loading && <div className="badge">Loading documents...</div>}
+            {error && <div className="badge">Error: {error}</div>}
+            <div className="grid">
+              {documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  className={`source-item admin-list-item ${lastOpenedDocumentId === doc.id ? 'selected' : ''}`}
+                >
+                  <div className="admin-list-item-header">
+                    <div className="admin-list-item-title-row">
+                      <button
+                        className="button outline admin-list-item-button"
+                        onClick={() => setLastOpenedDocumentId(doc.id)}
+                      >
+                        <span className="admin-list-item-title">{doc.title}</span>
+                      </button>
+                      <Button
+                        variant="outline"
+                        className="admin-copy-button"
+                        onClick={() => void handleCopyTitle(doc.title)}
+                        disabled={!doc.title}
+                      >
+                        {copiedTitle === doc.title ? 'Copied' : 'Copy'}
+                      </Button>
+                    </div>
+                    <Button
+                      variant={lastOpenedDocumentId === doc.id ? 'secondary' : 'outline'}
+                      onClick={() => void handleDeleteDocument(doc.id)}
+                      disabled={deletingDocumentId === doc.id}
                     >
-                      <span className="admin-list-item-title">{doc.title}</span>
-                    </button>
+                      {deletingDocumentId === doc.id ? 'Deleting...' : 'Delete'}
+                    </Button>
+                  </div>
+                  <div className="admin-list-item-subtitle-row">
+                    <span className="admin-list-item-subtitle">{doc.doc_type_code || '-'}</span>
                     <Button
                       variant="outline"
                       className="admin-copy-button"
-                      onClick={() => void handleCopyTitle(doc.title)}
-                      disabled={!doc.title}
+                      onClick={() => void handleCopyDocTypeCode(doc.doc_type_code)}
+                      disabled={!doc.doc_type_code}
                     >
-                      {copiedTitle === doc.title ? 'Copied' : 'Copy'}
+                      {copiedDocTypeCode === doc.doc_type_code ? 'Copied' : 'Copy'}
                     </Button>
                   </div>
-                  <Button
-                    variant={lastOpenedDocumentId === doc.id ? 'secondary' : 'outline'}
-                    onClick={() => void handleDeleteDocument(doc.id)}
-                    disabled={deletingDocumentId === doc.id}
-                  >
-                    {deletingDocumentId === doc.id ? 'Deleting...' : 'Delete'}
-                  </Button>
-                </div>
-                <div className="admin-list-item-subtitle-row">
-                  <span className="admin-list-item-subtitle">{doc.doc_type_code || '-'}</span>
-                  <Button
-                    variant="outline"
-                    className="admin-copy-button"
-                    onClick={() => void handleCopyDocTypeCode(doc.doc_type_code)}
-                    disabled={!doc.doc_type_code}
-                  >
-                    {copiedDocTypeCode === doc.doc_type_code ? 'Copied' : 'Copy'}
-                  </Button>
-                </div>
-                <div className="grid admin-document-assets">
-                  {doc.assets && doc.assets.length > 0 ? (
-                    doc.assets.map((asset, index) => (
-                      <div key={`${doc.id}-${asset.file_name}-${asset.created_at ?? index}`} className="admin-document-asset">
-                        <div className="admin-document-asset-title">{asset.file_name}</div>
-                        <div className="badge">Type: {asset.content_type || '-'}</div>
-                        <div className="badge">Created: {formatCreatedAt(asset.created_at)}</div>
-                        <div className="badge">
-                          Versions:{' '}
-                          {asset.versions && asset.versions.length > 0
-                            ? asset.versions.map((version) => `v${version}`).join(', ')
-                            : '-'}
+                  <div className="grid admin-document-assets">
+                    {doc.assets && doc.assets.length > 0 ? (
+                      doc.assets.map((asset, index) => (
+                        <div key={`${doc.id}-${asset.file_name}-${asset.created_at ?? index}`} className="admin-document-asset">
+                          <div className="admin-document-asset-title">{asset.file_name}</div>
+                          <div className="badge">Type: {asset.content_type || '-'}</div>
+                          <div className="badge">Created: {formatCreatedAt(asset.created_at)}</div>
+                          <div className="badge">
+                            Versions:{' '}
+                            {asset.versions && asset.versions.length > 0
+                              ? asset.versions.map((version) => `v${version}`).join(', ')
+                              : '-'}
+                          </div>
                         </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="badge">No uploaded files.</div>
-                  )}
+                      ))
+                    ) : (
+                      <div className="badge">No uploaded files.</div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
-      </Panel>
-      <Panel title="Document Actions">
-        {selected ? (
-          <div className="grid">
-            <div className="badge">Selected: {selected.title}</div>
-            {selectedAssetId && <div className="badge">Last Asset ID: {selectedAssetId}</div>}
-            {selectedVersionId && <div className="badge">Last Version ID: {selectedVersionId}</div>}
-            <div className="grid two">
-              <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-              <Button onClick={handleUpload} disabled={!file || uploading}>
-                {uploading ? 'Uploading...' : 'Upload Asset'}
+        </Panel>
+        <Panel title="Document Actions" className="documents-actions-panel">
+          {selected ? (
+            <div className="grid">
+              <div className="badge">Selected: {selected.title}</div>
+              {selectedAssetId && <div className="badge">Last Asset ID: {selectedAssetId}</div>}
+              {selectedVersionId && <div className="badge">Last Version ID: {selectedVersionId}</div>}
+              <div className="grid two">
+                <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+                <Button onClick={handleUpload} disabled={!file || uploading}>
+                  {uploading ? 'Uploading...' : 'Upload Asset'}
+                </Button>
+              </div>
+              <Button variant="secondary" onClick={handleCreateVersion} disabled={!selectedAssetId || creatingVersion}>
+                {creatingVersion ? 'Creating...' : 'Create Version'}
+              </Button>
+              <Button onClick={handleEnqueue} disabled={!selectedAssetId || !selectedVersionId || enqueuing}>
+                {enqueuing ? 'Enqueuing...' : 'Enqueue Ingest Job'}
               </Button>
             </div>
-            <Button variant="secondary" onClick={handleCreateVersion} disabled={!selectedAssetId || creatingVersion}>
-              {creatingVersion ? 'Creating...' : 'Create Version'}
-            </Button>
-            <Button onClick={handleEnqueue} disabled={!selectedAssetId || !selectedVersionId || enqueuing}>
-              {enqueuing ? 'Enqueuing...' : 'Enqueue Ingest Job'}
-            </Button>
-          </div>
-        ) : (
-          <div className="badge">Select a document to manage assets and ingest jobs.</div>
-        )}
-      </Panel>
+          ) : (
+            <div className="badge">Select a document to manage assets and ingest jobs.</div>
+          )}
+        </Panel>
+      </div>
     </>
   );
 };
