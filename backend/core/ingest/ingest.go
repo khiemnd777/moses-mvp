@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/khiemnd777/legal_api/core/legalmeta"
 	"github.com/khiemnd777/legal_api/core/schema"
 	"github.com/khiemnd777/legal_api/domain"
 	"github.com/khiemnd777/legal_api/infra"
@@ -398,10 +399,10 @@ func extractMetadata(text string, rules []schema.MappingRule) map[string]interfa
 func buildRetrievalPayload(meta map[string]interface{}) map[string]interface{} {
 	out := map[string]interface{}{}
 	if v := pickMetaString(meta, "legal_domain", "domain", "legal_field"); v != "" {
-		out["legal_domain"] = strings.ToLower(v)
+		out["legal_domain"] = legalmeta.NormalizeLegalDomain(v)
 	}
 	if v := pickMetaString(meta, "document_type", "doc_type", "type"); v != "" {
-		out["document_type"] = strings.ToLower(v)
+		out["document_type"] = legalmeta.NormalizeDocumentType(v)
 	}
 	if v := pickMetaString(meta, "document_number", "number", "doc_number", "so_hieu"); v != "" {
 		out["document_number"] = v
@@ -410,7 +411,7 @@ func buildRetrievalPayload(meta map[string]interface{}) map[string]interface{} {
 		out["article_number"] = v
 	}
 	if v := pickMetaString(meta, "effective_status", "status", "hieu_luc"); v != "" {
-		out["effective_status"] = strings.ToLower(v)
+		out["effective_status"] = legalmeta.NormalizeEffectiveStatus(v)
 	}
 	if v := pickMetaString(meta, "issuing_authority", "authority", "co_quan_ban_hanh"); v != "" {
 		out["issuing_authority"] = v

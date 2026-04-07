@@ -1,6 +1,10 @@
 package api
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/khiemnd777/legal_api/core/legalmeta"
+)
 
 const (
 	defaultTopK            = 5
@@ -42,8 +46,8 @@ func normalizeAnswerRequest(req answerRequest, tones map[string]string) (string,
 		filters.Tone = req.Tone
 	}
 
-	filters.Domain = strings.TrimSpace(filters.Domain)
-	filters.DocType = strings.TrimSpace(filters.DocType)
+	filters.Domain = legalmeta.NormalizeLegalDomain(filters.Domain)
+	filters.DocType = legalmeta.NormalizeDocumentType(filters.DocType)
 	filters.DocumentNumber = strings.TrimSpace(filters.DocumentNumber)
 	filters.ArticleNumber = strings.TrimSpace(filters.ArticleNumber)
 	filters.EffectiveStatus = normalizeEffectiveStatus(filters.EffectiveStatus)
@@ -77,7 +81,7 @@ func normalizeTone(tone string, tones map[string]string) string {
 }
 
 func normalizeEffectiveStatus(status string) string {
-	status = strings.ToLower(strings.TrimSpace(status))
+	status = legalmeta.NormalizeEffectiveStatus(status)
 	if status == "archived" {
 		return status
 	}

@@ -104,6 +104,32 @@ func TestBuildFollowUpSearchQueryWithRepresentativeProfilesPreservesDivorceConte
 	}
 }
 
+func TestBuildRetrievalPlanNormalizesExplicitFilters(t *testing.T) {
+	cfg := defaultRuntimeConfig()
+	qu := QueryUnderstandingResult{
+		OriginalQuery:   "Thủ tục ly dị.",
+		NormalizedQuery: "thu tuc ly di",
+		CanonicalQuery:  "thu tuc ly hon",
+		Filters:         map[string]interface{}{},
+	}
+
+	got := BuildRetrievalPlan(qu, SearchOptions{
+		Domain:          "Hôn nhân và gia đình",
+		DocType:         "BỘ LUẬT",
+		EffectiveStatus: "có hiệu lực thi hành từ ngày 01 tháng 01 năm 2017",
+	}, cfg)
+
+	if got.Filters["legal_domain"] != "marriage_family" {
+		t.Fatalf("legal_domain = %#v, want marriage_family", got.Filters["legal_domain"])
+	}
+	if got.Filters["document_type"] != "law" {
+		t.Fatalf("document_type = %#v, want law", got.Filters["document_type"])
+	}
+	if got.Filters["effective_status"] != "active" {
+		t.Fatalf("effective_status = %#v, want active", got.Filters["effective_status"])
+	}
+}
+
 func mustMarshalQueryForm(t *testing.T, form schema.DocTypeForm) []byte {
 	t.Helper()
 	raw, err := json.Marshal(form)

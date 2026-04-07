@@ -258,6 +258,28 @@ a) Ý thứ nhất
 	}
 }
 
+func TestBuildRetrievalPayloadNormalizesCanonicalFilterFields(t *testing.T) {
+	meta := map[string]interface{}{
+		"legal_domain":     "Hôn nhân và gia đình",
+		"document_type":    "BỘ LUẬT",
+		"effective_status": "có hiệu lực thi hành từ ngày 01 tháng 01 năm 2017",
+		"document_number":  "91/2015/QH13",
+		"article_number":   "56",
+	}
+
+	got := buildRetrievalPayload(meta)
+	want := map[string]interface{}{
+		"legal_domain":     "marriage_family",
+		"document_type":    "law",
+		"effective_status": "active",
+		"document_number":  "91/2015/QH13",
+		"article_number":   "56",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("buildRetrievalPayload() = %#v, want %#v", got, want)
+	}
+}
+
 func TestVectorPointID_IsDeterministicUUID(t *testing.T) {
 	t.Parallel()
 

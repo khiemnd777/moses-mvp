@@ -14,6 +14,7 @@ import (
 	"github.com/khiemnd777/legal_api/core/answer"
 	"github.com/khiemnd777/legal_api/core/guard"
 	"github.com/khiemnd777/legal_api/core/ingest"
+	"github.com/khiemnd777/legal_api/core/legalmeta"
 	cprompt "github.com/khiemnd777/legal_api/core/prompt"
 	"github.com/khiemnd777/legal_api/core/retrieval"
 	"github.com/khiemnd777/legal_api/core/schema"
@@ -607,8 +608,8 @@ func (h *Handler) Search(c *fiber.Ctx) error {
 		req.TopK = 5
 	}
 	req.Filters.TopK = req.TopK
-	req.Filters.Domain = strings.TrimSpace(req.Filters.Domain)
-	req.Filters.DocType = strings.TrimSpace(req.Filters.DocType)
+	req.Filters.Domain = legalmeta.NormalizeLegalDomain(req.Filters.Domain)
+	req.Filters.DocType = legalmeta.NormalizeDocumentType(req.Filters.DocType)
 	req.Filters.DocumentNumber = strings.TrimSpace(req.Filters.DocumentNumber)
 	req.Filters.ArticleNumber = strings.TrimSpace(req.Filters.ArticleNumber)
 	req.Filters.EffectiveStatus = normalizeEffectiveStatus(req.Filters.EffectiveStatus)

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/khiemnd777/legal_api/core/legalmeta"
 	"github.com/khiemnd777/legal_api/domain"
 	"github.com/khiemnd777/legal_api/infra"
 	"github.com/khiemnd777/legal_api/observability"
@@ -449,13 +450,13 @@ func BuildRetrievalPlan(qu QueryUnderstandingResult, opts SearchOptions, cfg run
 	}
 
 	filters := copyMap(qu.Filters)
-	if v := strings.TrimSpace(strings.ToLower(opts.Domain)); v != "" {
+	if v := legalmeta.NormalizeLegalDomain(opts.Domain); v != "" {
 		filters["legal_domain"] = v
 	}
-	if v := strings.TrimSpace(strings.ToLower(opts.DocType)); v != "" {
+	if v := legalmeta.NormalizeDocumentType(opts.DocType); v != "" {
 		filters["document_type"] = v
 	}
-	if v := strings.TrimSpace(strings.ToLower(opts.EffectiveStatus)); v != "" {
+	if v := legalmeta.NormalizeEffectiveStatus(opts.EffectiveStatus); v != "" {
 		filters["effective_status"] = v
 	}
 	if v := strings.TrimSpace(opts.DocumentNumber); v != "" {
