@@ -66,7 +66,7 @@ const Navbar = () => {
         Tuning
       </NavLink>
       <NavLink to="/how-to-rag" className={({ isActive }) => (isActive ? 'active' : '')}>
-        How to RAG
+        Documents
       </NavLink>
       <button
         type="button"
