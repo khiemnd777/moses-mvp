@@ -114,7 +114,7 @@ const DocTypesPage = () => {
   return (
     <>
       <div className="doc-types-layout">
-        <Panel title="Doc Types" className="doc-types-sidebar-panel">
+        <Panel title="Doc Types" className="doc-types-sidebar-panel" bodyClassName="doc-types-sidebar-panel-body">
           <div className="grid">
             {loading && <div className="badge">Loading...</div>}
             {error && <div className="badge">{error}</div>}

@@ -967,6 +967,14 @@ a {
 .doc-types-sidebar-panel {
   position: sticky;
   top: 96px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 120px);
+  overflow: hidden;
+}
+
+.doc-types-sidebar-panel-body {
+  overflow-y: auto;
 }
 
 .doc-types-list-item {
@@ -1111,6 +1119,12 @@ a {
 
   .doc-types-sidebar-panel {
     position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .doc-types-sidebar-panel-body {
+    overflow: visible;
   }
 
   .doc-types-list-item {
