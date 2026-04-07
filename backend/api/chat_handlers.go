@@ -617,21 +617,29 @@ func (h *Handler) prepareChatResponse(
 	started time.Time,
 ) ([]retrieval.Result, []answer.ConversationMessage, guardDecision, []answer.Source, answer.PromptBuildOptions, *answer.Service, error) {
 	normalizedFilters := normalizeChatFilters(filters, h.Tones)
-	if decision, ok := detectSmallTalkDecision(content); ok {
-		traceSvc.OnRetrieval(retrieval.UnderstandQuery(content).NormalizedQuery, map[string]interface{}{
-			"conversation_id":     conversationID,
-			"retrieval_query":     content,
-			"legal_domain":        normalizedFilters.Domain,
-			"document_type":       normalizedFilters.DocType,
-			"effective_status":    normalizedFilters.EffectiveStatus,
-			"document_number":     normalizedFilters.DocumentNumber,
-			"article_number":      normalizedFilters.ArticleNumber,
-			"retrieved_chunks":    0,
-			"max_similarity":      0.0,
-			"guard_decision":      string(decision.Decision),
-			"prompt_type_used":    decision.PromptType,
-			"retrieved_chunk_ids": []string{},
-			"smalltalk_detected":  true,
+	initialAnalysis := h.Retriever.AnalyzeQuery(ctx, content)
+	if decision, ok, normalized := h.detectSmallTalkDecision(ctx, content); ok {
+		traceSvc.OnRetrieval(normalized, map[string]interface{}{
+			"canonical_query":       initialAnalysis.CanonicalQuery,
+			"matched_doc_types":     initialAnalysis.MatchedDocTypes,
+			"matched_query_rules":   initialAnalysis.MatchedQueryRules,
+			"query_profile_hashes":  initialAnalysis.QueryProfileHashes,
+			"inferred_intent":       initialAnalysis.Intent,
+			"inferred_legal_domain": initialAnalysis.LegalDomain,
+			"inferred_legal_topic":  initialAnalysis.LegalTopic,
+			"conversation_id":       conversationID,
+			"retrieval_query":       content,
+			"legal_domain":          normalizedFilters.Domain,
+			"document_type":         normalizedFilters.DocType,
+			"effective_status":      normalizedFilters.EffectiveStatus,
+			"document_number":       normalizedFilters.DocumentNumber,
+			"article_number":        normalizedFilters.ArticleNumber,
+			"retrieved_chunks":      0,
+			"max_similarity":        0.0,
+			"guard_decision":        string(decision.Decision),
+			"prompt_type_used":      decision.PromptType,
+			"retrieved_chunk_ids":   []string{},
+			"smalltalk_detected":    true,
 			"retrieval": fiber.Map{
 				"chunks":         0,
 				"max_similarity": 0.0,
@@ -650,7 +658,8 @@ func (h *Handler) prepareChatResponse(
 		return nil, nil, guardDecision{}, nil, answer.PromptBuildOptions{}, nil, err
 	}
 
-	retrievalQuery := retrieval.BuildFollowUpSearchQuery(history, content)
+	retrievalQuery := h.Retriever.BuildFollowUpSearchQuery(ctx, history, content)
+	retrievalAnalysis := h.Retriever.AnalyzeQuery(ctx, retrievalQuery)
 	results, err := h.Retriever.Search(ctx, retrievalQuery, retrieval.SearchOptions{
 		TopK:            normalizedFilters.TopK,
 		Domain:          normalizedFilters.Domain,
@@ -679,19 +688,26 @@ func (h *Handler) prepareChatResponse(
 		}
 	}
 
-	traceSvc.OnRetrieval(retrieval.UnderstandQuery(retrievalQuery).NormalizedQuery, map[string]interface{}{
-		"conversation_id":     conversationID,
-		"retrieval_query":     retrievalQuery,
-		"legal_domain":        normalizedFilters.Domain,
-		"document_type":       normalizedFilters.DocType,
-		"effective_status":    normalizedFilters.EffectiveStatus,
-		"document_number":     normalizedFilters.DocumentNumber,
-		"article_number":      normalizedFilters.ArticleNumber,
-		"retrieved_chunks":    diag.RetrievedChunks,
-		"max_similarity":      diag.MaxSimilarity,
-		"guard_decision":      string(decision.Decision),
-		"prompt_type_used":    promptTypeUsed,
-		"retrieved_chunk_ids": traceChunkIDs(results),
+	traceSvc.OnRetrieval(retrievalAnalysis.NormalizedQuery, map[string]interface{}{
+		"canonical_query":       retrievalAnalysis.CanonicalQuery,
+		"matched_doc_types":     retrievalAnalysis.MatchedDocTypes,
+		"matched_query_rules":   retrievalAnalysis.MatchedQueryRules,
+		"query_profile_hashes":  retrievalAnalysis.QueryProfileHashes,
+		"inferred_intent":       retrievalAnalysis.Intent,
+		"inferred_legal_domain": retrievalAnalysis.LegalDomain,
+		"inferred_legal_topic":  retrievalAnalysis.LegalTopic,
+		"conversation_id":       conversationID,
+		"retrieval_query":       retrievalQuery,
+		"legal_domain":          normalizedFilters.Domain,
+		"document_type":         normalizedFilters.DocType,
+		"effective_status":      normalizedFilters.EffectiveStatus,
+		"document_number":       normalizedFilters.DocumentNumber,
+		"article_number":        normalizedFilters.ArticleNumber,
+		"retrieved_chunks":      diag.RetrievedChunks,
+		"max_similarity":        diag.MaxSimilarity,
+		"guard_decision":        string(decision.Decision),
+		"prompt_type_used":      promptTypeUsed,
+		"retrieved_chunk_ids":   traceChunkIDs(results),
 		"retrieval": fiber.Map{
 			"chunks":         diag.RetrievedChunks,
 			"max_similarity": diag.MaxSimilarity,

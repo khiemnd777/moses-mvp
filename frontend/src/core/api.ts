@@ -12,6 +12,7 @@ import type {
   DeleteByFilterRequest,
   DeleteByFilterResponse,
   DocType,
+  DocTypeQueryDebugResponse,
   DocTypeForm,
   DocumentItem,
   IngestJob,
@@ -161,6 +162,11 @@ export const updateDocType = async (id: string, payload: { form: DocTypeForm }) 
 
 export const deleteDocType = async (id: string) => {
   await api.delete(`/doc-types/${id}`);
+};
+
+export const debugDocTypeQuery = async (payload: { query: string; top_k?: number; filters?: Record<string, unknown> }) => {
+  const { data } = await api.post('/doc-types/query-debug', payload);
+  return data as DocTypeQueryDebugResponse;
 };
 
 export const listDocuments = async () => {

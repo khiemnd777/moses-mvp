@@ -4,7 +4,7 @@ import { json } from '@codemirror/lang-json';
 import Button from '@/shared/Button';
 import Input from '@/shared/Input';
 import Select from '@/shared/Select';
-import type { DocType, DocTypeForm } from '@/core/types';
+import type { DocType, DocTypeForm, QueryProfile } from '@/core/types';
 import { canonicalStringify, sha256 } from '@/core/utils';
 import { useDisplayModeStore } from '@/app/displayModeStore';
 
@@ -100,6 +100,36 @@ const parseValueMapInput = (raw: string): Record<string, string> | undefined => 
   }
 };
 
+const parseCsv = (raw: string): string[] => {
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const parseJsonObjectArray = <T,>(raw: string): T[] => {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+};
+
+const normalizeQueryProfile = (profile?: QueryProfile): QueryProfile => ({
+  canonical_terms: profile?.canonical_terms || [],
+  synonym_groups: profile?.synonym_groups || [],
+  query_signals: profile?.query_signals || [],
+  intent_rules: profile?.intent_rules || [],
+  domain_topic_rules: profile?.domain_topic_rules || [],
+  legal_signal_rules: profile?.legal_signal_rules || [],
+  followup_markers: profile?.followup_markers || [],
+  preferred_doc_types: profile?.preferred_doc_types || [],
+  routing_priority: profile?.routing_priority ?? 0
+});
+
 const normalizeForm = (form: DocTypeForm, docType: DocType): DocTypeForm => ({
   ...syncMappingRulesWithMetadata(form),
   version: form.version || 1,
@@ -127,7 +157,8 @@ const withDefaults = (form: DocTypeForm | null | undefined, docType: DocType): D
   reindex_policy: {
     on_content_change: form?.reindex_policy?.on_content_change ?? true,
     on_form_change: form?.reindex_policy?.on_form_change ?? true
-  }
+  },
+  query_profile: normalizeQueryProfile(form?.query_profile)
 });
 
 const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType: DocType) => void }) => {
@@ -391,6 +422,125 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
           ))}
           <div className="badge">
             Mapping rules are auto-aligned to metadata fields.
+          </div>
+        </div>
+      </PanelSection>
+      <PanelSection title="Query Profile">
+        <div className="grid">
+          <Input
+            label="query_profile.canonical_terms (csv)"
+            value={(displayedForm.query_profile?.canonical_terms || []).join(', ')}
+            disabled={!isFormValid}
+            onChange={(e) =>
+              updateForm((draft) => {
+                draft.query_profile = normalizeQueryProfile(draft.query_profile);
+                draft.query_profile.canonical_terms = parseCsv(e.target.value);
+              })
+            }
+          />
+          <Input
+            label="query_profile.query_signals (csv)"
+            value={(displayedForm.query_profile?.query_signals || []).join(', ')}
+            disabled={!isFormValid}
+            onChange={(e) =>
+              updateForm((draft) => {
+                draft.query_profile = normalizeQueryProfile(draft.query_profile);
+                draft.query_profile.query_signals = parseCsv(e.target.value);
+              })
+            }
+          />
+          <Input
+            label="query_profile.legal_signal_rules (csv)"
+            value={(displayedForm.query_profile?.legal_signal_rules || []).join(', ')}
+            disabled={!isFormValid}
+            onChange={(e) =>
+              updateForm((draft) => {
+                draft.query_profile = normalizeQueryProfile(draft.query_profile);
+                draft.query_profile.legal_signal_rules = parseCsv(e.target.value);
+              })
+            }
+          />
+          <Input
+            label="query_profile.followup_markers (csv)"
+            value={(displayedForm.query_profile?.followup_markers || []).join(', ')}
+            disabled={!isFormValid}
+            onChange={(e) =>
+              updateForm((draft) => {
+                draft.query_profile = normalizeQueryProfile(draft.query_profile);
+                draft.query_profile.followup_markers = parseCsv(e.target.value);
+              })
+            }
+          />
+          <Input
+            label="query_profile.preferred_doc_types (csv)"
+            value={(displayedForm.query_profile?.preferred_doc_types || []).join(', ')}
+            disabled={!isFormValid}
+            onChange={(e) =>
+              updateForm((draft) => {
+                draft.query_profile = normalizeQueryProfile(draft.query_profile);
+                draft.query_profile.preferred_doc_types = parseCsv(e.target.value);
+              })
+            }
+          />
+          <Input
+            label="query_profile.routing_priority"
+            type="number"
+            value={String(displayedForm.query_profile?.routing_priority ?? 0)}
+            disabled={!isFormValid}
+            onChange={(e) =>
+              updateForm((draft) => {
+                draft.query_profile = normalizeQueryProfile(draft.query_profile);
+                draft.query_profile.routing_priority = Number.parseInt(e.target.value, 10) || 0;
+              })
+            }
+          />
+          <label>
+            <div className="label">query_profile.synonym_groups (JSON)</div>
+            <textarea
+              className="textarea"
+              rows={6}
+              value={JSON.stringify(displayedForm.query_profile?.synonym_groups || [], null, 2)}
+              disabled={!isFormValid}
+              onChange={(e) =>
+                updateForm((draft) => {
+                  draft.query_profile = normalizeQueryProfile(draft.query_profile);
+                  draft.query_profile.synonym_groups = parseJsonObjectArray(e.target.value || '[]');
+                })
+              }
+            />
+          </label>
+          <label>
+            <div className="label">query_profile.intent_rules (JSON)</div>
+            <textarea
+              className="textarea"
+              rows={6}
+              value={JSON.stringify(displayedForm.query_profile?.intent_rules || [], null, 2)}
+              disabled={!isFormValid}
+              onChange={(e) =>
+                updateForm((draft) => {
+                  draft.query_profile = normalizeQueryProfile(draft.query_profile);
+                  draft.query_profile.intent_rules = parseJsonObjectArray(e.target.value || '[]');
+                })
+              }
+            />
+          </label>
+          <label>
+            <div className="label">query_profile.domain_topic_rules (JSON)</div>
+            <textarea
+              className="textarea"
+              rows={6}
+              value={JSON.stringify(displayedForm.query_profile?.domain_topic_rules || [], null, 2)}
+              disabled={!isFormValid}
+              onChange={(e) =>
+                updateForm((draft) => {
+                  draft.query_profile = normalizeQueryProfile(draft.query_profile);
+                  draft.query_profile.domain_topic_rules = parseJsonObjectArray(e.target.value || '[]');
+                })
+              }
+            />
+          </label>
+          <div className="badge">
+            Query understanding for chat, answer, follow-up, and smalltalk now comes from DOC TYPE query_profile.
           </div>
         </div>
       </PanelSection>

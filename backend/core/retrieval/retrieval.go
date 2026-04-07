@@ -30,6 +30,12 @@ type Service struct {
 	cfgLoadedAt time.Time
 	cfgReady    bool
 	cfgTTL      time.Duration
+
+	queryMu       sync.RWMutex
+	queryCache    queryUnderstandingIndex
+	queryLoadedAt time.Time
+	queryReady    bool
+	queryTTL      time.Duration
 }
 
 type Embedder interface {
@@ -46,13 +52,18 @@ type SearchOptions struct {
 }
 
 type QueryUnderstandingResult struct {
-	OriginalQuery   string                 `json:"original_query"`
-	NormalizedQuery string                 `json:"normalized_query"`
-	LegalDomain     string                 `json:"legal_domain"`
-	LegalTopic      string                 `json:"legal_topic"`
-	Intent          string                 `json:"intent"`
-	Entities        map[string]interface{} `json:"entities"`
-	Filters         map[string]interface{} `json:"filters"`
+	OriginalQuery      string                 `json:"original_query"`
+	NormalizedQuery    string                 `json:"normalized_query"`
+	CanonicalQuery     string                 `json:"canonical_query"`
+	LegalDomain        string                 `json:"legal_domain"`
+	LegalTopic         string                 `json:"legal_topic"`
+	Intent             string                 `json:"intent"`
+	Entities           map[string]interface{} `json:"entities"`
+	Filters            map[string]interface{} `json:"filters"`
+	MatchedDocTypes    []string               `json:"matched_doc_types,omitempty"`
+	MatchedQueryRules  []string               `json:"matched_query_rules,omitempty"`
+	QueryProfileHashes map[string]string      `json:"query_profile_hashes,omitempty"`
+	PreferredDocTypes  []string               `json:"preferred_doc_types,omitempty"`
 }
 
 type RetrievalPlan struct {
@@ -130,9 +141,13 @@ type rerankWeights struct {
 type observabilityEvent struct {
 	OriginalQuery            string                 `json:"original_query"`
 	NormalizedQuery          string                 `json:"normalized_query"`
+	CanonicalQuery           string                 `json:"canonical_query"`
 	LegalDomain              string                 `json:"legal_domain"`
 	LegalTopic               string                 `json:"legal_topic"`
 	Intent                   string                 `json:"intent"`
+	MatchedDocTypes          []string               `json:"matched_doc_types,omitempty"`
+	MatchedQueryRules        []string               `json:"matched_query_rules,omitempty"`
+	QueryProfileHashes       map[string]string      `json:"query_profile_hashes,omitempty"`
 	AppliedFilters           map[string]interface{} `json:"applied_filters"`
 	TopK                     int                    `json:"top_k"`
 	InitialVectorHits        []string               `json:"initial_vector_hits"`
@@ -145,19 +160,27 @@ type observabilityEvent struct {
 }
 
 func (s *Service) Search(ctx context.Context, query string, opts SearchOptions) ([]Result, error) {
+	debug, err := s.DebugSearch(ctx, query, opts)
+	if err != nil {
+		return nil, err
+	}
+	return debug.Results, nil
+}
+
+func (s *Service) DebugSearch(ctx context.Context, query string, opts SearchOptions) (QueryDebugResult, error) {
 	started := time.Now()
 	cfg := s.loadRuntimeConfig(ctx)
-	qu := UnderstandQuery(query)
+	qu := s.AnalyzeQuery(ctx, query)
 	plan := BuildRetrievalPlan(qu, opts, cfg)
 
 	vectors, err := s.Embed.Embed(ctx, []string{plan.QueryText})
 	if err != nil {
-		return nil, err
+		return QueryDebugResult{}, err
 	}
 	qdrantFilter := buildQdrantFilter(plan.Filters, plan.PreferredDocTypes)
-	matches, err := s.searchWithFallback(ctx, vectors[0], plan.CandidatePoolLimit, qdrantFilter)
+	matches, fallbackStages, err := s.searchWithFallback(ctx, vectors[0], plan.CandidatePoolLimit, qdrantFilter)
 	if err != nil {
-		return nil, err
+		return QueryDebugResult{}, err
 	}
 
 	initialHitIDs := make([]string, 0, len(matches))
@@ -172,7 +195,7 @@ func (s *Service) Search(ctx context.Context, query string, opts SearchOptions) 
 
 	chunks, err := s.Store.GetChunksByIDs(ctx, chunkIDs)
 	if err != nil {
-		return nil, err
+		return QueryDebugResult{}, err
 	}
 	chunkByID := make(map[string]domain.Chunk, len(chunks))
 	for _, chunk := range chunks {
@@ -217,7 +240,7 @@ func (s *Service) Search(ctx context.Context, query string, opts SearchOptions) 
 	if plan.ExpandAdjacent && plan.AdjacentWindow > 0 && len(selected) > 0 {
 		selected, err = s.expandAdjacent(ctx, selected, plan.AdjacentWindow)
 		if err != nil {
-			return nil, err
+			return QueryDebugResult{}, err
 		}
 	}
 
@@ -225,9 +248,13 @@ func (s *Service) Search(ctx context.Context, query string, opts SearchOptions) 
 	event := observabilityEvent{
 		OriginalQuery:            qu.OriginalQuery,
 		NormalizedQuery:          qu.NormalizedQuery,
+		CanonicalQuery:           qu.CanonicalQuery,
 		LegalDomain:              qu.LegalDomain,
 		LegalTopic:               qu.LegalTopic,
 		Intent:                   qu.Intent,
+		MatchedDocTypes:          qu.MatchedDocTypes,
+		MatchedQueryRules:        qu.MatchedQueryRules,
+		QueryProfileHashes:       qu.QueryProfileHashes,
 		AppliedFilters:           plan.Filters,
 		TopK:                     plan.TopK,
 		InitialVectorHits:        initialHitIDs,
@@ -244,9 +271,13 @@ func (s *Service) Search(ctx context.Context, query string, opts SearchOptions) 
 	observability.LogInfo(ctx, s.logger(), "retrieval", "retrieval completed", map[string]interface{}{
 		"original_query":              event.OriginalQuery,
 		"normalized_query":            event.NormalizedQuery,
+		"canonical_query":             event.CanonicalQuery,
 		"legal_domain":                event.LegalDomain,
 		"legal_topic":                 event.LegalTopic,
 		"intent":                      event.Intent,
+		"matched_doc_types":           event.MatchedDocTypes,
+		"matched_query_rules":         event.MatchedQueryRules,
+		"query_profile_hashes":        event.QueryProfileHashes,
 		"applied_filters":             event.AppliedFilters,
 		"top_k":                       event.TopK,
 		"initial_vector_hits":         event.InitialVectorHits,
@@ -258,12 +289,20 @@ func (s *Service) Search(ctx context.Context, query string, opts SearchOptions) 
 		"rerank_latency_ms":           event.RerankLatencyMS,
 	})
 
-	return limited, nil
+	return QueryDebugResult{
+		Analysis:          qu,
+		RequestedFilters:  opts,
+		AppliedFilters:    plan.Filters,
+		PreferredDocTypes: plan.PreferredDocTypes,
+		FallbackStages:    fallbackStages,
+		Results:           limited,
+	}, nil
 }
 
-func (s *Service) searchWithFallback(ctx context.Context, vector []float64, limit int, filter *infra.SearchFilter) ([]infra.SearchResult, error) {
+func (s *Service) searchWithFallback(ctx context.Context, vector []float64, limit int, filter *infra.SearchFilter) ([]infra.SearchResult, []FallbackStage, error) {
 	if filter == nil {
-		return s.Qdrant.Search(ctx, vector, limit, nil)
+		results, err := s.Qdrant.Search(ctx, vector, limit, nil)
+		return results, []FallbackStage{{Attempt: 1, Reason: "no_filter", HitCount: len(results)}}, err
 	}
 
 	attempts := []*infra.SearchFilter{
@@ -273,26 +312,81 @@ func (s *Service) searchWithFallback(ctx context.Context, vector []float64, limi
 		withoutDocumentType(withoutLegalDomain(withoutEffectiveStatus(filter))),
 		nil,
 	}
+	reasons := []string{
+		"initial",
+		"removed_effective_status",
+		"removed_legal_domain",
+		"removed_document_type",
+		"no_filter",
+	}
+	stages := make([]FallbackStage, 0, len(attempts))
 
 	for idx, candidate := range uniqueSearchFilters(attempts) {
 		matches, err := s.Qdrant.Search(ctx, vector, limit, candidate)
 		if err != nil {
-			return nil, err
+			return nil, stages, err
 		}
+		stage := FallbackStage{
+			Attempt:  idx + 1,
+			Reason:   reasons[min(idx, len(reasons)-1)],
+			HitCount: len(matches),
+		}
+		if candidate != nil {
+			stage.LegalDomain = append([]string{}, candidate.LegalDomain...)
+			stage.DocumentType = append([]string{}, candidate.DocumentType...)
+			stage.EffectiveStatus = append([]string{}, candidate.EffectiveStatus...)
+		}
+		stages = append(stages, stage)
 		if len(matches) > 0 {
 			if idx > 0 {
 				observability.LogInfo(ctx, s.logger(), "retrieval", "retrieval fallback applied", map[string]interface{}{
 					"attempt":      idx + 1,
+					"reason":       stage.Reason,
 					"legal_domain": candidateValueCount(candidate.LegalDomain),
 					"doc_type":     candidateValueCount(candidate.DocumentType),
 					"status":       candidateValueCount(candidate.EffectiveStatus),
 				})
 			}
-			return matches, nil
+			return matches, stages, nil
 		}
 	}
 
-	return []infra.SearchResult{}, nil
+	return []infra.SearchResult{}, stages, nil
+}
+
+func uniqueSearchFilters(filters []*infra.SearchFilter) []*infra.SearchFilter {
+	out := make([]*infra.SearchFilter, 0, len(filters))
+	seen := map[string]struct{}{}
+	for _, filter := range filters {
+		key := searchFilterKey(filter)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, filter)
+	}
+	return out
+}
+
+func searchFilterKey(filter *infra.SearchFilter) string {
+	if filter == nil {
+		return "nil"
+	}
+	return strings.Join([]string{
+		strings.Join(filter.LegalDomain, ","),
+		strings.Join(filter.DocumentType, ","),
+		strings.Join(filter.EffectiveStatus, ","),
+		strings.Join(filter.DocumentNumber, ","),
+		strings.Join(filter.ArticleNumber, ","),
+	}, "|")
+}
+
+func candidateValueCount(values []string) int {
+	return len(values)
+}
+
+func UnderstandQuery(query string) QueryUnderstandingResult {
+	return analyzeQueryWithIndex(query, queryUnderstandingIndex{Profiles: map[string]docTypeQueryProfile{}})
 }
 
 func withoutEffectiveStatus(filter *infra.SearchFilter) *infra.SearchFilter {
@@ -334,86 +428,6 @@ func withoutDocumentType(filter *infra.SearchFilter) *infra.SearchFilter {
 	}
 }
 
-func uniqueSearchFilters(filters []*infra.SearchFilter) []*infra.SearchFilter {
-	out := make([]*infra.SearchFilter, 0, len(filters))
-	seen := map[string]struct{}{}
-	for _, filter := range filters {
-		key := searchFilterKey(filter)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, filter)
-	}
-	return out
-}
-
-func searchFilterKey(filter *infra.SearchFilter) string {
-	if filter == nil {
-		return "nil"
-	}
-	return strings.Join([]string{
-		strings.Join(filter.LegalDomain, ","),
-		strings.Join(filter.DocumentType, ","),
-		strings.Join(filter.EffectiveStatus, ","),
-		strings.Join(filter.DocumentNumber, ","),
-		strings.Join(filter.ArticleNumber, ","),
-	}, "|")
-}
-
-func candidateValueCount(values []string) int {
-	return len(values)
-}
-
-func UnderstandQuery(query string) QueryUnderstandingResult {
-	normalized := normalizeQuery(query)
-	result := QueryUnderstandingResult{
-		OriginalQuery:   query,
-		NormalizedQuery: normalized,
-		Entities:        map[string]interface{}{},
-		Filters:         map[string]interface{}{},
-	}
-
-	if strings.Contains(normalized, "ly hon") {
-		result.LegalDomain = "marriage_family"
-		result.LegalTopic = "divorce"
-		result.Intent = "legal_procedure_advice"
-	}
-	if result.LegalDomain == "" && strings.Contains(normalized, "hop dong") {
-		result.LegalDomain = "civil"
-		result.LegalTopic = "contract"
-		result.Intent = "legal_rights_obligations"
-	}
-	if result.Intent == "" {
-		if strings.Contains(normalized, "thu tuc") || strings.Contains(normalized, "ho so") {
-			result.Intent = "legal_procedure_advice"
-		} else {
-			result.Intent = "legal_basis_lookup"
-		}
-	}
-
-	if year := extractYear(normalized, `\b(19\d{2}|20\d{2})\b`); year > 0 {
-		result.Entities["year"] = year
-	}
-	if n := extractInt(normalized, `(\d+)\s*con`); n > 0 {
-		result.Entities["children_count"] = n
-	}
-	if strings.Contains(normalized, "nha") {
-		result.Entities["property_type"] = "house"
-	}
-	if strings.Contains(normalized, "dieu ") {
-		if v := extractString(normalized, `dieu\s+([0-9]+)`); v != "" {
-			result.Entities["article_number"] = v
-			result.Filters["article_number"] = v
-		}
-	}
-
-	if result.LegalDomain != "" {
-		result.Filters["legal_domain"] = result.LegalDomain
-	}
-	return result
-}
-
 func BuildRetrievalPlan(qu QueryUnderstandingResult, opts SearchOptions, cfg runtimeConfig) RetrievalPlan {
 	topK := opts.TopK
 	if topK <= 0 {
@@ -423,7 +437,10 @@ func BuildRetrievalPlan(qu QueryUnderstandingResult, opts SearchOptions, cfg run
 		topK = 5
 	}
 
-	queryText := qu.NormalizedQuery
+	queryText := qu.CanonicalQuery
+	if queryText == "" {
+		queryText = qu.NormalizedQuery
+	}
 	if queryText == "" {
 		queryText = normalizeQuery(qu.OriginalQuery)
 	}
@@ -452,6 +469,9 @@ func BuildRetrievalPlan(qu QueryUnderstandingResult, opts SearchOptions, cfg run
 	}
 
 	preferred := append([]string{}, cfg.PreferredDocTypes...)
+	if len(qu.PreferredDocTypes) > 0 {
+		preferred = append([]string{}, qu.PreferredDocTypes...)
+	}
 	if domainName := pickString(filters, "legal_domain"); domainName != "" {
 		if domainCfg, ok := cfg.DomainDefaults[domainName]; ok {
 			if domainCfg.TopK > 0 {
@@ -712,6 +732,15 @@ func (s *Service) InvalidateRuntimeConfigCache() {
 	s.cfgLoadedAt = time.Time{}
 	s.cfgCache = runtimeConfig{}
 	s.cfgMu.Unlock()
+	s.InvalidateQueryUnderstandingCache()
+}
+
+func (s *Service) InvalidateQueryUnderstandingCache() {
+	s.queryMu.Lock()
+	s.queryReady = false
+	s.queryLoadedAt = time.Time{}
+	s.queryCache = queryUnderstandingIndex{}
+	s.queryMu.Unlock()
 }
 
 func parseDomainDefaults(raw map[string]interface{}) map[string]domainRuntimeDefault {

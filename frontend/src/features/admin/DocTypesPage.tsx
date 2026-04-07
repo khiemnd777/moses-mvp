@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
 import Input from '@/shared/Input';
-import { createDocType, deleteDocType, listDocTypes, unwrapError, updateDocType } from '@/core/api';
-import type { DocType, DocTypeForm } from '@/core/types';
+import { createDocType, debugDocTypeQuery, deleteDocType, listDocTypes, unwrapError, updateDocType } from '@/core/api';
+import type { DocType, DocTypeForm, DocTypeQueryDebugResponse } from '@/core/types';
 import { useAdminStore } from './adminStore';
 import DocTypeEditor from './DocTypeEditor';
 
@@ -13,7 +13,24 @@ const buildDefaultForm = (code: string, name: string): DocTypeForm => ({
   segment_rules: { strategy: 'legal_article', hierarchy: 'article', normalization: 'basic' },
   metadata_schema: { fields: [{ name: 'title', type: 'string' }] },
   mapping_rules: [{ field: 'title', regex: '^Title\\s*:\\s*(.+)$', group: 1 }],
-  reindex_policy: { on_content_change: true, on_form_change: true }
+  reindex_policy: { on_content_change: true, on_form_change: true },
+  query_profile: {
+    canonical_terms: ['ly hon', 'thu tuc', 'hop dong'],
+    synonym_groups: [{ canonical: 'ly hon', aliases: ['ly dị', 'ly di', 'ly hôn'] }],
+    query_signals: ['ly hon', 'thu tuc', 'ho so', 'hop dong'],
+    intent_rules: [
+      { intent: 'legal_procedure_advice', terms: ['thu tuc', 'ho so'] },
+      { intent: 'legal_rights_obligations', terms: ['hop dong'] }
+    ],
+    domain_topic_rules: [
+      { legal_domain: 'marriage_family', legal_topic: 'divorce', terms: ['ly hon'] },
+      { legal_domain: 'civil', legal_topic: 'contract', terms: ['hop dong'] }
+    ],
+    legal_signal_rules: ['ly hon', 'thu tuc', 'ho so', 'hop dong', 'quy dinh', 'phap ly', 'dieu', 'khoan'],
+    followup_markers: ['cam on', 'hoi them', 'them nua', 'tiep theo', 'truong hop nay', 'van de nay', 'viec nay', 'noi tren'],
+    preferred_doc_types: ['law', 'resolution', 'decree'],
+    routing_priority: 100
+  }
 });
 
 const DocTypesPage = () => {
@@ -23,6 +40,8 @@ const DocTypesPage = () => {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | undefined>();
+  const [debugQuery, setDebugQuery] = useState('');
+  const [debugOutput, setDebugOutput] = useState<DocTypeQueryDebugResponse | null>(null);
   const { selectedDocTypeId, setSelectedDocTypeId } = useAdminStore();
 
   const fetchDocTypes = async () => {
@@ -97,6 +116,17 @@ const DocTypesPage = () => {
 
   const selected = docTypes.find((doc) => doc.id === selectedDocTypeId);
 
+  const handleDebugQuery = async () => {
+    if (!debugQuery.trim()) return;
+    try {
+      const data = await debugDocTypeQuery({ query: debugQuery.trim(), top_k: 5 });
+      setDebugOutput(data);
+      setError(undefined);
+    } catch (err) {
+      setError(unwrapError(err));
+    }
+  };
+
   return (
     <>
       <Panel title="Doc Types">
@@ -134,6 +164,19 @@ const DocTypesPage = () => {
       </Panel>
       <Panel title="Dynamic Form Editor">
         {selected ? <DocTypeEditor docType={selected} onSave={handleSave} /> : <div>Select a doc type</div>}
+      </Panel>
+      <Panel title="DOC TYPE Query Debug">
+        <div className="grid">
+          <Input label="Test Query" value={debugQuery} onChange={(e) => setDebugQuery(e.target.value)} />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button onClick={() => void handleDebugQuery()}>Run Query Debug</Button>
+          </div>
+          {debugOutput && (
+            <pre className="source-item" style={{ whiteSpace: 'pre-wrap' }}>
+              {JSON.stringify(debugOutput, null, 2)}
+            </pre>
+          )}
+        </div>
       </Panel>
     </>
   );

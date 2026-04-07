@@ -88,6 +88,58 @@ export type DocTypeForm = {
     on_content_change: boolean;
     on_form_change: boolean;
   };
+  query_profile?: QueryProfile;
+};
+
+export type QueryProfile = {
+  canonical_terms?: string[];
+  synonym_groups?: Array<{
+    canonical: string;
+    aliases?: string[];
+  }>;
+  query_signals?: string[];
+  intent_rules?: Array<{
+    intent: string;
+    terms?: string[];
+  }>;
+  domain_topic_rules?: Array<{
+    legal_domain: string;
+    legal_topic?: string;
+    terms?: string[];
+  }>;
+  legal_signal_rules?: string[];
+  followup_markers?: string[];
+  preferred_doc_types?: string[];
+  routing_priority?: number;
+};
+
+export type DocTypeQueryDebugResponse = {
+  query: string;
+  normalized_query: string;
+  canonical_query: string;
+  matched_doc_types: string[];
+  matched_query_rules: string[];
+  query_profile_hashes: Record<string, string>;
+  inferred_legal_domain: string;
+  inferred_legal_topic: string;
+  inferred_intent: string;
+  applied_filters: Record<string, unknown>;
+  preferred_doc_types: string[];
+  fallback_stages: Array<{
+    attempt: number;
+    legal_domain?: string[];
+    document_type?: string[];
+    effective_status?: string[];
+    reason?: string;
+    hit_count: number;
+  }>;
+  results: Array<{
+    chunk_id: string;
+    text: string;
+    score: number;
+    metadata?: Record<string, unknown>;
+    version_id?: string;
+  }>;
 };
 
 export type DocType = {

@@ -95,6 +95,7 @@ func (s *Server) RegisterRoutes() {
 	protectedGroup.Get("/doc-types", h.ListDocTypes)
 	protectedGroup.Put("/doc-types/:id/form", h.UpdateDocTypeForm)
 	protectedGroup.Delete("/doc-types/:id", h.DeleteDocType)
+	protectedGroup.Post("/doc-types/query-debug", h.DebugDocTypeQuery)
 	protectedGroup.Get("/documents", h.ListDocuments)
 	protectedGroup.Post("/documents", h.CreateDocument)
 	protectedGroup.Delete("/documents/:id", h.DeleteDocument)

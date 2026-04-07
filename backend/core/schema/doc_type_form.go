@@ -18,6 +18,7 @@ type DocTypeForm struct {
 	Metadata      MetadataSchema `json:"metadata_schema"`
 	MappingRules  []MappingRule  `json:"mapping_rules"`
 	ReindexPolicy ReindexPolicy  `json:"reindex_policy"`
+	QueryProfile  QueryProfile   `json:"query_profile,omitempty"`
 }
 
 type DocType struct {
@@ -66,6 +67,34 @@ type MappingRule struct {
 type ReindexPolicy struct {
 	OnContentChange bool `json:"on_content_change"`
 	OnFormChange    bool `json:"on_form_change"`
+}
+
+type QueryProfile struct {
+	CanonicalTerms    []string          `json:"canonical_terms,omitempty"`
+	SynonymGroups     []SynonymGroup    `json:"synonym_groups,omitempty"`
+	QuerySignals      []string          `json:"query_signals,omitempty"`
+	IntentRules       []IntentRule      `json:"intent_rules,omitempty"`
+	DomainTopicRules  []DomainTopicRule `json:"domain_topic_rules,omitempty"`
+	LegalSignalRules  []string          `json:"legal_signal_rules,omitempty"`
+	FollowUpMarkers   []string          `json:"followup_markers,omitempty"`
+	PreferredDocTypes []string          `json:"preferred_doc_types,omitempty"`
+	RoutingPriority   int               `json:"routing_priority,omitempty"`
+}
+
+type SynonymGroup struct {
+	Canonical string   `json:"canonical"`
+	Aliases   []string `json:"aliases,omitempty"`
+}
+
+type IntentRule struct {
+	Intent string   `json:"intent"`
+	Terms  []string `json:"terms,omitempty"`
+}
+
+type DomainTopicRule struct {
+	LegalDomain string   `json:"legal_domain"`
+	LegalTopic  string   `json:"legal_topic,omitempty"`
+	Terms       []string `json:"terms,omitempty"`
 }
 
 func (f DocTypeForm) AlignMappingRules() DocTypeForm {
@@ -176,7 +205,105 @@ func (f DocTypeForm) Validate() error {
 			return fmt.Errorf("metadata field %q has no mapping rule", field.Name)
 		}
 	}
+	if err := f.QueryProfile.Validate(); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (p QueryProfile) Validate() error {
+	seenTerms := map[string]string{}
+	for _, term := range p.CanonicalTerms {
+		if err := validateProfileTerm("canonical_terms", term); err != nil {
+			return err
+		}
+	}
+	for idx, group := range p.SynonymGroups {
+		if err := validateProfileTerm(fmt.Sprintf("synonym_groups[%d].canonical", idx), group.Canonical); err != nil {
+			return err
+		}
+		registerProfileTerm(seenTerms, group.Canonical, fmt.Sprintf("synonym_groups[%d].canonical", idx))
+		for aliasIdx, alias := range group.Aliases {
+			if err := validateProfileTerm(fmt.Sprintf("synonym_groups[%d].aliases[%d]", idx, aliasIdx), alias); err != nil {
+				return err
+			}
+			if prior, ok := seenTerms[normalizeProfileTerm(alias)]; ok {
+				return fmt.Errorf("query_profile duplicate alias %q conflicts with %s", alias, prior)
+			}
+			registerProfileTerm(seenTerms, alias, fmt.Sprintf("synonym_groups[%d].aliases[%d]", idx, aliasIdx))
+		}
+	}
+	for idx, signal := range p.QuerySignals {
+		if err := validateProfileTerm(fmt.Sprintf("query_signals[%d]", idx), signal); err != nil {
+			return err
+		}
+	}
+	for idx, rule := range p.IntentRules {
+		if strings.TrimSpace(rule.Intent) == "" {
+			return fmt.Errorf("query_profile intent_rules[%d].intent is required", idx)
+		}
+		if len(rule.Terms) == 0 {
+			return fmt.Errorf("query_profile intent_rules[%d].terms is required", idx)
+		}
+		for termIdx, term := range rule.Terms {
+			if err := validateProfileTerm(fmt.Sprintf("intent_rules[%d].terms[%d]", idx, termIdx), term); err != nil {
+				return err
+			}
+		}
+	}
+	for idx, rule := range p.DomainTopicRules {
+		if strings.TrimSpace(rule.LegalDomain) == "" {
+			return fmt.Errorf("query_profile domain_topic_rules[%d].legal_domain is required", idx)
+		}
+		if len(rule.Terms) == 0 {
+			return fmt.Errorf("query_profile domain_topic_rules[%d].terms is required", idx)
+		}
+		for termIdx, term := range rule.Terms {
+			if err := validateProfileTerm(fmt.Sprintf("domain_topic_rules[%d].terms[%d]", idx, termIdx), term); err != nil {
+				return err
+			}
+		}
+	}
+	for idx, signal := range p.LegalSignalRules {
+		if err := validateProfileTerm(fmt.Sprintf("legal_signal_rules[%d]", idx), signal); err != nil {
+			return err
+		}
+	}
+	for idx, marker := range p.FollowUpMarkers {
+		if err := validateProfileTerm(fmt.Sprintf("followup_markers[%d]", idx), marker); err != nil {
+			return err
+		}
+	}
+	for idx, docType := range p.PreferredDocTypes {
+		if err := validateProfileTerm(fmt.Sprintf("preferred_doc_types[%d]", idx), docType); err != nil {
+			return err
+		}
+	}
+	if p.RoutingPriority < 0 {
+		return errors.New("query_profile.routing_priority must be >= 0")
+	}
+	return nil
+}
+
+func validateProfileTerm(path, value string) error {
+	if normalizeProfileTerm(value) == "" {
+		return fmt.Errorf("query_profile %s must be non-empty", path)
+	}
+	return nil
+}
+
+func registerProfileTerm(seen map[string]string, value, path string) {
+	key := normalizeProfileTerm(value)
+	if key == "" {
+		return
+	}
+	if _, ok := seen[key]; !ok {
+		seen[key] = path
+	}
+}
+
+func normalizeProfileTerm(value string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(strings.ToLower(value))), " ")
 }
 
 func splitHierarchyLevels(hierarchy string) []string {

@@ -191,6 +191,7 @@ func (h *Handler) CreateDocType(c *fiber.Ctx) error {
 	if err != nil {
 		return respondError(c, 500, "db_error", "failed to create doc type", err.Error())
 	}
+	h.Retriever.InvalidateQueryUnderstandingCache()
 	docType, err := h.Store.GetDocType(c.Context(), id)
 	if err != nil {
 		return respondError(c, 500, "db_error", "failed to load doc type", err.Error())
@@ -238,6 +239,7 @@ func (h *Handler) UpdateDocTypeForm(c *fiber.Ctx) error {
 	if err := h.Store.UpdateDocTypeForm(c.Context(), id, formJSON, hash); err != nil {
 		return respondError(c, 500, "db_error", "failed to update form", err.Error())
 	}
+	h.Retriever.InvalidateQueryUnderstandingCache()
 	docType, err := h.Store.GetDocType(c.Context(), id)
 	if err != nil {
 		return respondError(c, 500, "db_error", "failed to load doc type", err.Error())
@@ -268,6 +270,7 @@ func (h *Handler) DeleteDocType(c *fiber.Ctx) error {
 	if !deleted {
 		return respondError(c, 404, "not_found", "doc type not found", nil)
 	}
+	h.Retriever.InvalidateQueryUnderstandingCache()
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
@@ -641,6 +644,67 @@ func (h *Handler) Search(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"results": resp})
 }
 
+func (h *Handler) DebugDocTypeQuery(c *fiber.Ctx) error {
+	var req struct {
+		Query   string      `json:"query"`
+		TopK    int         `json:"top_k"`
+		Filters ChatFilters `json:"filters"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return respondError(c, 400, "invalid_request", "invalid json", err.Error())
+	}
+	req.Query = strings.TrimSpace(req.Query)
+	if req.Query == "" {
+		return respondError(c, 400, "validation", "query is required", nil)
+	}
+	if req.TopK <= 0 {
+		req.TopK = 5
+	}
+	req.Filters.TopK = req.TopK
+	req.Filters.Domain = strings.TrimSpace(req.Filters.Domain)
+	req.Filters.DocType = strings.TrimSpace(req.Filters.DocType)
+	req.Filters.DocumentNumber = strings.TrimSpace(req.Filters.DocumentNumber)
+	req.Filters.ArticleNumber = strings.TrimSpace(req.Filters.ArticleNumber)
+	req.Filters.EffectiveStatus = normalizeEffectiveStatus(req.Filters.EffectiveStatus)
+
+	debug, err := h.Retriever.DebugSearch(c.Context(), req.Query, retrieval.SearchOptions{
+		TopK:            req.TopK,
+		Domain:          req.Filters.Domain,
+		DocType:         req.Filters.DocType,
+		EffectiveStatus: req.Filters.EffectiveStatus,
+		DocumentNumber:  req.Filters.DocumentNumber,
+		ArticleNumber:   req.Filters.ArticleNumber,
+	})
+	if err != nil {
+		return respondError(c, 500, "search_error", "failed to debug query", err.Error())
+	}
+	resultRows := make([]fiber.Map, 0, len(debug.Results))
+	for _, r := range debug.Results {
+		resultRows = append(resultRows, fiber.Map{
+			"chunk_id":   r.ChunkID,
+			"text":       r.Text,
+			"score":      r.Score,
+			"metadata":   r.Metadata,
+			"version_id": r.VersionID,
+		})
+	}
+	return c.JSON(fiber.Map{
+		"query":                 req.Query,
+		"normalized_query":      debug.Analysis.NormalizedQuery,
+		"canonical_query":       debug.Analysis.CanonicalQuery,
+		"matched_doc_types":     debug.Analysis.MatchedDocTypes,
+		"matched_query_rules":   debug.Analysis.MatchedQueryRules,
+		"query_profile_hashes":  debug.Analysis.QueryProfileHashes,
+		"inferred_legal_domain": debug.Analysis.LegalDomain,
+		"inferred_legal_topic":  debug.Analysis.LegalTopic,
+		"inferred_intent":       debug.Analysis.Intent,
+		"applied_filters":       debug.AppliedFilters,
+		"preferred_doc_types":   debug.PreferredDocTypes,
+		"fallback_stages":       debug.FallbackStages,
+		"results":               resultRows,
+	})
+}
+
 func (h *Handler) Answer(c *fiber.Ctx) error {
 	started := time.Now()
 	var req answerRequest
@@ -662,18 +726,26 @@ func (h *Handler) Answer(c *fiber.Ctx) error {
 		traceSvc.OnError(err, traceLatency(started))
 		return respondError(c, 500, "config_error", "failed to load answer runtime config", err.Error())
 	}
-	if decision, ok := detectSmallTalkDecision(question); ok {
-		traceSvc.OnRetrieval(retrieval.UnderstandQuery(question).NormalizedQuery, map[string]interface{}{
-			"legal_domain":       filters.Domain,
-			"document_type":      filters.DocType,
-			"effective_status":   filters.EffectiveStatus,
-			"document_number":    filters.DocumentNumber,
-			"article_number":     filters.ArticleNumber,
-			"retrieved_chunks":   0,
-			"max_similarity":     0.0,
-			"guard_decision":     string(decision.Decision),
-			"prompt_type_used":   decision.PromptType,
-			"smalltalk_detected": true,
+	analysis := h.Retriever.AnalyzeQuery(ctx, question)
+	if decision, ok, normalized := h.detectSmallTalkDecision(ctx, question); ok {
+		traceSvc.OnRetrieval(normalized, map[string]interface{}{
+			"canonical_query":       analysis.CanonicalQuery,
+			"matched_doc_types":     analysis.MatchedDocTypes,
+			"matched_query_rules":   analysis.MatchedQueryRules,
+			"query_profile_hashes":  analysis.QueryProfileHashes,
+			"inferred_intent":       analysis.Intent,
+			"inferred_legal_domain": analysis.LegalDomain,
+			"inferred_legal_topic":  analysis.LegalTopic,
+			"legal_domain":          filters.Domain,
+			"document_type":         filters.DocType,
+			"effective_status":      filters.EffectiveStatus,
+			"document_number":       filters.DocumentNumber,
+			"article_number":        filters.ArticleNumber,
+			"retrieved_chunks":      0,
+			"max_similarity":        0.0,
+			"guard_decision":        string(decision.Decision),
+			"prompt_type_used":      decision.PromptType,
+			"smalltalk_detected":    true,
 			"retrieval": fiber.Map{
 				"chunks":         0,
 				"max_similarity": 0.0,
@@ -711,16 +783,23 @@ func (h *Handler) Answer(c *fiber.Ctx) error {
 			promptTypeUsed = usedPromptType
 		}
 	}
-	traceSvc.OnRetrieval(retrieval.UnderstandQuery(question).NormalizedQuery, map[string]interface{}{
-		"legal_domain":     filters.Domain,
-		"document_type":    filters.DocType,
-		"effective_status": filters.EffectiveStatus,
-		"document_number":  filters.DocumentNumber,
-		"article_number":   filters.ArticleNumber,
-		"retrieved_chunks": diag.RetrievedChunks,
-		"max_similarity":   diag.MaxSimilarity,
-		"guard_decision":   string(decision.Decision),
-		"prompt_type_used": promptTypeUsed,
+	traceSvc.OnRetrieval(analysis.NormalizedQuery, map[string]interface{}{
+		"canonical_query":       analysis.CanonicalQuery,
+		"matched_doc_types":     analysis.MatchedDocTypes,
+		"matched_query_rules":   analysis.MatchedQueryRules,
+		"query_profile_hashes":  analysis.QueryProfileHashes,
+		"inferred_intent":       analysis.Intent,
+		"inferred_legal_domain": analysis.LegalDomain,
+		"inferred_legal_topic":  analysis.LegalTopic,
+		"legal_domain":          filters.Domain,
+		"document_type":         filters.DocType,
+		"effective_status":      filters.EffectiveStatus,
+		"document_number":       filters.DocumentNumber,
+		"article_number":        filters.ArticleNumber,
+		"retrieved_chunks":      diag.RetrievedChunks,
+		"max_similarity":        diag.MaxSimilarity,
+		"guard_decision":        string(decision.Decision),
+		"prompt_type_used":      promptTypeUsed,
 		"retrieval": fiber.Map{
 			"chunks":         diag.RetrievedChunks,
 			"max_similarity": diag.MaxSimilarity,

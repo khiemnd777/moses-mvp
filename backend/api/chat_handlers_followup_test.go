@@ -37,6 +37,32 @@ func (r *queryCapturingRetriever) Search(ctx context.Context, query string, opts
 	return append([]retrieval.Result{}, r.results...), nil
 }
 
+func (r *queryCapturingRetriever) AnalyzeQuery(ctx context.Context, query string) retrieval.QueryUnderstandingResult {
+	return retrieval.UnderstandQuery(query)
+}
+
+func (r *queryCapturingRetriever) BuildFollowUpSearchQuery(ctx context.Context, history []answer.ConversationMessage, currentQuery string) string {
+	if strings.Contains(strings.ToLower(currentQuery), "cam on") || strings.Contains(strings.ToLower(currentQuery), "hoi them") {
+		for _, item := range history {
+			if item.Role == "user" && strings.TrimSpace(item.Content) != "" {
+				return strings.TrimSpace(item.Content + " " + currentQuery)
+			}
+		}
+	}
+	return currentQuery
+}
+
+func (r *queryCapturingRetriever) HasLegalSignal(ctx context.Context, query string) bool {
+	return false
+}
+
+func (r *queryCapturingRetriever) DebugSearch(ctx context.Context, query string, opts retrieval.SearchOptions) (retrieval.QueryDebugResult, error) {
+	results, err := r.Search(ctx, query, opts)
+	return retrieval.QueryDebugResult{Analysis: retrieval.UnderstandQuery(query), Results: results}, err
+}
+
+func (r *queryCapturingRetriever) InvalidateQueryUnderstandingCache() {}
+
 func TestPrepareChatResponseUsesConversationHistoryForRetrievalQuery(t *testing.T) {
 	store := &followupStore{
 		fakeStore: &fakeStore{},

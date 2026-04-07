@@ -226,6 +226,24 @@ func (f *fakeRetriever) Search(ctx context.Context, query string, opts retrieval
 	return f.results, nil
 }
 
+func (f *fakeRetriever) AnalyzeQuery(ctx context.Context, query string) retrieval.QueryUnderstandingResult {
+	return retrieval.UnderstandQuery(query)
+}
+
+func (f *fakeRetriever) BuildFollowUpSearchQuery(ctx context.Context, history []answer.ConversationMessage, currentQuery string) string {
+	return retrieval.BuildFollowUpSearchQuery(history, currentQuery)
+}
+
+func (f *fakeRetriever) HasLegalSignal(ctx context.Context, query string) bool {
+	return false
+}
+
+func (f *fakeRetriever) DebugSearch(ctx context.Context, query string, opts retrieval.SearchOptions) (retrieval.QueryDebugResult, error) {
+	return retrieval.QueryDebugResult{Analysis: retrieval.UnderstandQuery(query), Results: f.results}, nil
+}
+
+func (f *fakeRetriever) InvalidateQueryUnderstandingCache() {}
+
 type memoryTraceRepo struct {
 	mu    sync.Mutex
 	items map[string]observability.TraceRecord

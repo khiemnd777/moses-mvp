@@ -79,6 +79,41 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 		traceSvc.OnError(err, traceLatency(started))
 		return respondError(c, 500, "config_error", "failed to load answer runtime config", err.Error())
 	}
+	analysis := h.Retriever.AnalyzeQuery(ctx, question)
+	if decision, ok, normalized := h.detectSmallTalkDecision(ctx, question); ok {
+		traceSvc.OnRetrieval(normalized, map[string]interface{}{
+			"canonical_query":       analysis.CanonicalQuery,
+			"matched_doc_types":     analysis.MatchedDocTypes,
+			"matched_query_rules":   analysis.MatchedQueryRules,
+			"query_profile_hashes":  analysis.QueryProfileHashes,
+			"inferred_intent":       analysis.Intent,
+			"inferred_legal_domain": analysis.LegalDomain,
+			"inferred_legal_topic":  analysis.LegalTopic,
+			"legal_domain":          filters.Domain,
+			"document_type":         filters.DocType,
+			"effective_status":      filters.EffectiveStatus,
+			"document_number":       filters.DocumentNumber,
+			"article_number":        filters.ArticleNumber,
+			"retrieved_chunks":      0,
+			"max_similarity":        0.0,
+			"guard_decision":        string(decision.Decision),
+			"prompt_type_used":      decision.PromptType,
+			"smalltalk_detected":    true,
+		}, []string{})
+		traceSvc.OnResponse(decision.Message, true, traceLatency(started))
+		c.Set("Content-Type", "text/event-stream")
+		c.Set("Cache-Control", "no-cache")
+		c.Set("Connection", "keep-alive")
+		c.Set("X-Accel-Buffering", "no")
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			writer := newSSEWriter(w)
+			_ = writer.writeEvent("meta", fiber.Map{"trace_id": traceID})
+			_ = writer.writeEvent("token", fiber.Map{"delta": decision.Message})
+			_ = writer.writeEvent("citations", []answer.Citation{})
+			_ = writer.writeEvent("done", fiber.Map{"ok": true})
+		})
+		return nil
+	}
 	results, err := h.Retriever.Search(ctx, question, retrieval.SearchOptions{
 		TopK:            filters.TopK,
 		Domain:          filters.Domain,
@@ -102,16 +137,23 @@ func (h *Handler) AnswerStream(c *fiber.Ctx) error {
 			promptTypeUsed = usedPromptType
 		}
 	}
-	traceSvc.OnRetrieval(retrieval.UnderstandQuery(question).NormalizedQuery, map[string]interface{}{
-		"legal_domain":     filters.Domain,
-		"document_type":    filters.DocType,
-		"effective_status": filters.EffectiveStatus,
-		"document_number":  filters.DocumentNumber,
-		"article_number":   filters.ArticleNumber,
-		"retrieved_chunks": diag.RetrievedChunks,
-		"max_similarity":   diag.MaxSimilarity,
-		"guard_decision":   string(decision.Decision),
-		"prompt_type_used": promptTypeUsed,
+	traceSvc.OnRetrieval(analysis.NormalizedQuery, map[string]interface{}{
+		"canonical_query":       analysis.CanonicalQuery,
+		"matched_doc_types":     analysis.MatchedDocTypes,
+		"matched_query_rules":   analysis.MatchedQueryRules,
+		"query_profile_hashes":  analysis.QueryProfileHashes,
+		"inferred_intent":       analysis.Intent,
+		"inferred_legal_domain": analysis.LegalDomain,
+		"inferred_legal_topic":  analysis.LegalTopic,
+		"legal_domain":          filters.Domain,
+		"document_type":         filters.DocType,
+		"effective_status":      filters.EffectiveStatus,
+		"document_number":       filters.DocumentNumber,
+		"article_number":        filters.ArticleNumber,
+		"retrieved_chunks":      diag.RetrievedChunks,
+		"max_similarity":        diag.MaxSimilarity,
+		"guard_decision":        string(decision.Decision),
+		"prompt_type_used":      promptTypeUsed,
 		"retrieval": fiber.Map{
 			"chunks":         diag.RetrievedChunks,
 			"max_similarity": diag.MaxSimilarity,

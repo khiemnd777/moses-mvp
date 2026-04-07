@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 
+	"github.com/khiemnd777/legal_api/core/answer"
 	"github.com/khiemnd777/legal_api/core/retrieval"
 	"github.com/khiemnd777/legal_api/domain"
 	"github.com/khiemnd777/legal_api/infra"
@@ -53,4 +54,9 @@ type handlerStore interface {
 
 type retriever interface {
 	Search(ctx context.Context, query string, opts retrieval.SearchOptions) ([]retrieval.Result, error)
+	AnalyzeQuery(ctx context.Context, query string) retrieval.QueryUnderstandingResult
+	BuildFollowUpSearchQuery(ctx context.Context, history []answer.ConversationMessage, currentQuery string) string
+	HasLegalSignal(ctx context.Context, query string) bool
+	DebugSearch(ctx context.Context, query string, opts retrieval.SearchOptions) (retrieval.QueryDebugResult, error)
+	InvalidateQueryUnderstandingCache()
 }

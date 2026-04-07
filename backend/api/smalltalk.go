@@ -1,10 +1,10 @@
 package api
 
 import (
+	"context"
 	"strings"
 
 	"github.com/khiemnd777/legal_api/core/guard"
-	"github.com/khiemnd777/legal_api/core/retrieval"
 )
 
 const (
@@ -26,26 +26,24 @@ var (
 		"xin": {}, "chao": {}, "ban": {}, "anh": {}, "chi": {}, "em": {}, "ad": {}, "admin": {},
 		"hello": {}, "hi": {}, "hey": {}, "alo": {}, "a": {}, "oi": {}, "nhe": {}, "nha": {},
 	}
-	legalSignalKeywords = []string{
-		"luat", "phap luat", "phap ly", "quy dinh", "thu tuc", "ho so", "dieu", "khoan",
-		"nghi dinh", "thong tu", "quyet dinh", "hop dong", "tranh chap", "toa an", "khoi kien",
-		"ly hon", "ket hon", "hon nhan", "dat dai", "thua ke", "tai san", "cap duong",
-		"bao hiem", "thue", "hinh su", "dan su", "lao dong", "hanh chinh",
-	}
 )
 
-func detectSmallTalkDecision(content string) (guardDecision, bool) {
-	normalized := retrieval.UnderstandQuery(content).NormalizedQuery
-	if normalized == "" || containsLegalSignal(normalized) {
-		return guardDecision{}, false
+func (h *Handler) detectSmallTalkDecision(ctx context.Context, content string) (guardDecision, bool, string) {
+	analysis := h.Retriever.AnalyzeQuery(ctx, content)
+	normalized := analysis.NormalizedQuery
+	if normalized == "" {
+		return guardDecision{}, false, normalized
+	}
+	if len(analysis.MatchedDocTypes) > 0 || analysis.LegalDomain != "" || analysis.Intent != "" && analysis.Intent != "legal_basis_lookup" || h.Retriever.HasLegalSignal(ctx, content) {
+		return guardDecision{}, false, normalized
 	}
 	if _, ok := smallTalkExactPhrases[normalized]; ok {
-		return smallTalkDecision(defaultGreetingReply), true
+		return smallTalkDecision(defaultGreetingReply), true, normalized
 	}
 	if isGreetingTokenSequence(normalized) {
-		return smallTalkDecision(defaultGreetingReply), true
+		return smallTalkDecision(defaultGreetingReply), true, normalized
 	}
-	return guardDecision{}, false
+	return guardDecision{}, false, normalized
 }
 
 func smallTalkDecision(message string) guardDecision {
@@ -54,15 +52,6 @@ func smallTalkDecision(message string) guardDecision {
 		PromptType: smallTalkPromptType,
 		Message:    message,
 	}
-}
-
-func containsLegalSignal(normalized string) bool {
-	for _, keyword := range legalSignalKeywords {
-		if strings.Contains(normalized, keyword) {
-			return true
-		}
-	}
-	return false
 }
 
 func isGreetingTokenSequence(normalized string) bool {
