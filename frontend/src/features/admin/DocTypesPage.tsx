@@ -8,29 +8,13 @@ import { useAdminStore } from './adminStore';
 import DocTypeEditor from './DocTypeEditor';
 
 const buildDefaultForm = (code: string, name: string): DocTypeForm => ({
-  version: 1,
+  version: 2,
   doc_type: { code, name },
   segment_rules: { strategy: 'legal_article', hierarchy: 'article', normalization: 'basic' },
   metadata_schema: { fields: [{ name: 'title', type: 'string' }] },
   mapping_rules: [{ field: 'title', regex: '^Title\\s*:\\s*(.+)$', group: 1 }],
   reindex_policy: { on_content_change: true, on_form_change: true },
-  query_profile: {
-    canonical_terms: ['ly hon', 'thu tuc', 'hop dong'],
-    synonym_groups: [{ canonical: 'ly hon', aliases: ['ly dị', 'ly di', 'ly hôn'] }],
-    query_signals: ['ly hon', 'thu tuc', 'ho so', 'hop dong'],
-    intent_rules: [
-      { intent: 'legal_procedure_advice', terms: ['thu tuc', 'ho so'] },
-      { intent: 'legal_rights_obligations', terms: ['hop dong'] }
-    ],
-    domain_topic_rules: [
-      { legal_domain: 'marriage_family', legal_topic: 'divorce', terms: ['ly hon'] },
-      { legal_domain: 'civil', legal_topic: 'contract', terms: ['hop dong'] }
-    ],
-    legal_signal_rules: ['ly hon', 'thu tuc', 'ho so', 'hop dong', 'quy dinh', 'phap ly', 'dieu', 'khoan'],
-    followup_markers: ['cam on', 'hoi them', 'them nua', 'tiep theo', 'truong hop nay', 'van de nay', 'viec nay', 'noi tren'],
-    preferred_doc_types: ['law', 'resolution', 'decree'],
-    routing_priority: 100
-  }
+  query_profile: {}
 });
 
 const DocTypesPage = () => {
@@ -129,42 +113,45 @@ const DocTypesPage = () => {
 
   return (
     <>
-      <Panel title="Doc Types">
-        <div className="grid">
-          {loading && <div className="badge">Loading...</div>}
-          {error && <div className="badge">{error}</div>}
+      <div className="doc-types-layout">
+        <Panel title="Doc Types" className="doc-types-sidebar-panel">
           <div className="grid">
-            <Input label="Doc type code" value={code} onChange={(e) => setCode(e.target.value)} />
-            <Input label="Doc type name" value={name} onChange={(e) => setName(e.target.value)} />
-            <Button onClick={handleCreate}>Create</Button>
-          </div>
-          <div className="grid">
-            {docTypes.map((doc) => (
-              <div
-                key={doc.id}
-                className={`admin-list-item ${selectedDocTypeId === doc.id ? 'selected' : ''}`}
-              >
-                <button
-                  className="button outline admin-list-item-button"
-                  onClick={() => setSelectedDocTypeId(doc.id)}
+            {loading && <div className="badge">Loading...</div>}
+            {error && <div className="badge">{error}</div>}
+            <div className="grid">
+              <Input label="Doc type code" value={code} onChange={(e) => setCode(e.target.value)} />
+              <Input label="Doc type name" value={name} onChange={(e) => setName(e.target.value)} />
+              <Button onClick={handleCreate}>Create</Button>
+            </div>
+            <div className="grid">
+              {docTypes.map((doc) => (
+                <div
+                  key={doc.id}
+                  className={`admin-list-item doc-types-list-item ${selectedDocTypeId === doc.id ? 'selected' : ''}`}
                 >
-                  {doc.name} ({doc.code})
-                </button>
-                <Button
-                  variant={selectedDocTypeId === doc.id ? 'secondary' : 'outline'}
-                  onClick={() => void handleDelete(doc.id)}
-                  disabled={deletingDocTypeId === doc.id}
-                >
-                  {deletingDocTypeId === doc.id ? 'Deleting...' : 'Delete'}
-                </Button>
-              </div>
-            ))}
+                  <button
+                    className="button outline admin-list-item-button doc-types-list-item-button"
+                    onClick={() => setSelectedDocTypeId(doc.id)}
+                  >
+                    {doc.name} ({doc.code})
+                  </button>
+                  <Button
+                    className="doc-types-delete-button"
+                    variant={selectedDocTypeId === doc.id ? 'secondary' : 'outline'}
+                    onClick={() => void handleDelete(doc.id)}
+                    disabled={deletingDocTypeId === doc.id}
+                  >
+                    {deletingDocTypeId === doc.id ? 'Deleting...' : 'Delete'}
+                  </Button>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      </Panel>
-      <Panel title="Dynamic Form Editor">
-        {selected ? <DocTypeEditor docType={selected} onSave={handleSave} /> : <div>Select a doc type</div>}
-      </Panel>
+        </Panel>
+        <Panel title="Dynamic Form Editor">
+          {selected ? <DocTypeEditor docType={selected} onSave={handleSave} /> : <div>Select a doc type</div>}
+        </Panel>
+      </div>
       <Panel title="DOC TYPE Query Debug">
         <div className="grid">
           <Input label="Test Query" value={debugQuery} onChange={(e) => setDebugQuery(e.target.value)} />

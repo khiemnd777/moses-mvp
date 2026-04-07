@@ -530,6 +530,24 @@ a {
   gap: 12px;
 }
 
+.doc-type-editor-actions {
+  position: sticky;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: var(--section-shadow);
+  backdrop-filter: blur(10px);
+}
+
+.doc-type-editor-actions .button {
+  width: 100%;
+  justify-content: center;
+}
+
 .chat-layout {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
@@ -939,6 +957,37 @@ a {
   font-weight: 600;
 }
 
+.doc-types-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.doc-types-sidebar-panel {
+  position: sticky;
+  top: 96px;
+}
+
+.doc-types-list-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.doc-types-list-item-button {
+  min-width: 0;
+  width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.doc-types-delete-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .chat-stream-indicator {
   margin-top: 16px;
   color: var(--accent);
@@ -1019,6 +1068,11 @@ a {
     bottom: 12px;
   }
 
+  .doc-type-editor-actions {
+    bottom: 8px;
+    padding: 10px;
+  }
+
 }
 
 .side-nav a {
@@ -1036,6 +1090,18 @@ a {
 @media (max-width: 960px) {
   .chat-shell,
   .admin-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .doc-types-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .doc-types-sidebar-panel {
+    position: static;
+  }
+
+  .doc-types-list-item {
     grid-template-columns: 1fr;
   }
 

@@ -224,6 +224,19 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
     <div className="grid">
       {!isFormValid && <div className="badge">Fix JSON to edit structured fields.</div>}
       {error && <div className="badge">{error}</div>}
+      <label>
+        <div className="label">Doc Type Form (JSON)</div>
+        <div className="codemirror">
+          <CodeMirror
+            value={formText}
+            height="520px"
+            theme={resolvedDisplayMode}
+            extensions={jsonExtensions}
+            onChange={setFormText}
+          />
+        </div>
+      </label>
+      <div className="badge">Canonical JSON Hash: {hash}</div>
       <PanelSection title="Doc Type">
         <div className="grid">
           <Input
@@ -544,20 +557,9 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
           </div>
         </div>
       </PanelSection>
-      <label>
-        <div className="label">Doc Type Form (JSON)</div>
-        <div className="codemirror">
-          <CodeMirror
-            value={formText}
-            height="320px"
-            theme={resolvedDisplayMode}
-            extensions={jsonExtensions}
-            onChange={setFormText}
-          />
-        </div>
-      </label>
-      <div className="badge">Canonical JSON Hash: {hash}</div>
-      <Button onClick={handleSave}>Save</Button>
+      <div className="doc-type-editor-actions">
+        <Button onClick={handleSave}>Save</Button>
+      </div>
     </div>
   );
 };

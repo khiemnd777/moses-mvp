@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/khiemnd777/legal_api/core/schema"
 	"github.com/khiemnd777/legal_api/domain"
 
 	"github.com/lib/pq"
@@ -1374,38 +1375,20 @@ func (s *Store) EnsureDocTypeSeed(ctx context.Context) error {
 	if count > 0 {
 		return nil
 	}
-	seed := map[string]any{
-		"version":         1,
-		"doc_type":        map[string]any{"code": "legal_normative", "name": "Legal Normative"},
-		"segment_rules":   map[string]any{"strategy": "legal_article", "hierarchy": "article", "normalization": "basic"},
-		"metadata_schema": map[string]any{"fields": []map[string]any{{"name": "title", "type": "string"}, {"name": "date", "type": "date"}}},
-		"mapping_rules": []map[string]any{
-			{"field": "title", "regex": "^Title\\s*:\\s*(.+)$", "group": 1},
-			{"field": "date", "regex": "^Date\\s*:\\s*(.+)$", "group": 1},
-		},
-		"reindex_policy": map[string]any{"on_content_change": true, "on_form_change": true},
-		"query_profile": map[string]any{
-			"canonical_terms":     []string{"ly hon", "thu tuc", "hop dong"},
-			"query_signals":       []string{"ly hon", "thu tuc", "ho so", "hop dong"},
-			"legal_signal_rules":  []string{"ly hon", "thu tuc", "ho so", "hop dong", "quy dinh", "phap ly", "dieu", "khoan"},
-			"followup_markers":    []string{"cam on", "hoi them", "them nua", "tiep theo", "truong hop nay", "van de nay", "viec nay", "noi tren"},
-			"preferred_doc_types": []string{"law", "resolution", "decree"},
-			"routing_priority":    100,
-			"synonym_groups": []map[string]any{
-				{"canonical": "ly hon", "aliases": []string{"ly dị", "ly di", "ly hôn"}},
-			},
-			"intent_rules": []map[string]any{
-				{"intent": "legal_procedure_advice", "terms": []string{"thu tuc", "ho so"}},
-				{"intent": "legal_rights_obligations", "terms": []string{"hop dong"}},
-			},
-			"domain_topic_rules": []map[string]any{
-				{"legal_domain": "marriage_family", "legal_topic": "divorce", "terms": []string{"ly hon"}},
-				{"legal_domain": "civil", "legal_topic": "contract", "terms": []string{"hop dong"}},
-			},
-		},
+	form := schema.DocTypeForm{
+		Version:       1,
+		DocType:       schema.DocType{Code: "legal_normative", Name: "Legal Normative"},
+		SegmentRules:  schema.SegmentRules{Strategy: "legal_article", Hierarchy: "article", Normalization: "basic"},
+		Metadata:      schema.MetadataSchema{Fields: []schema.MetadataField{{Name: "title", Type: "string"}, {Name: "date", Type: "date"}}},
+		MappingRules:  []schema.MappingRule{{Field: "title", Regex: "^Title\\s*:\\s*(.+)$", Group: 1}, {Field: "date", Regex: "^Date\\s*:\\s*(.+)$", Group: 1}},
+		ReindexPolicy: schema.ReindexPolicy{OnContentChange: true, OnFormChange: true},
 	}
-	b, _ := json.Marshal(seed)
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO doc_types (code, name, form_json, form_hash) VALUES ('legal_normative','Legal Normative',$1,'seed')`, b)
+	b, err := json.Marshal(form)
+	if err != nil {
+		return err
+	}
+	hash := "seed"
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO doc_types (code, name, form_json, form_hash) VALUES ('legal_normative','Legal Normative',$1,$2)`, b, hash)
 	return err
 }
 

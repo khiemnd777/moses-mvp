@@ -10,7 +10,9 @@ MIGRATION_FILES?=\
 	$(MIGRATIONS_DIR)/006_phase15_vector_repair.sql \
 	$(MIGRATIONS_DIR)/007_auth_users.sql \
 	$(MIGRATIONS_DIR)/008_force_password_change.sql \
-	$(MIGRATIONS_DIR)/009_chat_conversations.sql
+	$(MIGRATIONS_DIR)/009_chat_conversations.sql \
+	$(MIGRATIONS_DIR)/010_auth_refresh_sessions.sql \
+	$(MIGRATIONS_DIR)/011_doc_type_query_profiles.sql
 
 .PHONY: api worker run migrate migrate-baseline migrate-status docker-up docker-down
 

@@ -244,26 +244,8 @@ entities:
 	if year := extractYear(result.CanonicalQuery, `\b(19\d{2}|20\d{2})\b`); year > 0 {
 		result.Entities["year"] = year
 	}
-	if n := extractInt(result.CanonicalQuery, `(\d+)\s*con`); n > 0 {
-		result.Entities["children_count"] = n
-	}
-	if containsPhrase(result.CanonicalQuery, "nha") {
-		result.Entities["property_type"] = "house"
-	}
-	if containsPhrase(result.CanonicalQuery, "dieu ") {
-		if v := extractString(result.CanonicalQuery, `dieu\s+([0-9]+)`); v != "" {
-			result.Entities["article_number"] = v
-			result.Filters["article_number"] = v
-		}
-	}
 	if result.LegalDomain != "" {
 		result.Filters["legal_domain"] = result.LegalDomain
-	}
-	if result.Intent == "" && containsPhrase(result.CanonicalQuery, "thu tuc") {
-		result.Intent = "legal_procedure_advice"
-	}
-	if result.Intent == "" {
-		result.Intent = "legal_basis_lookup"
 	}
 	return result
 }
@@ -344,6 +326,9 @@ func canonicalizeQuery(normalized string, index queryUnderstandingIndex) string 
 	hashes := map[string]string{}
 	for _, rule := range index.Synonyms {
 		if rule.Alias == "" || rule.Canonical == "" {
+			continue
+		}
+		if rule.Alias == rule.Canonical {
 			continue
 		}
 		if containsPhrase(out, rule.Alias) {
