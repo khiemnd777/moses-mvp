@@ -70,11 +70,19 @@ cp config.sh.sample config.sh
 ./sync-secrets.sh
 ```
 
-`sync-secrets.sh` uploads only `install/config.sh` to `APP_ROOT/install/config.sh` on the VPS. The app secrets stay on the VPS and are not stored in GitHub Actions.
+`sync-secrets.sh` is the single sync entrypoint. It:
+
+- uploads `install/config.sh` to `APP_ROOT/install/config.sh` on the VPS
+- generates a GitHub Actions deploy key when one does not already exist
+- installs the deploy public key into the VPS user's `authorized_keys`
+- sets GitHub environment secrets `VPS_HOST`, `VPS_USER`, `VPS_PORT`, `VPS_KNOWN_HOSTS`, and `VPS_SSH_KEY`
+- sets GitHub environment variable `VPS_APP_ROOT`
+
+The app runtime secrets stay on the VPS in `install/config.sh`; GitHub only receives the SSH inputs needed to run the deploy workflow.
 
 ## GitHub Actions Deploy
 
-Configure GitHub repository secrets:
+`sync-secrets.sh` configures these GitHub environment secrets automatically:
 
 - `VPS_HOST`
 - `VPS_USER`
@@ -82,7 +90,7 @@ Configure GitHub repository secrets:
 - optional `VPS_PORT`
 - optional `VPS_KNOWN_HOSTS`
 
-Configure GitHub repository variable:
+`sync-secrets.sh` configures this GitHub environment variable automatically:
 
 - optional `VPS_APP_ROOT`, default `/opt/legal_api/app`
 

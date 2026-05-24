@@ -23,8 +23,10 @@ if [[ ! -d "$APP_ROOT/.git" ]]; then
 else
   log "Updating repository in $APP_ROOT"
   git -C "$APP_ROOT" fetch --all --tags
-  git -C "$APP_ROOT" checkout "$GIT_BRANCH"
-  git -C "$APP_ROOT" pull --ff-only origin "$GIT_BRANCH"
+  if [[ -z "${GIT_COMMIT_SHA:-}" ]]; then
+    git -C "$APP_ROOT" checkout "$GIT_BRANCH"
+    git -C "$APP_ROOT" pull --ff-only origin "$GIT_BRANCH"
+  fi
 fi
 
 if [[ -n "${GIT_COMMIT_SHA:-}" ]]; then
