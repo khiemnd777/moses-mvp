@@ -6,6 +6,7 @@ import Input from '@/shared/Input';
 import Select from '@/shared/Select';
 import Button from '@/shared/Button';
 import { useMutationAction } from './useAdminApi';
+import { SyncIcon } from '@/shared/muiIcons';
 
 const ReindexControlsPage = () => {
   const [documentId, setDocumentId] = useState('');
@@ -84,6 +85,7 @@ const ReindexControlsPage = () => {
             <div className="badge">Provide exactly one of document_id or document_version_id.</div>
           )}
           <Button onClick={() => void runSingleReindex()} disabled={!singleScopeValid || singleMutation.isLoading}>
+            <SyncIcon aria-hidden="true" />
             {singleMutation.isLoading ? 'Submitting...' : 'Trigger Reindex Document'}
           </Button>
           {singleMutation.error && <div className="badge">Error: {singleMutation.error}</div>}
@@ -126,6 +128,7 @@ const ReindexControlsPage = () => {
             I confirm bulk reindex may enqueue many jobs.
           </label>
           <Button onClick={() => void runAllReindex()} disabled={!allConfirm || !allReason.trim() || allMutation.isLoading}>
+            <SyncIcon aria-hidden="true" />
             {allMutation.isLoading ? 'Submitting...' : 'Trigger Reindex All'}
           </Button>
           {allMutation.error && <div className="badge">Error: {allMutation.error}</div>}

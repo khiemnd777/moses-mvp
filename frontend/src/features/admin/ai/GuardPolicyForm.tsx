@@ -3,6 +3,7 @@ import Button from '@/shared/Button';
 import Input from '@/shared/Input';
 import Select from '@/shared/Select';
 import type { AIGuardPolicy } from '@/core/types';
+import { CloseIcon, SaveIcon } from '@/shared/muiIcons';
 
 const actions = ['refuse', 'fallback_llm', 'ask_clarification'] as const;
 
@@ -102,10 +103,12 @@ const GuardPolicyForm = ({ value, onSubmit, onCancel }: Props) => {
       </Select>
       <div style={{ display: 'flex', gap: 8 }}>
         <Button onClick={() => void handleSubmit()} disabled={saving}>
+          <SaveIcon aria-hidden="true" />
           {saving ? 'Saving...' : 'Save'}
         </Button>
         {onCancel && (
           <Button variant="outline" onClick={onCancel} disabled={saving}>
+            <CloseIcon aria-hidden="true" />
             Cancel
           </Button>
         )}

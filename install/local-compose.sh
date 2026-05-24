@@ -19,37 +19,60 @@ fi
 export INSTALL_CONFIG_FILE="$CONFIG_FILE"
 load_install_config "$SCRIPT_DIR"
 
+compose_service_running() {
+  local service="$1"
+  compose_local "$SCRIPT_DIR" ps --status running --services | grep -qx "$service"
+}
+
+run_web_command() {
+  if compose_service_running web; then
+    compose_local "$SCRIPT_DIR" exec -T web "$@"
+  else
+    compose_local "$SCRIPT_DIR" run --rm --no-deps web "$@"
+  fi
+}
+
 case "$COMMAND" in
   up)
     SKIP_DOCKER_INSTALL=1 "$SCRIPT_DIR/backend/install.sh"
-    "$SCRIPT_DIR/nginx/install.sh"
-    "$SCRIPT_DIR/compose/up.sh"
-    "$SCRIPT_DIR/backend/migrate-compose.sh"
-    log "Local Compose stack is running at http://localhost:${HTTP_PORT:-19080}"
+    log "Starting local development Docker Compose stack"
+    compose_local "$SCRIPT_DIR" up -d --build
+    COMPOSE_RUNTIME=local "$SCRIPT_DIR/backend/migrate-compose.sh"
+    log "Local dev stack is running at http://localhost:${HTTP_PORT:-19080}"
     ;;
   migrate)
-    "$SCRIPT_DIR/backend/migrate-compose.sh"
+    COMPOSE_RUNTIME=local "$SCRIPT_DIR/backend/migrate-compose.sh"
     ;;
   verify)
-    "$SCRIPT_DIR/backend/verify.sh"
-    "$SCRIPT_DIR/nginx/verify.sh"
+    COMPOSE_RUNTIME=local "$SCRIPT_DIR/backend/verify.sh"
+    log "Frontend dev server smoke test"
+    curl -fsSI "http://127.0.0.1:${HTTP_PORT:-19080}" >/dev/null
+    log "Local dev web is responding at http://localhost:${HTTP_PORT:-19080}"
     ;;
   ps)
-    compose_prod "$SCRIPT_DIR" ps
+    compose_local "$SCRIPT_DIR" ps
     ;;
   logs)
-    compose_prod "$SCRIPT_DIR" logs -f api worker web
+    compose_local "$SCRIPT_DIR" logs -f api worker web
+    ;;
+  web-install|frontend-install)
+    run_web_command bun install
+    ;;
+  web-add|frontend-add)
+    shift || true
+    [[ "$#" -gt 0 ]] || err "Usage: $0 $COMMAND <package...>"
+    run_web_command bun add "$@"
     ;;
   down)
-    compose_prod "$SCRIPT_DIR" down
+    compose_local "$SCRIPT_DIR" down
     ;;
   stop)
-    compose_prod "$SCRIPT_DIR" stop
+    compose_local "$SCRIPT_DIR" stop
     ;;
   restart)
-    compose_prod "$SCRIPT_DIR" restart
+    compose_local "$SCRIPT_DIR" restart
     ;;
   *)
-    err "Usage: $0 [up|migrate|verify|ps|logs|down|stop|restart]"
+    err "Usage: $0 [up|migrate|verify|ps|logs|web-install|web-add <package...>|down|stop|restart]"
     ;;
 esac

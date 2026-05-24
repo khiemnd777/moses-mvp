@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import Button from '@/shared/Button';
 import type { Citation, CitationDetail } from '@/core/types';
 import { getCitationBadges, getCitationSubtitle, getCitationTitle } from './citationUtils';
+import { CloseIcon, DownloadIcon } from '@/shared/muiIcons';
 
 const CitationDetailModal = ({
   citation,
@@ -47,6 +48,7 @@ const CitationDetailModal = ({
             {subtitle && <div className="citation-modal-subtitle">{subtitle}</div>}
           </div>
           <button aria-label="Đóng popup" className="button outline citation-modal-close" onClick={onClose} type="button">
+            <CloseIcon aria-hidden="true" />
             Đóng
           </button>
         </div>
@@ -60,9 +62,11 @@ const CitationDetailModal = ({
         </div>
         <div className="citation-modal-actions">
           <Button onClick={onDownload} type="button" variant="secondary">
+            <DownloadIcon aria-hidden="true" />
             Tải tài liệu
           </Button>
           <Button onClick={onClose} type="button" variant="outline">
+            <CloseIcon aria-hidden="true" />
             Đóng
           </Button>
         </div>

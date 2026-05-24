@@ -24,7 +24,15 @@ const App = () => {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="brand">Moses Console</div>
+        <div className="brand-lockup" aria-label="Moses Console">
+          <div className="brand-mark" aria-hidden="true">
+            M
+          </div>
+          <div>
+            <div className="brand">Moses Console</div>
+            <div className="brand-subtitle">Legal RAG Operations</div>
+          </div>
+        </div>
         <Navbar />
       </header>
       <main className="app-main">

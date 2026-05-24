@@ -48,7 +48,7 @@ Do not casually edit:
 
 ## Runtime Invariants
 - `VITE_API_BASE_URL` controls the backend target.
-- Local runtime is the root Docker Compose flow (`make up` or `./install/local-compose.sh up`), not the Vite dev server.
+- Local runtime is the root Docker Compose flow (`make up` or `./install/local-compose.sh up`). Vite runs inside the local `web` container; do not depend on a host Vite dev server.
 - Production frontend assets are built inside `frontend/Dockerfile.prod` and served by Nginx in the compose `web` container.
 - The auth token is stored in local storage under `auth_token`.
 - Axios interceptors handle auth token injection, refresh flow, and redirect behavior.
@@ -59,10 +59,11 @@ Do not casually edit:
 ## Required Commands For Verification
 - From repo root, run local stack: `make up`
 - From repo root, tail local stack logs: `make log`
+- Add frontend dependencies through the web container: `make web-add PKG=<package...>`
 - Install dependencies: `cd frontend && bun install`
 - Build production bundle: `cd frontend && bun run build`
 
-Use `bun run dev` or `bun run preview` only for isolated frontend debugging. They are not the standard local runtime path.
+Use host `bun run dev` or `bun run preview` only for isolated frontend debugging. They are not the standard local runtime path.
 
 ## Common Failure Modes
 - Updating backend response shapes without updating `src/core/types.ts` and `src/core/api.ts`

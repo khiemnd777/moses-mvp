@@ -5,6 +5,7 @@ import Panel from '@/shared/Panel';
 import Input from '@/shared/Input';
 import Button from '@/shared/Button';
 import { getSessionState, login } from '@/playground/auth.js';
+import { KeyIcon } from '@/shared/muiIcons';
 
 const PlaygroundLoginPage = () => {
   const navigate = useNavigate();
@@ -75,6 +76,7 @@ const PlaygroundLoginPage = () => {
         />
         {error && <div className="badge">{error}</div>}
         <Button type="submit" disabled={loading}>
+          <KeyIcon aria-hidden="true" />
           {loading ? 'Signing in...' : 'Sign in'}
         </Button>
       </form>

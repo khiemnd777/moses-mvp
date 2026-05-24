@@ -3,6 +3,7 @@ import Button from '@/shared/Button';
 import Input from '@/shared/Input';
 import type { AIPrompt, Citation } from '@/core/types';
 import { testAIPrompt } from '@/core/api';
+import { CloseIcon, PlayArrowIcon, SaveIcon } from '@/shared/muiIcons';
 
 type Props = {
   value?: AIPrompt;
@@ -114,10 +115,12 @@ const PromptForm = ({ value, onSubmit, onCancel }: Props) => {
       </label>
       <div style={{ display: 'flex', gap: 8 }}>
         <Button onClick={() => void handleSubmit()} disabled={saving}>
+          <SaveIcon aria-hidden="true" />
           {saving ? 'Saving...' : 'Save'}
         </Button>
         {onCancel && (
           <Button variant="outline" onClick={onCancel} disabled={saving}>
+            <CloseIcon aria-hidden="true" />
             Cancel
           </Button>
         )}
@@ -134,6 +137,7 @@ const PromptForm = ({ value, onSubmit, onCancel }: Props) => {
             placeholder="Enter test query"
           />
           <Button variant="outline" onClick={() => void handleTestPrompt()} disabled={testLoading || !testQuery.trim()}>
+            <PlayArrowIcon aria-hidden="true" />
             {testLoading ? 'Testing...' : 'Run Test'}
           </Button>
           {testAnswer && (

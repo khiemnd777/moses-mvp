@@ -7,6 +7,7 @@ import {
   trimExcerpt,
   uniqueCitations
 } from './citationUtils';
+import { DownloadIcon, VisibilityIcon } from '@/shared/muiIcons';
 
 const SourcesPanel = ({
   citations,
@@ -48,10 +49,12 @@ const SourcesPanel = ({
                 </div>
                 <div className="source-actions">
                   <button className="button secondary" onClick={() => onOpen(citation, normalizedCitations)} type="button">
+                    <VisibilityIcon aria-hidden="true" />
                     Xem nội dung
                   </button>
                   {(citation.file_url || citation.url) && (
                     <button className="button outline" onClick={() => onDownload(citation)} type="button">
+                      <DownloadIcon aria-hidden="true" />
                       Tải văn bản
                     </button>
                   )}

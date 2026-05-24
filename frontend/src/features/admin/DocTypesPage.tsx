@@ -7,6 +7,7 @@ import type { DocType, DocTypeQueryDebugResponse } from '@/core/types';
 import { useAdminStore } from './adminStore';
 import DocTypeEditor from './DocTypeEditor';
 import { buildLegalRAGForm } from './legalRagPreset';
+import { AddIcon, ArticleIcon, DeleteIcon, ManageSearchIcon } from '@/shared/muiIcons';
 
 const DocTypesPage = () => {
   const [docTypes, setDocTypes] = useState<DocType[]>([]);
@@ -112,7 +113,10 @@ const DocTypesPage = () => {
             <div className="grid">
               <Input label="Doc type code" value={code} onChange={(e) => setCode(e.target.value)} />
               <Input label="Doc type name" value={name} onChange={(e) => setName(e.target.value)} />
-              <Button onClick={handleCreate}>Create</Button>
+              <Button onClick={handleCreate}>
+                <AddIcon aria-hidden="true" />
+                Create
+              </Button>
             </div>
             <div className="grid">
               {docTypes.map((doc) => (
@@ -124,6 +128,7 @@ const DocTypesPage = () => {
                     className="button outline admin-list-item-button doc-types-list-item-button"
                     onClick={() => setSelectedDocTypeId(doc.id)}
                   >
+                    <ArticleIcon aria-hidden="true" />
                     {doc.name} ({doc.code})
                   </button>
                   <Button
@@ -132,6 +137,7 @@ const DocTypesPage = () => {
                     onClick={() => void handleDelete(doc.id)}
                     disabled={deletingDocTypeId === doc.id}
                   >
+                    <DeleteIcon aria-hidden="true" />
                     {deletingDocTypeId === doc.id ? 'Deleting...' : 'Delete'}
                   </Button>
                 </div>
@@ -147,7 +153,10 @@ const DocTypesPage = () => {
         <div className="grid">
           <Input label="Test Query" value={debugQuery} onChange={(e) => setDebugQuery(e.target.value)} />
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button onClick={() => void handleDebugQuery()}>Run Query Debug</Button>
+            <Button onClick={() => void handleDebugQuery()}>
+              <ManageSearchIcon aria-hidden="true" />
+              Run Query Debug
+            </Button>
           </div>
           {debugOutput && (
             <pre className="source-item" style={{ whiteSpace: 'pre-wrap' }}>

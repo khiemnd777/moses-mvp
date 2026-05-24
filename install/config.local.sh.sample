@@ -61,6 +61,8 @@ export HTTPS_BIND="127.0.0.1"
 export LETSENCRYPT_DIR="$APP_ROOT/.local/letsencrypt"
 export CERTBOT_WEBROOT="$APP_ROOT/.local/certbot/www"
 export ENABLE_SSL="0"
+export FRONTEND_DEV_PORT="15175"
+export FRONTEND_USE_POLLING="true"
 
-# Browser-public frontend build value.
+# Browser-public frontend value. Local dev serves Vite on HTTP_PORT and proxies API calls to the api container.
 export VITE_API_BASE_URL="http://localhost:19080"

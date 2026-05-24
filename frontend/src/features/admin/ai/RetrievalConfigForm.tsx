@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { AIRetrievalConfig } from '@/core/types';
 import Button from '@/shared/Button';
+import { CloseIcon, SaveIcon } from '@/shared/muiIcons';
 
 type Props = {
   value: AIRetrievalConfig;
@@ -172,9 +173,11 @@ const RetrievalConfigForm = ({ value, onSubmit, onCancel }: Props) => {
 
       <div style={{ display: 'flex', gap: 8 }}>
         <Button onClick={() => void handleSubmit()} disabled={saving}>
+          <SaveIcon aria-hidden="true" />
           {saving ? 'Saving...' : 'Save'}
         </Button>
         <Button variant="outline" onClick={onCancel}>
+          <CloseIcon aria-hidden="true" />
           Cancel
         </Button>
       </div>

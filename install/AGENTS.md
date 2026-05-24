@@ -15,6 +15,7 @@ Read the repo entrypoint first: [../AGENTS.md](../AGENTS.md)
 Primary owned directories and files:
 - `install.sh`
 - `docker-compose.prod.yml`
+- `docker-compose.dev.yml`
 - `sync-secrets.sh`
 - `repo/`
 - `backend/`
@@ -36,6 +37,7 @@ Do not casually edit:
 - Backend install/env render: `backend/install.sh`
 - Compose startup: `compose/up.sh`
 - Production compose: `docker-compose.prod.yml`
+- Local dev compose: `docker-compose.dev.yml`
 - Backend migrate: `backend/migrate.sh`
 - Backend verify: `backend/verify.sh`
 - Container Nginx config render: `nginx/install.sh`
@@ -52,7 +54,7 @@ Do not casually edit:
 - Docker Compose builds API, worker, and web images on the VPS.
 - The web image builds frontend assets and serves them through Nginx inside the `web` container.
 - Certbot runs as a compose service and stores certificates under `LETSENCRYPT_DIR`.
-- Local development uses `local-compose.sh`, not direct `go run` or `bun run dev`.
+- Local development uses `local-compose.sh` with `docker-compose.dev.yml`, not direct host `go run` or host `bun run dev`.
 
 ## Runtime Invariants
 - Production variables live in `config.sh`; backend runtime then derives `backend/.env` from them.
@@ -73,6 +75,7 @@ Do not casually edit:
 - Secret sync only: `cd install && ./sync-secrets.sh`
 - Local compose from repo root: `make up`, `make down`, `make stop`, `make restart`, `make log`
 - Local compose direct from repo root: `./install/local-compose.sh up`
+- Local frontend dependency add from repo root: `make web-add PKG=<package...>` or `./install/local-compose.sh web-add <package...>`
 
 ## Common Failure Modes
 - Changing required variables without updating `require_vars` calls

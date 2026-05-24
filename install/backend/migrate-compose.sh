@@ -22,8 +22,22 @@ POSTGRES_WAIT_RETRIES="${POSTGRES_WAIT_RETRIES:-30}"
 POSTGRES_WAIT_INTERVAL="${POSTGRES_WAIT_INTERVAL:-2}"
 MIGRATION_TABLE="${MIGRATION_TABLE:-schema_migrations}"
 
+compose_runtime() {
+  case "${COMPOSE_RUNTIME:-prod}" in
+    local|dev)
+      compose_local "$INSTALL_DIR" "$@"
+      ;;
+    prod|production)
+      compose_prod "$INSTALL_DIR" "$@"
+      ;;
+    *)
+      err "Unsupported COMPOSE_RUNTIME: ${COMPOSE_RUNTIME}"
+      ;;
+  esac
+}
+
 psql_compose() {
-  compose_prod "$INSTALL_DIR" exec -T -e PGPASSWORD="$POSTGRES_PASSWORD" postgres \
+  compose_runtime exec -T -e PGPASSWORD="$POSTGRES_PASSWORD" postgres \
     psql \
       -h 127.0.0.1 \
       -p "$DOCKER_POSTGRES_PORT" \
@@ -34,7 +48,7 @@ psql_compose() {
 
 log "Waiting for Compose Postgres at postgres:${DOCKER_POSTGRES_PORT}/${POSTGRES_DB}"
 for ((i = 1; i <= POSTGRES_WAIT_RETRIES; i++)); do
-  if compose_prod "$INSTALL_DIR" exec -T postgres \
+  if compose_runtime exec -T postgres \
     pg_isready \
       -h 127.0.0.1 \
       -p "$DOCKER_POSTGRES_PORT" \

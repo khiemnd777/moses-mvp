@@ -13,6 +13,7 @@ import {
 } from '@/core/api';
 import type { DocumentItem } from '@/core/types';
 import { useAdminStore } from './adminStore';
+import { AddIcon, ArticleIcon, ContentCopyIcon, DeleteIcon, QueueIcon, UploadFileIcon } from '@/shared/muiIcons';
 
 const DocumentsPage = () => {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -173,7 +174,10 @@ const DocumentsPage = () => {
               <Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
               <Input label="Doc Type Code" value={docTypeCode} onChange={(e) => setDocTypeCode(e.target.value)} />
             </div>
-            <Button onClick={handleCreate}>Create Document</Button>
+            <Button onClick={handleCreate}>
+              <AddIcon aria-hidden="true" />
+              Create Document
+            </Button>
             {loading && <div className="badge">Loading documents...</div>}
             {error && <div className="badge">Error: {error}</div>}
             <div className="grid">
@@ -188,6 +192,7 @@ const DocumentsPage = () => {
                         className="button outline admin-list-item-button"
                         onClick={() => setLastOpenedDocumentId(doc.id)}
                       >
+                        <ArticleIcon aria-hidden="true" />
                         <span className="admin-list-item-title">{doc.title}</span>
                       </button>
                       <Button
@@ -196,6 +201,7 @@ const DocumentsPage = () => {
                         onClick={() => void handleCopyTitle(doc.title)}
                         disabled={!doc.title}
                       >
+                        <ContentCopyIcon aria-hidden="true" />
                         {copiedTitle === doc.title ? 'Copied' : 'Copy'}
                       </Button>
                     </div>
@@ -204,6 +210,7 @@ const DocumentsPage = () => {
                       onClick={() => void handleDeleteDocument(doc.id)}
                       disabled={deletingDocumentId === doc.id}
                     >
+                      <DeleteIcon aria-hidden="true" />
                       {deletingDocumentId === doc.id ? 'Deleting...' : 'Delete'}
                     </Button>
                   </div>
@@ -215,6 +222,7 @@ const DocumentsPage = () => {
                       onClick={() => void handleCopyDocTypeCode(doc.doc_type_code)}
                       disabled={!doc.doc_type_code}
                     >
+                      <ContentCopyIcon aria-hidden="true" />
                       {copiedDocTypeCode === doc.doc_type_code ? 'Copied' : 'Copy'}
                     </Button>
                   </div>
@@ -251,13 +259,16 @@ const DocumentsPage = () => {
               <div className="grid two">
                 <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
                 <Button onClick={handleUpload} disabled={!file || uploading}>
+                  <UploadFileIcon aria-hidden="true" />
                   {uploading ? 'Uploading...' : 'Upload Asset'}
                 </Button>
               </div>
               <Button variant="secondary" onClick={handleCreateVersion} disabled={!selectedAssetId || creatingVersion}>
+                <AddIcon aria-hidden="true" />
                 {creatingVersion ? 'Creating...' : 'Create Version'}
               </Button>
               <Button onClick={handleEnqueue} disabled={!selectedAssetId || !selectedVersionId || enqueuing}>
+                <QueueIcon aria-hidden="true" />
                 {enqueuing ? 'Enqueuing...' : 'Enqueue Ingest Job'}
               </Button>
             </div>

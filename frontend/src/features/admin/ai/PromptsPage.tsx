@@ -13,6 +13,7 @@ import Button from '@/shared/Button';
 import Input from '@/shared/Input';
 import Select from '@/shared/Select';
 import PromptForm from './PromptForm';
+import { AddIcon, CloseIcon, DeleteIcon, EditIcon, PlayArrowIcon, StopIcon } from '@/shared/muiIcons';
 
 const emptyPrompt: Omit<AIPrompt, 'id' | 'created_at' | 'updated_at'> = {
   name: '',
@@ -134,7 +135,10 @@ const PromptsPage = () => {
           {loading && <div className="badge">Loading...</div>}
           {error && <div className="badge">{error}</div>}
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button onClick={() => setCreating((prev) => !prev)}>{creating ? 'Close Create' : 'Create'}</Button>
+            <Button onClick={() => setCreating((prev) => !prev)}>
+              {creating ? <CloseIcon aria-hidden="true" /> : <AddIcon aria-hidden="true" />}
+              {creating ? 'Close Create' : 'Create'}
+            </Button>
           </div>
           {creating && (
             <PromptForm value={{ ...emptyPrompt, id: 'new' } as AIPrompt} onSubmit={handleCreate} onCancel={() => setCreating(false)} />
@@ -166,12 +170,15 @@ const PromptsPage = () => {
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <Button variant="outline" onClick={() => setEditingId(item.id)}>
+                          <EditIcon aria-hidden="true" />
                           Edit
                         </Button>
                         <Button variant="outline" onClick={() => void handleToggle(item, !item.enabled)}>
+                          {item.enabled ? <StopIcon aria-hidden="true" /> : <PlayArrowIcon aria-hidden="true" />}
                           {item.enabled ? 'Disable' : 'Enable'}
                         </Button>
                         <Button variant="outline" onClick={() => void handleDelete(item.id)}>
+                          <DeleteIcon aria-hidden="true" />
                           Delete
                         </Button>
                       </div>
@@ -204,6 +211,7 @@ const PromptsPage = () => {
           />
           <div style={{ display: 'flex', gap: 8 }}>
             <Button onClick={() => void handleRunPromptTest()} disabled={testLoading || !testPromptId || !testQuery.trim()}>
+              <PlayArrowIcon aria-hidden="true" />
               {testLoading ? 'Running...' : 'Run Test'}
             </Button>
           </div>

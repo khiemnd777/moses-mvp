@@ -3,6 +3,7 @@ import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
 import { deleteIngestJob, listIngestJobs, unwrapError } from '@/core/api';
 import type { IngestJob } from '@/core/types';
+import { DeleteIcon, PlayArrowIcon, StopIcon } from '@/shared/muiIcons';
 
 const IngestJobsPage = () => {
   const [jobs, setJobs] = useState<IngestJob[]>([]);
@@ -55,6 +56,7 @@ const IngestJobsPage = () => {
     <Panel title="Ingest Jobs">
       <div className="grid">
         <Button variant={polling ? 'secondary' : 'primary'} onClick={() => setPolling((prev) => !prev)}>
+          {polling ? <StopIcon aria-hidden="true" /> : <PlayArrowIcon aria-hidden="true" />}
           {polling ? 'Stop Polling' : 'Start Polling'}
         </Button>
         {loading && <div className="badge">Loading jobs...</div>}
@@ -73,6 +75,7 @@ const IngestJobsPage = () => {
                   onClick={() => void handleDelete(job.id)}
                   disabled={deletingJobId === job.id}
                 >
+                  <DeleteIcon aria-hidden="true" />
                   {deletingJobId === job.id ? 'Deleting...' : 'Delete Job'}
                 </Button>
               </div>

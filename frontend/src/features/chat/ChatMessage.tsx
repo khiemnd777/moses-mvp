@@ -2,6 +2,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage as ChatMessageType, Citation } from '@/core/types';
 import { getCitationChipLabel, getCitationKey, getCitationSubtitle, getCitationTitle, uniqueCitations } from './citationUtils';
+import { ArticleIcon } from '@/shared/muiIcons';
 
 const formatTimestamp = (value: string) =>
   new Intl.DateTimeFormat('vi-VN', {
@@ -38,6 +39,7 @@ const ChatMessage = ({
                 title={getCitationTitle(citation, index)}
                 type="button"
               >
+                <ArticleIcon aria-hidden="true" />
                 <span className="citation-chip-index">[{index + 1}]</span>
                 <span className="citation-chip-main">{getCitationChipLabel(citation, index)}</span>
                 {getCitationSubtitle(citation) && <span className="citation-chip-subtitle">{getCitationSubtitle(citation)}</span>}

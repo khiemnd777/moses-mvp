@@ -3,6 +3,7 @@ import { getQdrantCollection } from '@/core/api';
 import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
 import { useCachedQuery } from './useAdminApi';
+import { ArrowBackIcon, DeleteSweepIcon, HealthIcon, RefreshIcon, SearchIcon } from '@/shared/muiIcons';
 
 const CollectionDetailPage = () => {
   const { name = '' } = useParams();
@@ -20,10 +21,14 @@ const CollectionDetailPage = () => {
       <div className="grid">
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Button onClick={() => void refresh()} disabled={isRefreshing}>
+            <RefreshIcon aria-hidden="true" />
             {isRefreshing ? 'Refreshing...' : 'Refresh'}
           </Button>
           <Link to="/tuning/vectors/collections">
-            <Button variant="outline">Back to Collections</Button>
+            <Button variant="outline">
+              <ArrowBackIcon aria-hidden="true" />
+              Back to Collections
+            </Button>
           </Link>
           {isLoading && <div className="badge">Loading collection...</div>}
           {error && <div className="badge">Error: {error}</div>}
@@ -57,13 +62,22 @@ const CollectionDetailPage = () => {
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               <Link to="/tuning/vectors/health">
-                <Button variant="secondary">Vector Health</Button>
+                <Button variant="secondary">
+                  <HealthIcon aria-hidden="true" />
+                  Vector Health
+                </Button>
               </Link>
               <Link to="/tuning/vectors/search-debug">
-                <Button variant="secondary">Search Debug</Button>
+                <Button variant="secondary">
+                  <SearchIcon aria-hidden="true" />
+                  Search Debug
+                </Button>
               </Link>
               <Link to="/tuning/vectors/delete">
-                <Button variant="secondary">Delete by Filter</Button>
+                <Button variant="secondary">
+                  <DeleteSweepIcon aria-hidden="true" />
+                  Delete by Filter
+                </Button>
               </Link>
             </div>
           </>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Input from '@/shared/Input';
 import Select from '@/shared/Select';
 import { useChatStore } from './chatStore';
+import { ExpandLessIcon, ExpandMoreIcon, TuneIcon } from '@/shared/muiIcons';
 
 const FiltersBar = () => {
   const { filters, updateFilters } = useChatStore();
@@ -17,6 +18,8 @@ const FiltersBar = () => {
           onClick={() => setIsExpanded((prev) => !prev)}
           type="button"
         >
+          <TuneIcon aria-hidden="true" />
+          {isExpanded ? <ExpandLessIcon aria-hidden="true" /> : <ExpandMoreIcon aria-hidden="true" />}
           {isExpanded ? 'Thu gọn' : 'Mở rộng'}
         </button>
       </div>

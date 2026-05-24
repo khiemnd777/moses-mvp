@@ -66,6 +66,7 @@ Verification emphasis differs by class:
 - Frontend route shell: `frontend/src/app/App.tsx`
 - Install orchestrator: `install/install.sh`
 - Local runtime entrypoint: root `make up`, backed by `install/local-compose.sh`
+- Local dev compose file: `install/docker-compose.dev.yml`; production compose file: `install/docker-compose.prod.yml`
 - Production deployment entrypoint: `.github/workflows/deploy.yml` on `v*` tag push or manual dispatch, SSHing to VPS and running `install/install.sh`
 - Backend reads `backend/.env`, then renders `backend/config/config.yaml` at runtime
 - Backend depends on Postgres and Qdrant
@@ -75,7 +76,7 @@ Verification emphasis differs by class:
 ## Shared Commands
 - Local full stack up/down: `make up`, `make down`
 - Local stack stop/restart/logs: `make stop`, `make restart`, `make log`
-- Local compose direct entrypoint: `./install/local-compose.sh up|down|stop|restart|logs|ps|migrate|verify`
+- Local compose direct entrypoint: `./install/local-compose.sh up|down|stop|restart|logs|ps|migrate|verify|web-install|web-add`
 - Backend tests: `cd backend && go test ./...`
 - Backend build checks: `cd backend && go build -o bin/api ./cmd/api && go build -o bin/worker ./cmd/worker`
 - Frontend build: `cd frontend && bun run build`
@@ -89,7 +90,7 @@ Verification emphasis differs by class:
 - Ingest and vector operations must preserve consistency between chunk rows in Postgres and vector payloads in Qdrant.
 - Frontend admin pages mirror real backend capabilities. Do not add UI-only behavior that has no backend support.
 - Deployment scripts render production env files. Do not assume local `.env` behavior matches VPS behavior unless verified.
-- Local and production runtimes both use Docker Compose. Do not document or depend on direct host `go run`, Vite dev server, or host Nginx as the normal runtime path.
+- Local and production runtimes both use Docker Compose. Local web development uses Vite inside the `web` container; do not document or depend on direct host `go run`, host `bun run dev`, or host Nginx as the normal runtime path.
 
 ## Common Failure Modes
 - Updating backend request or response shapes without updating `frontend/src/core/api.ts` and related types

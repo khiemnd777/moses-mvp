@@ -6,6 +6,7 @@ import Input from '@/shared/Input';
 import Button from '@/shared/Button';
 import apiClient from '@/playground/apiClient.js';
 import { getSessionState, setToken } from '@/playground/auth.js';
+import { LockResetIcon } from '@/shared/muiIcons';
 
 const ChangePasswordPage = () => {
   const navigate = useNavigate();
@@ -110,6 +111,7 @@ const ChangePasswordPage = () => {
         />
         {error && <div className="badge">{error}</div>}
         <Button type="submit" disabled={loading}>
+          <LockResetIcon aria-hidden="true" />
           {loading ? 'Updating...' : 'Update Password'}
         </Button>
       </form>

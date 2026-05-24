@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Button from '@/shared/Button';
 import { useChatStore } from './chatStore';
+import { PsychologyIcon, SendIcon } from '@/shared/muiIcons';
 
 const suggestedQuestions = [
   'Tóm tắt căn cứ pháp lý và điều khoản áp dụng cho trường hợp này',
@@ -37,8 +38,9 @@ const ChatInput = () => {
           }
         }}
       />
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div className="chat-input-actions">
         <Button onClick={() => void handleSend()} disabled={!canSend}>
+          <SendIcon aria-hidden="true" />
           Gửi câu hỏi
         </Button>
         {!value.trim() &&
@@ -50,6 +52,7 @@ const ChatInput = () => {
               onClick={() => setValue(question)}
               type="button"
             >
+              <PsychologyIcon aria-hidden="true" />
               {question}
             </button>
           ))}

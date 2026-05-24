@@ -4,6 +4,7 @@ import Button from '@/shared/Button';
 import { answer, search } from '@/core/api';
 import type { ChatFilters } from '@/core/types';
 import { logout } from '@/playground/auth.js';
+import { LogoutIcon, PsychologyIcon, SearchIcon } from '@/shared/muiIcons';
 
 const PlaygroundPage = () => {
   const [query, setQuery] = useState('');
@@ -33,6 +34,7 @@ const PlaygroundPage = () => {
       <div className="grid">
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <Button type="button" variant="outline" onClick={logout}>
+            <LogoutIcon aria-hidden="true" />
             Logout
           </Button>
         </div>
@@ -40,7 +42,10 @@ const PlaygroundPage = () => {
           <div className="label">Run /search</div>
           <textarea className="textarea" rows={3} value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
-        <Button onClick={handleSearch}>Run Search</Button>
+        <Button onClick={handleSearch}>
+          <SearchIcon aria-hidden="true" />
+          Run Search
+        </Button>
         {results && (
           <pre className="source-item" style={{ whiteSpace: 'pre-wrap' }}>
             {results}
@@ -50,7 +55,10 @@ const PlaygroundPage = () => {
           <div className="label">Run /answer</div>
           <textarea className="textarea" rows={3} value={answerInput} onChange={(e) => setAnswerInput(e.target.value)} />
         </label>
-        <Button onClick={handleAnswer}>Run Answer</Button>
+        <Button onClick={handleAnswer}>
+          <PsychologyIcon aria-hidden="true" />
+          Run Answer
+        </Button>
         {answerText && (
           <pre className="source-item" style={{ whiteSpace: 'pre-wrap' }}>
             {answerText}

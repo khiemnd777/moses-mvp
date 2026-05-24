@@ -17,7 +17,7 @@ Host Nginx is not installed or reloaded by this flow.
 
 ## Local Docker Compose
 
-Local development also runs through Docker Compose:
+Local development runs through the dev Compose file, not the production Nginx web image:
 
 ```bash
 cd /Users/khiemnguyen/Works/project_legal_ai/legal_api
@@ -43,6 +43,18 @@ make log
 ```
 
 Local published ports are web `19080`, API `19088`, Postgres `19433`, Qdrant `19334`, and HTTPS `19443`.
+
+The local `web` service runs Vite with `frontend/` bind-mounted into `/app`, so source edits are watched and pushed through Vite HMR. The container keeps `/app/node_modules` on a named Docker volume so host bind mounts do not hide installed Linux dependencies. On every `web` startup it runs `bun install` before `bun run dev`, which picks up package changes.
+
+To install or add frontend libraries inside the same container/volume:
+
+```bash
+make web-install
+make web-add PKG="@tanstack/react-query"
+./install/local-compose.sh web-add lucide-react
+```
+
+`web-add` updates `frontend/package.json`, the Bun lockfile, and the Docker volume-backed `node_modules`.
 
 Local compose uses `.local/` for Postgres, Qdrant, uploads, Certbot webroot, and local certificate storage.
 
@@ -139,7 +151,7 @@ cd /opt/legal_api/app
 - `install/config.sh` is the source of truth for production secrets and runtime paths.
 - `backend/.env` is rendered on the VPS from `install/config.sh`.
 - `OPENAI_EMBEDDINGS_MODEL` must match the existing Qdrant collection dimension. The default `text-embedding-3-small` uses 1536 dimensions.
-- The production compose file is `install/docker-compose.prod.yml`.
+- The production compose file is `install/docker-compose.prod.yml`; the local dev compose file is `install/docker-compose.dev.yml`.
 - Nginx config is rendered to `install/nginx/rendered/default.conf` and mounted into the `web` container.
 - Certbot uses the compose `certbot` service and stores certificates under `LETSENCRYPT_DIR`.
 - `VITE_*` values are browser-public build-time values; do not use them for private secrets.

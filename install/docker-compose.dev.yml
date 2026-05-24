@@ -1,0 +1,102 @@
+name: ${COMPOSE_PROJECT_NAME:-legal-local}
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE}
+    container_name: ${COMPOSE_PROJECT_NAME:-legal-local}-postgres
+    restart: unless-stopped
+    command: ["postgres", "-c", "port=${DOCKER_POSTGRES_PORT}"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT}:${DOCKER_POSTGRES_PORT}"
+    volumes:
+      - ${POSTGRES_DATA_DIR}:/var/lib/postgresql/data
+
+  qdrant:
+    image: ${QDRANT_IMAGE}
+    container_name: ${COMPOSE_PROJECT_NAME:-legal-local}-qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: ${DOCKER_QDRANT_PORT}
+    ports:
+      - "${QDRANT_BIND:-127.0.0.1}:${QDRANT_PORT}:${DOCKER_QDRANT_PORT}"
+    volumes:
+      - ${QDRANT_STORAGE_DIR}:/qdrant/storage
+
+  api:
+    image: ${COMPOSE_PROJECT_NAME:-legal-local}-api
+    container_name: ${COMPOSE_PROJECT_NAME:-legal-local}-api
+    restart: unless-stopped
+    build:
+      context: ../backend
+      dockerfile: docker/api.Dockerfile
+    env_file:
+      - ../backend/.env
+    environment:
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      POSTGRES_PORT: ${DOCKER_POSTGRES_PORT}
+      QDRANT_HOST: ${DOCKER_QDRANT_HOST}
+      QDRANT_PORT: ${DOCKER_QDRANT_PORT}
+      STORAGE_ROOT_DIR: ${DOCKER_STORAGE_ROOT_DIR}
+    ports:
+      - "${API_BIND:-127.0.0.1}:${PORT}:${PORT}"
+    depends_on:
+      - postgres
+      - qdrant
+    volumes:
+      - ${UPLOADS_DATA_DIR}:/app/data/uploads
+
+  worker:
+    image: ${COMPOSE_PROJECT_NAME:-legal-local}-worker
+    container_name: ${COMPOSE_PROJECT_NAME:-legal-local}-worker
+    restart: unless-stopped
+    build:
+      context: ../backend
+      dockerfile: docker/worker.Dockerfile
+    env_file:
+      - ../backend/.env
+    environment:
+      POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
+      POSTGRES_PORT: ${DOCKER_POSTGRES_PORT}
+      QDRANT_HOST: ${DOCKER_QDRANT_HOST}
+      QDRANT_PORT: ${DOCKER_QDRANT_PORT}
+      STORAGE_ROOT_DIR: ${DOCKER_STORAGE_ROOT_DIR}
+    depends_on:
+      - postgres
+      - qdrant
+    volumes:
+      - ${UPLOADS_DATA_DIR}:/app/data/uploads
+
+  web:
+    image: ${COMPOSE_PROJECT_NAME:-legal-local}-web-dev
+    container_name: ${COMPOSE_PROJECT_NAME:-legal-local}-web
+    restart: unless-stopped
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    working_dir: /app
+    command:
+      - sh
+      - -lc
+      - bun install && exec bun run dev -- --host 0.0.0.0 --port ${FRONTEND_DEV_PORT:-15175}
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+      VITE_ADMIN_API_KEY: ${VITE_ADMIN_API_KEY:-}
+      VITE_ADMIN_BEARER_TOKEN: ${VITE_ADMIN_BEARER_TOKEN:-}
+      DEV_API_PROXY_TARGET: http://api:${PORT}
+      CHOKIDAR_USEPOLLING: ${FRONTEND_USE_POLLING:-true}
+    ports:
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-19080}:${FRONTEND_DEV_PORT:-15175}"
+    depends_on:
+      - api
+    volumes:
+      - ../frontend:/app
+      - frontend-node-modules:/app/node_modules
+      - ../docs:/docs:ro
+
+volumes:
+  frontend-node-modules:
+    name: ${COMPOSE_PROJECT_NAME:-legal-local}-frontend-node-modules

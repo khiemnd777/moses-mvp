@@ -5,6 +5,7 @@ import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
 import Input from '@/shared/Input';
 import { useMutationAction } from './useAdminApi';
+import { ContentCopyIcon, SearchIcon } from '@/shared/muiIcons';
 
 const parseCsv = (value: string) =>
   value
@@ -98,6 +99,7 @@ const SearchDebugPage = () => {
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Button onClick={() => void handleRun()} disabled={isLoading || !queryText.trim()}>
+            <SearchIcon aria-hidden="true" />
             {isLoading ? 'Searching...' : 'Run Search'}
           </Button>
           {error && <div className="badge">Error: {error}</div>}
@@ -122,6 +124,7 @@ const SearchDebugPage = () => {
                     <div className="badge">Score: {hit.score.toFixed(6)}</div>
                     {hit.chunk?.chunk_id && (
                       <Button variant="outline" onClick={() => void copyChunkId(hit.chunk?.chunk_id)}>
+                        <ContentCopyIcon aria-hidden="true" />
                         {copiedChunk === hit.chunk.chunk_id ? 'Copied' : 'Copy chunk_id'}
                       </Button>
                     )}

@@ -82,3 +82,22 @@ compose_prod() {
     -f "$compose_file" \
     "$@"
 }
+
+compose_local() {
+  local install_dir="$1"
+  shift
+
+  local root env_file compose_file
+  root="$(repo_root "$install_dir")"
+  env_file="$root/backend/.env"
+  compose_file="$root/install/docker-compose.dev.yml"
+
+  require_file "$env_file"
+  require_file "$compose_file"
+
+  docker compose \
+    --project-name "$(compose_project_name)" \
+    --env-file "$env_file" \
+    -f "$compose_file" \
+    "$@"
+}

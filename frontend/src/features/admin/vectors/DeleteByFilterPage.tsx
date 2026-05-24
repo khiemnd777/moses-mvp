@@ -5,6 +5,7 @@ import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
 import Input from '@/shared/Input';
 import { useMutationAction } from './useAdminApi';
+import { DeleteSweepIcon, FactCheckIcon, SearchIcon } from '@/shared/muiIcons';
 
 const DEFAULT_FILTER = JSON.stringify(
   {
@@ -95,9 +96,11 @@ const DeleteByFilterPage = () => {
         </label>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <Button variant="secondary" onClick={handleParse}>
+            <FactCheckIcon aria-hidden="true" />
             Validate Filter (Step 1)
           </Button>
           <Button onClick={() => void runDryRun()} disabled={!parsedFilter || dryRunMutation.isLoading}>
+            <SearchIcon aria-hidden="true" />
             {dryRunMutation.isLoading ? 'Running dry run...' : 'Dry Run Preview (Step 2)'}
           </Button>
         </div>
@@ -125,6 +128,7 @@ const DeleteByFilterPage = () => {
           I confirm this delete operation is irreversible.
         </label>
         <Button onClick={() => void runDelete()} disabled={!dryRunResult || !confirmChecked || deleteMutation.isLoading}>
+          <DeleteSweepIcon aria-hidden="true" />
           {deleteMutation.isLoading ? 'Deleting...' : 'Confirm Delete (Step 3)'}
         </Button>
         {deleteMutation.error && <div className="badge">Delete error: {deleteMutation.error}</div>}

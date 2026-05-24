@@ -5,6 +5,7 @@ import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
 import Input from '@/shared/Input';
 import { useMutationAction } from './useAdminApi';
+import { HealthIcon, SearchIcon } from '@/shared/muiIcons';
 
 const HealthCard = ({ label, value, tone = 'neutral' }: { label: string; value: string | number; tone?: 'neutral' | 'ok' | 'warn' }) => (
   <div className={`source-item health-card ${tone}`}>
@@ -68,9 +69,11 @@ const VectorHealthPage = () => {
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <Button onClick={() => void runQuickScan()} disabled={isLoading}>
+            <SearchIcon aria-hidden="true" />
             {isLoading ? 'Scanning...' : 'Quick Scan'}
           </Button>
           <Button variant="outline" onClick={() => void runFullScan()} disabled={isLoading}>
+            <HealthIcon aria-hidden="true" />
             Full Scan (Warning)
           </Button>
         </div>

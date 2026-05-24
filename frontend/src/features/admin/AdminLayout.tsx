@@ -1,49 +1,56 @@
 import { NavLink, Outlet } from 'react-router-dom';
 
+const navSections = [
+  {
+    label: 'Content',
+    items: [
+      { to: '/tuning/doc-types', label: 'Doc Types' },
+      { to: '/tuning/documents', label: 'Documents' },
+      { to: '/tuning/ingest-jobs', label: 'Ingest Jobs' }
+    ]
+  },
+  {
+    label: 'AI Control',
+    items: [
+      { to: '/tuning/ai/guard-policies', label: 'Guard Policies' },
+      { to: '/tuning/ai/prompts', label: 'Prompts' },
+      { to: '/tuning/ai/retrieval-configs', label: 'Retrieval Configs' }
+    ]
+  },
+  {
+    label: 'Vectors',
+    items: [
+      { to: '/tuning/vectors/collections', label: 'Collections' },
+      { to: '/tuning/vectors/search-debug', label: 'Search Debug' },
+      { to: '/tuning/vectors/health', label: 'Health' },
+      { to: '/tuning/vectors/delete', label: 'Delete by Filter' },
+      { to: '/tuning/vectors/reindex', label: 'Reindex' }
+    ]
+  }
+];
+
 const AdminLayout = () => {
   return (
     <div className="admin-shell">
-      <aside className="side-nav">
-        <NavLink to="/tuning/doc-types" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Doc Types
-        </NavLink>
-        <NavLink to="/tuning/documents" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Documents
-        </NavLink>
-        <NavLink to="/tuning/ingest-jobs" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Ingest Jobs
-        </NavLink>
-        <NavLink to="/tuning/ai/guard-policies" className={({ isActive }) => (isActive ? 'active' : '')}>
-          AI Guard Policies
-        </NavLink>
-        <NavLink to="/tuning/ai/prompts" className={({ isActive }) => (isActive ? 'active' : '')}>
-          AI Prompts
-        </NavLink>
-        <NavLink to="/tuning/ai/retrieval-configs" className={({ isActive }) => (isActive ? 'active' : '')}>
-          AI Retrieval Configs
-        </NavLink>
-        <NavLink to="/tuning/vectors/collections" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Vector Collections
-        </NavLink>
-        <NavLink to="/tuning/vectors/search-debug" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Vector Search Debug
-        </NavLink>
-        <NavLink to="/tuning/vectors/health" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Vector Health
-        </NavLink>
-        <NavLink to="/tuning/vectors/delete" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Vector Delete
-        </NavLink>
-        <NavLink to="/tuning/vectors/reindex" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Vector Reindex
-        </NavLink>
-        {/* <NavLink to="/admin/playground" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Playground
-        </NavLink> */}
+      <aside className="side-nav card">
+        <div className="side-nav-title">
+          <span>Operations</span>
+          <span className="badge">Admin</span>
+        </div>
+        {navSections.map((section) => (
+          <div className="side-nav-section" key={section.label}>
+            <div className="side-nav-label">{section.label}</div>
+            {section.items.map((item) => (
+              <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? 'active' : '')}>
+                {item.label}
+              </NavLink>
+            ))}
+          </div>
+        ))}
       </aside>
-      <div className="grid" style={{ gap: 20 }}>
+      <main className="admin-content">
         <Outlet />
-      </div>
+      </main>
     </div>
   );
 };

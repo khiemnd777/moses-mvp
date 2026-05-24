@@ -4,6 +4,7 @@ import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
 import type { QdrantCollectionSummary } from '@/core/types';
 import { useCachedQuery } from './useAdminApi';
+import { RefreshIcon } from '@/shared/muiIcons';
 
 const renderNumber = (value?: number) => (typeof value === 'number' ? value.toLocaleString() : '-');
 
@@ -21,6 +22,7 @@ const CollectionsDashboardPage = () => {
       <div className="grid">
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Button onClick={() => void refresh()} disabled={isRefreshing}>
+            <RefreshIcon aria-hidden="true" />
             {isRefreshing ? 'Refreshing...' : 'Refresh'}
           </Button>
           {isLoading && <div className="badge">Loading collections...</div>}

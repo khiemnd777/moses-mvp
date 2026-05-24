@@ -1,5 +1,6 @@
 import Button from '@/shared/Button';
 import { useChatStore } from './chatStore';
+import { AddIcon, DeleteIcon, ExpandLessIcon, ExpandMoreIcon } from '@/shared/muiIcons';
 
 const formatTimestamp = (value?: string) => {
   if (!value) return '';
@@ -36,11 +37,13 @@ const ConversationSidebar = ({
             onClick={() => onToggleCollapse?.()}
             type="button"
           >
+            {isCollapsed ? <ExpandMoreIcon aria-hidden="true" /> : <ExpandLessIcon aria-hidden="true" />}
             {isCollapsed ? 'Expand' : 'Collapse'}
           </Button>
         </div>
         <div className="chat-sidebar-actions">
           <Button variant="outline" onClick={() => void createConversation()} disabled={isLoading}>
+            <AddIcon aria-hidden="true" />
             Cuộc trò chuyện mới
           </Button>
         </div>
@@ -71,6 +74,7 @@ const ConversationSidebar = ({
               disabled={isLoading}
               onClick={() => void deleteConversation(conversation.conversation_id)}
             >
+              <DeleteIcon aria-hidden="true" />
               Xóa
             </Button>
           </div>

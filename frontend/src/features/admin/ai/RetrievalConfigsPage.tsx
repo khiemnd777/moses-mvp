@@ -13,6 +13,7 @@ import type { AIRetrievalConfig } from '@/core/types';
 import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
 import RetrievalConfigForm from './RetrievalConfigForm';
+import { AddIcon, CloseIcon, DeleteIcon, EditIcon, PlayArrowIcon, SearchIcon, StopIcon } from '@/shared/muiIcons';
 
 const emptyConfig: Omit<AIRetrievalConfig, 'id' | 'created_at' | 'updated_at'> = {
   name: '',
@@ -128,7 +129,10 @@ const RetrievalConfigsPage = () => {
           {loading && <div className="badge">Loading...</div>}
           {error && <div className="badge">{error}</div>}
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button onClick={() => setCreating((prev) => !prev)}>{creating ? 'Close Create' : 'Create'}</Button>
+            <Button onClick={() => setCreating((prev) => !prev)}>
+              {creating ? <CloseIcon aria-hidden="true" /> : <AddIcon aria-hidden="true" />}
+              {creating ? 'Close Create' : 'Create'}
+            </Button>
           </div>
 
           {creating && (
@@ -165,12 +169,15 @@ const RetrievalConfigsPage = () => {
                   <td>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <Button variant="outline" onClick={() => setEditingId(item.id)}>
+                        <EditIcon aria-hidden="true" />
                         Edit
                       </Button>
                       <Button variant="outline" onClick={() => void (item.enabled ? handleDisable(item.id) : handleEnable(item.id))}>
+                        {item.enabled ? <StopIcon aria-hidden="true" /> : <PlayArrowIcon aria-hidden="true" />}
                         {item.enabled ? 'Disable' : 'Enable'}
                       </Button>
                       <Button variant="outline" onClick={() => void handleDelete(item.id)}>
+                        <DeleteIcon aria-hidden="true" />
                         Delete
                       </Button>
                     </div>
@@ -199,7 +206,10 @@ const RetrievalConfigsPage = () => {
             <textarea className="textarea" rows={3} value={testQuery} onChange={(e) => setTestQuery(e.target.value)} />
           </label>
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button onClick={() => void runRetrievalTest()}>Run Test</Button>
+            <Button onClick={() => void runRetrievalTest()}>
+              <SearchIcon aria-hidden="true" />
+              Run Test
+            </Button>
           </div>
           {testOutput && (
             <pre className="source-item" style={{ whiteSpace: 'pre-wrap' }}>

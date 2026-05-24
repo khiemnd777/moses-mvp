@@ -9,6 +9,7 @@ import FiltersBar from './FiltersBar';
 import SourcesPanel from './SourcesPanel';
 import { useChatStore } from './chatStore';
 import type { Citation, CitationDetail } from '@/core/types';
+import { ArticleIcon, ExpandLessIcon, ExpandMoreIcon } from '@/shared/muiIcons';
 
 const ChatPage = () => {
   const { hydrate, currentConversationId, messagesByConversation, isStreaming, isLoading, error } = useChatStore();
@@ -97,7 +98,17 @@ const ChatPage = () => {
   return (
     <div className="chat-layout">
       <ConversationSidebar isCollapsed={isHistoryCollapsed} onToggleCollapse={() => setIsHistoryCollapsed((value) => !value)} />
-      <Panel bodyClassName="chat-main-panel-body" className="chat-main-panel" title="Trợ lý pháp lý">
+      <section className="chat-workbench">
+        <header className="chat-workbench-header">
+          <div>
+            <div className="label">Playground</div>
+            <h1>Trợ lý pháp lý</h1>
+            <p>Tra cứu văn bản, kiểm tra căn cứ pháp lý và mở nguồn trích dẫn trong cùng một luồng làm việc.</p>
+          </div>
+          <div className={`chat-status-pill ${isStreaming ? 'is-live' : ''}`.trim()}>
+            {isStreaming ? 'Đang phản hồi' : 'Sẵn sàng'}
+          </div>
+        </header>
         <div className="chat-main">
           <div className="chat-column">
             <FiltersBar />
@@ -129,12 +140,16 @@ const ChatPage = () => {
             className={`source-panel mobile-collapsible ${isSourcesCollapsed ? 'is-collapsed' : ''}`.trim()}
             title={
               <div className="panel-title-with-action">
-                <span>Nguồn pháp lý</span>
+                <span className="panel-title-label">
+                  <ArticleIcon aria-hidden="true" />
+                  Nguồn pháp lý
+                </span>
                 <button
                   className="button outline panel-toggle-button"
                   onClick={() => setIsSourcesCollapsed((value) => !value)}
                   type="button"
                 >
+                  {isSourcesCollapsed ? <ExpandMoreIcon aria-hidden="true" /> : <ExpandLessIcon aria-hidden="true" />}
                   {isSourcesCollapsed ? 'Expand' : 'Collapse'}
                 </button>
               </div>
@@ -155,7 +170,7 @@ const ChatPage = () => {
           </Panel>
         </div>
         {isStreaming && <div className="chat-stream-indicator">Đang nhận phản hồi trực tuyến...</div>}
-      </Panel>
+      </section>
       {downloadNotice && <div className="download-notice-popup">{downloadNotice}</div>}
       {activeCitation && (
         <CitationDetailModal

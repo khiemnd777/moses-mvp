@@ -8,6 +8,7 @@ import type { DocType, DocTypeForm, QueryProfile } from '@/core/types';
 import { canonicalStringify, sha256 } from '@/core/utils';
 import { useDisplayModeStore } from '@/app/displayModeStore';
 import { applyLegalRAGPreset } from './legalRagPreset';
+import { AddIcon, DeleteIcon, FactCheckIcon, SaveIcon } from '@/shared/muiIcons';
 
 const safeParseForm = (value: string): DocTypeForm | null => {
   try {
@@ -244,6 +245,7 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
       <PanelSection title="Legal RAG Preset">
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <Button type="button" variant="secondary" disabled={!isFormValid} onClick={handleApplyLegalPreset}>
+            <FactCheckIcon aria-hidden="true" />
             Apply Preset
           </Button>
           {presetApplied && <div className="badge">Preset applied. Save to persist.</div>}
@@ -363,6 +365,7 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
                   })
                 }
               >
+                <DeleteIcon aria-hidden="true" />
                 Remove
               </Button>
             </div>
@@ -377,6 +380,7 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
               })
             }
           >
+            <AddIcon aria-hidden="true" />
             Add field
           </Button>
         </div>
@@ -583,7 +587,10 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
         </div>
       </PanelSection>
       <div className="doc-type-editor-actions">
-        <Button onClick={handleSave}>Save</Button>
+        <Button onClick={handleSave}>
+          <SaveIcon aria-hidden="true" />
+          Save
+        </Button>
       </div>
     </div>
   );

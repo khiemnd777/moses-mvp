@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Button from '@/shared/Button';
+import { CloseIcon, ContentCopyIcon } from '@/shared/muiIcons';
 import chatgptSetupMarkdown from './chatgpt-setup.md?raw';
 import ragGuideMarkdown from './how-to-rag.md?raw';
 import chatgptLegalRagInstructionMarkdown from '../../../../docs/chatgpt_legal_rag_instruction.md?raw';
@@ -245,11 +246,13 @@ const GuidePreviewPage = () => {
                 onClick={() => setActiveSourceId(null)}
                 type="button"
               >
+                <CloseIcon aria-hidden="true" />
                 Đóng
               </button>
             </div>
             <div className="citation-modal-actions">
               <Button onClick={handleCopySource} type="button" variant="secondary">
+                <ContentCopyIcon aria-hidden="true" />
                 {copyState === 'copied' ? 'Đã copy' : 'Copy'}
               </Button>
               {copyState === 'error' && <span className="badge">Không thể copy nội dung.</span>}

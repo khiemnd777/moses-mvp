@@ -10,6 +10,7 @@ import type { AIGuardPolicy } from '@/core/types';
 import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
 import GuardPolicyForm from './GuardPolicyForm';
+import { AddIcon, CloseIcon, DeleteIcon, EditIcon, PlayArrowIcon, StopIcon } from '@/shared/muiIcons';
 
 const emptyPolicy: Omit<AIGuardPolicy, 'id' | 'created_at' | 'updated_at'> = {
   name: '',
@@ -98,7 +99,10 @@ const GuardPoliciesPage = () => {
           {loading && <div className="badge">Loading...</div>}
           {error && <div className="badge">{error}</div>}
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button onClick={() => setCreating((prev) => !prev)}>{creating ? 'Close Create' : 'Create'}</Button>
+            <Button onClick={() => setCreating((prev) => !prev)}>
+              {creating ? <CloseIcon aria-hidden="true" /> : <AddIcon aria-hidden="true" />}
+              {creating ? 'Close Create' : 'Create'}
+            </Button>
           </div>
           {creating && (
             <GuardPolicyForm
@@ -134,12 +138,15 @@ const GuardPoliciesPage = () => {
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <Button variant="outline" onClick={() => setEditingId(item.id)}>
+                          <EditIcon aria-hidden="true" />
                           Edit
                         </Button>
                         <Button variant="outline" onClick={() => void handleToggle(item, !item.enabled)}>
+                          {item.enabled ? <StopIcon aria-hidden="true" /> : <PlayArrowIcon aria-hidden="true" />}
                           {item.enabled ? 'Disable' : 'Enable'}
                         </Button>
                         <Button variant="outline" onClick={() => void handleDelete(item.id)}>
+                          <DeleteIcon aria-hidden="true" />
                           Delete
                         </Button>
                       </div>
