@@ -24,6 +24,135 @@ compose_service_running() {
   compose_local "$SCRIPT_DIR" ps --status running --services | grep -qx "$service"
 }
 
+compose_status_rows() {
+  compose_local "$SCRIPT_DIR" ps -a --format '{{.Service}}\t{{.State}}\t{{.Status}}'
+}
+
+local_compose_services() {
+  compose_local "$SCRIPT_DIR" config --services
+}
+
+print_compose_status_rows() {
+  local rows="$1"
+
+  if [[ -z "$rows" ]]; then
+    echo "No local Compose containers found."
+    return
+  fi
+
+  printf '%-12s %-12s %s\n' "SERVICE" "STATE" "STATUS"
+  printf '%s\n' "$rows" | awk -F '\t' '{ printf "%-12s %-12s %s\n", $1, $2, $3 }'
+}
+
+service_state_from_rows() {
+  local rows="$1"
+  local service="$2"
+
+  awk -F '\t' -v svc="$service" '$1 == svc { print tolower($2); exit }' <<<"$rows"
+}
+
+all_services_running() {
+  local rows="$1"
+  shift
+
+  local service state
+  for service in "$@"; do
+    state="$(service_state_from_rows "$rows" "$service")"
+    [[ "$state" == "running" ]] || return 1
+  done
+}
+
+all_services_stopped() {
+  local rows="$1"
+  shift
+
+  local service state
+  for service in "$@"; do
+    state="$(service_state_from_rows "$rows" "$service")"
+    case "$state" in
+      ""|exited|dead)
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  done
+}
+
+all_services_removed() {
+  local rows="$1"
+  shift
+
+  local service state
+  for service in "$@"; do
+    state="$(service_state_from_rows "$rows" "$service")"
+    [[ -z "$state" ]] || return 1
+  done
+}
+
+wait_for_compose_state() {
+  local target="$1"
+  local timeout="${LOCAL_COMPOSE_WAIT_TIMEOUT:-120}"
+  local interval="${LOCAL_COMPOSE_WAIT_INTERVAL:-2}"
+  local start elapsed rows
+  local -a services=()
+
+  [[ "$timeout" =~ ^[0-9]+$ ]] || err "LOCAL_COMPOSE_WAIT_TIMEOUT must be a whole number of seconds"
+  while IFS= read -r service; do
+    [[ -n "$service" ]] && services+=("$service")
+  done < <(local_compose_services)
+  [[ "${#services[@]}" -gt 0 ]] || err "No local Compose services found"
+
+  case "$target" in
+    running)
+      log "Waiting for local Compose services to finish starting"
+      ;;
+    stopped)
+      log "Waiting for local Compose services to finish stopping"
+      ;;
+    removed)
+      log "Waiting for local Compose containers to be removed"
+      ;;
+    *)
+      err "Unsupported compose wait target: $target"
+      ;;
+  esac
+
+  start="$(date +%s)"
+  while true; do
+    rows="$(compose_status_rows)"
+    print_compose_status_rows "$rows"
+
+    case "$target" in
+      running)
+        if all_services_running "$rows" "${services[@]}"; then
+          log "All local Compose services are running"
+          return
+        fi
+        ;;
+      stopped)
+        if all_services_stopped "$rows" "${services[@]}"; then
+          log "All local Compose services are stopped"
+          return
+        fi
+        ;;
+      removed)
+        if all_services_removed "$rows" "${services[@]}"; then
+          log "All local Compose containers are removed"
+          return
+        fi
+        ;;
+    esac
+
+    elapsed=$(($(date +%s) - start))
+    if (( elapsed >= timeout )); then
+      err "Timed out waiting for local Compose services to reach state: $target"
+    fi
+
+    sleep "$interval"
+  done
+}
+
 run_web_command() {
   if compose_service_running web; then
     compose_local "$SCRIPT_DIR" exec -T web "$@"
@@ -38,6 +167,7 @@ case "$COMMAND" in
     log "Starting local development Docker Compose stack"
     compose_local "$SCRIPT_DIR" up -d --build
     COMPOSE_RUNTIME=local "$SCRIPT_DIR/backend/migrate-compose.sh"
+    wait_for_compose_state running
     log "Local dev stack is running at http://localhost:${HTTP_PORT:-19080}"
     ;;
   migrate)
@@ -65,12 +195,15 @@ case "$COMMAND" in
     ;;
   down)
     compose_local "$SCRIPT_DIR" down
+    wait_for_compose_state removed
     ;;
   stop)
     compose_local "$SCRIPT_DIR" stop
+    wait_for_compose_state stopped
     ;;
   restart)
     compose_local "$SCRIPT_DIR" restart
+    wait_for_compose_state running
     ;;
   *)
     err "Usage: $0 [up|migrate|verify|ps|logs|web-install|web-add <package...>|down|stop|restart]"

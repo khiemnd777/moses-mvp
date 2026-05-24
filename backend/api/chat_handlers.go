@@ -382,6 +382,10 @@ func (h *Handler) DownloadAsset(c *fiber.Ctx) error {
 		}
 		return respondError(c, 500, "db_error", "failed to load asset", err.Error())
 	}
+	return h.sendDocumentAsset(c, asset)
+}
+
+func (h *Handler) sendDocumentAsset(c *fiber.Ctx, asset domain.DocumentAsset) error {
 	fullPath := filepath.Join(h.Storage.Root, asset.StoragePath)
 	info, err := os.Stat(fullPath)
 	if err != nil {

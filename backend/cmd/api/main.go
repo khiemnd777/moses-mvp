@@ -56,6 +56,10 @@ func main() {
 	); err != nil {
 		log.Fatal("failed to wait for postgres:", err)
 	}
+	if err := infra.RunMigrations(context.Background(), db, infra.MigrationOptions{}); err != nil {
+		logger.Error("failed to run migrations", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 
 	store := infra.NewStore(db)
 	if err := store.Ping(context.Background()); err != nil {
@@ -121,7 +125,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := api.NewServerWithCORS(
+	server := api.NewServerWithCORSAndOptions(
 		store,
 		storage,
 		embed,
@@ -132,6 +136,10 @@ func main() {
 		logger,
 		ingest.Config{ChunkSize: cfg.Ingest.ChunkSize, ChunkOverlap: cfg.Ingest.ChunkOverlap},
 		envCfg.CORSAllowedOrigins,
+		api.ServerOptions{
+			PublicBaseURL: envCfg.PublicBaseURL,
+			SigningSecret: envCfg.JWTSecret,
+		},
 	)
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, envCfg.ServerPort)
 	logger.Info("api server starting", slog.String("addr", addr))

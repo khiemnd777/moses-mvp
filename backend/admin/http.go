@@ -29,6 +29,7 @@ func RegisterRoutes(
 	retrievalConfigHandler *RetrievalConfigHandler,
 	answerTraceHandler *AIAnswerTraceHandler,
 	qdrantHandler *QdrantControlPlaneHandler,
+	telegramHandlers ...*TelegramBotHandler,
 ) {
 	group.Get("/ai/guard-policies", guardHandler.List)
 	group.Get("/ai/guard-policies/:id", guardHandler.Get)
@@ -62,4 +63,17 @@ func RegisterRoutes(
 	qdrantGroup.Post("/delete_by_filter", qdrantRateLimitMiddleware(qdrantRatePolicy{Limit: 1, Window: time.Second}), qdrantHandler.DeleteByFilter)
 	qdrantGroup.Post("/reindex_document", qdrantRateLimitMiddleware(qdrantRatePolicy{Limit: 1, Window: 10 * time.Second}), qdrantHandler.ReindexDocument)
 	qdrantGroup.Post("/reindex_all", qdrantRateLimitMiddleware(qdrantRatePolicy{Limit: 1, Window: 10 * time.Second}), qdrantHandler.ReindexAll)
+
+	if len(telegramHandlers) == 0 || telegramHandlers[0] == nil {
+		return
+	}
+	telegramHandler := telegramHandlers[0]
+	telegramGroup := group.Group("/telegram")
+	telegramGroup.Get("/bots", telegramHandler.List)
+	telegramGroup.Get("/bots/:id", telegramHandler.Get)
+	telegramGroup.Post("/bots", telegramHandler.Create)
+	telegramGroup.Put("/bots/:id", telegramHandler.Update)
+	telegramGroup.Post("/bots/:id/start", telegramHandler.Start)
+	telegramGroup.Post("/bots/:id/stop", telegramHandler.Stop)
+	telegramGroup.Delete("/bots/:id", telegramHandler.Delete)
 }

@@ -101,6 +101,47 @@ type Message struct {
 	CreatedAt      time.Time
 }
 
+const (
+	TelegramBotStatusRunning = "running"
+	TelegramBotStatusStopped = "stopped"
+	TelegramBotStatusError   = "error"
+)
+
+type TelegramBot struct {
+	ID                     string     `json:"id"`
+	Name                   string     `json:"name"`
+	Token                  string     `json:"-"`
+	TokenHint              string     `json:"token_hint"`
+	BotUsername            string     `json:"bot_username,omitempty"`
+	Status                 string     `json:"status"`
+	DefaultTone            string     `json:"default_tone"`
+	DefaultTopK            int        `json:"default_top_k"`
+	DefaultEffectiveStatus string     `json:"default_effective_status"`
+	DefaultDomain          string     `json:"default_domain"`
+	DefaultDocType         string     `json:"default_doc_type"`
+	AllowedChatIDs         []int64    `json:"allowed_chat_ids"`
+	WelcomeMessage         string     `json:"welcome_message"`
+	LastUpdateID           int64      `json:"last_update_id"`
+	LastError              *string    `json:"last_error,omitempty"`
+	StartedAt              *time.Time `json:"started_at,omitempty"`
+	StoppedAt              *time.Time `json:"stopped_at,omitempty"`
+	ChatCount              int        `json:"chat_count"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
+}
+
+type TelegramChatLink struct {
+	ID             string
+	BotID          string
+	ChatID         int64
+	ChatType       string
+	ChatTitle      string
+	ConversationID string
+	LastMessageAt  *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 type User struct {
 	ID                 string
 	Username           string

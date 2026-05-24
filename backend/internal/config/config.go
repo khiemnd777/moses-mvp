@@ -36,6 +36,7 @@ type Config struct {
 	ToneAcademicPath       string
 	ToneProcedurePath      string
 	CORSAllowedOrigins     []string
+	PublicBaseURL          string
 	JWTSecret              string
 	AdminBootstrapPassword string
 	VectorRepair           VectorRepairConfig
@@ -82,6 +83,7 @@ func Load() (*Config, error) {
 		ToneAcademicPath:       strings.TrimSpace(os.Getenv("TONE_ACADEMIC_PROMPT_PATH")),
 		ToneProcedurePath:      strings.TrimSpace(os.Getenv("TONE_PROCEDURE_PROMPT_PATH")),
 		CORSAllowedOrigins:     parseRequiredCSVEnv("CORS_ALLOWED_ORIGINS"),
+		PublicBaseURL:          firstEnv("PUBLIC_BASE_URL", "WEB_PUBLIC_URL", "VITE_API_BASE_URL"),
 		JWTSecret:              strings.TrimSpace(os.Getenv("JWT_SECRET")),
 		AdminBootstrapPassword: strings.TrimSpace(os.Getenv("ADMIN_BOOTSTRAP_PASSWORD")),
 		IngestChunkSize:        chunkSize,
@@ -298,6 +300,15 @@ func parseRequiredCSVEnv(key string) []string {
 		origins = append(origins, trimmed)
 	}
 	return origins
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func loadDotEnvIfPresent() {

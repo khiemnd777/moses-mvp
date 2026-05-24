@@ -177,6 +177,43 @@ export type IngestJob = {
   updated_at?: string;
 };
 
+export type TelegramBotStatus = 'running' | 'stopped' | 'error';
+
+export type TelegramBot = {
+  id: string;
+  name: string;
+  token_hint: string;
+  bot_username?: string;
+  status: TelegramBotStatus;
+  default_tone: string;
+  default_top_k: number;
+  default_effective_status: string;
+  default_domain: string;
+  default_doc_type: string;
+  allowed_chat_ids: number[];
+  welcome_message: string;
+  last_update_id: number;
+  last_error?: string;
+  started_at?: string;
+  stopped_at?: string;
+  chat_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TelegramBotPayload = {
+  name: string;
+  token?: string;
+  default_tone: string;
+  default_top_k: number;
+  default_effective_status: string;
+  default_domain: string;
+  default_doc_type: string;
+  allowed_chat_ids: number[];
+  welcome_message: string;
+  start_after_save?: boolean;
+};
+
 export type AIGuardPolicy = {
   id: string;
   name: string;

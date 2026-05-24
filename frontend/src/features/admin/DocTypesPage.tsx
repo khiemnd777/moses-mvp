@@ -129,16 +129,22 @@ const DocTypesPage = () => {
                     onClick={() => setSelectedDocTypeId(doc.id)}
                   >
                     <ArticleIcon aria-hidden="true" />
-                    {doc.name} ({doc.code})
+                    <span className="doc-types-list-item-label">
+                      {doc.name} ({doc.code})
+                    </span>
                   </button>
                   <Button
                     className="doc-types-delete-button"
                     variant={selectedDocTypeId === doc.id ? 'secondary' : 'outline'}
                     onClick={() => void handleDelete(doc.id)}
                     disabled={deletingDocTypeId === doc.id}
+                    aria-label={`${deletingDocTypeId === doc.id ? 'Deleting' : 'Delete'} ${doc.name}`}
+                    title={`${deletingDocTypeId === doc.id ? 'Deleting' : 'Delete'} ${doc.name}`}
                   >
                     <DeleteIcon aria-hidden="true" />
-                    {deletingDocTypeId === doc.id ? 'Deleting...' : 'Delete'}
+                    <span className="doc-types-delete-label">
+                      {deletingDocTypeId === doc.id ? 'Deleting...' : 'Delete'}
+                    </span>
                   </Button>
                 </div>
               ))}

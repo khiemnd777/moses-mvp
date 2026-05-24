@@ -51,6 +51,7 @@ export VECTOR_REPAIR_ENABLED="true"
 export VECTOR_REPAIR_INTERVAL="30s"
 export VECTOR_REPAIR_MAX_TASKS_PER_PASS="20"
 export CORS_ALLOWED_ORIGINS="http://localhost:19080,http://127.0.0.1:19080"
+export PUBLIC_BASE_URL="http://localhost:19080"
 
 # web container
 export DOMAIN="localhost"

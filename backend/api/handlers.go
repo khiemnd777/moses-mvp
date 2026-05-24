@@ -38,6 +38,8 @@ type Handler struct {
 	TraceRepo    observability.TraceRepository
 	PromptRouter *cprompt.Router
 	GuardEngine  *guard.Engine
+	PublicBaseURL string
+	SigningSecret string
 
 	runtimeCfgMu       sync.RWMutex
 	runtimeCfg         runtimeAnswerConfig

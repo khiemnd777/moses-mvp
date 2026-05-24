@@ -56,6 +56,10 @@ func main() {
 	); err != nil {
 		log.Fatal("failed to wait for postgres:", err)
 	}
+	if err := infra.RunMigrations(rootCtx, db, infra.MigrationOptions{}); err != nil {
+		logger.Error("failed to run migrations", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
 
 	store := infra.NewStore(db)
 	if err := store.Ping(rootCtx); err != nil {

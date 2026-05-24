@@ -34,6 +34,13 @@ type Server struct {
 	Logger      *slog.Logger
 	TraceRepo   observability.TraceRepository
 	AuthService *auth.Service
+	Options     ServerOptions
+	Telegram    *TelegramManager
+}
+
+type ServerOptions struct {
+	PublicBaseURL string
+	SigningSecret string
 }
 
 func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, authService *auth.Service, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config) *Server {
@@ -41,6 +48,10 @@ func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.C
 }
 
 func NewServerWithCORS(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, authService *auth.Service, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config, allowedOrigins []string) *Server {
+	return NewServerWithCORSAndOptions(store, storage, embedder, qdrant, ans, authService, tones, logger, ingestCfg, allowedOrigins, ServerOptions{})
+}
+
+func NewServerWithCORSAndOptions(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, authService *auth.Service, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config, allowedOrigins []string, opts ServerOptions) *Server {
 	app := fiber.New()
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     strings.Join(allowedOrigins, ","),
@@ -64,11 +75,14 @@ func NewServerWithCORS(store *infra.Store, storage *infra.Storage, embedder *emb
 		Logger:      logger,
 		TraceRepo:   observability.NewSQLTraceRepository(store.DB),
 		AuthService: authService,
+		Options:     opts,
 	}
 }
 
 func (s *Server) RegisterRoutes() {
 	h := NewHandler(s.Store, s.Storage, s.Qdrant, s.Retriever, s.Answer, s.Tones, s.Ingest, s.Logger, s.TraceRepo)
+	h.PublicBaseURL = s.Options.PublicBaseURL
+	h.SigningSecret = s.Options.SigningSecret
 	traceMiddleware := answerTraceMiddleware(s.Logger)
 	authMiddleware := auth.RequireAuth(s.AuthService.JWTManager(), s.Store)
 	authHandlers := auth.NewHandlers(s.AuthService, auth.NewLoginRateLimiter(5, time.Minute))
@@ -85,6 +99,7 @@ func (s *Server) RegisterRoutes() {
 	s.App.Get("/metrics", observability.MetricsHandler)
 	s.App.Post("/answer", traceMiddleware, h.Answer)
 	s.App.Post("/answer/stream", traceMiddleware, h.AnswerStream)
+	s.App.Get("/public/citations/:token", h.GetPublicCitation)
 
 	s.App.Use("/playground", authMiddleware)
 	s.App.Use("/tuning", authMiddleware)
@@ -132,11 +147,19 @@ func (s *Server) RegisterRoutes() {
 	answerTraceHandler := adminapi.NewAIAnswerTraceHandler(s.TraceRepo)
 	qdrantControlSvc := adminservice.NewQdrantControlPlaneService(s.Store, s.Qdrant, s.Embedder, s.Logger)
 	qdrantHandler := adminapi.NewQdrantControlPlaneHandler(qdrantControlSvc, s.Logger)
-	adminapi.RegisterRoutes(adminGroup, guardHandler, promptHandler, retrievalConfigHandler, answerTraceHandler, qdrantHandler)
+	telegramRepo := repository.NewTelegramBotRepository(s.Store)
+	telegramSvc := adminservice.NewTelegramBotService(telegramRepo)
+	telegramManager := NewTelegramManager(telegramRepo, h, s.Logger)
+	s.Telegram = telegramManager
+	telegramHandler := adminapi.NewTelegramBotHandler(telegramSvc, telegramManager)
+	adminapi.RegisterRoutes(adminGroup, guardHandler, promptHandler, retrievalConfigHandler, answerTraceHandler, qdrantHandler, telegramHandler)
 }
 
 func (s *Server) Start(ctx context.Context, addr string) error {
 	s.RegisterRoutes()
+	if s.Telegram != nil {
+		s.Telegram.StartAll(ctx)
+	}
 	return s.App.Listen(addr)
 }
 

@@ -23,6 +23,8 @@ import type {
   ReindexDocumentRequest,
   SearchDebugRequest,
   SearchDebugResponse,
+  TelegramBot,
+  TelegramBotPayload,
   VectorHealthResponse
 } from './types';
 
@@ -207,6 +209,40 @@ export const listIngestJobs = async () => {
 
 export const deleteIngestJob = async (id: string) => {
   await api.delete(`/ingest-jobs/${id}`);
+};
+
+export const listTelegramBots = async () => {
+  const { data } = await api.get('/admin/telegram/bots');
+  return (data?.items || []) as TelegramBot[];
+};
+
+export const getTelegramBot = async (id: string) => {
+  const { data } = await api.get(`/admin/telegram/bots/${id}`);
+  return data as TelegramBot;
+};
+
+export const createTelegramBot = async (payload: TelegramBotPayload) => {
+  const { data } = await api.post('/admin/telegram/bots', payload);
+  return data as TelegramBot;
+};
+
+export const updateTelegramBot = async (id: string, payload: TelegramBotPayload) => {
+  const { data } = await api.put(`/admin/telegram/bots/${id}`, payload);
+  return data as TelegramBot;
+};
+
+export const startTelegramBot = async (id: string) => {
+  const { data } = await api.post(`/admin/telegram/bots/${id}/start`);
+  return data as TelegramBot;
+};
+
+export const stopTelegramBot = async (id: string) => {
+  const { data } = await api.post(`/admin/telegram/bots/${id}/stop`);
+  return data as TelegramBot;
+};
+
+export const deleteTelegramBot = async (id: string) => {
+  await api.delete(`/admin/telegram/bots/${id}`);
 };
 
 export const listAIGuardPolicies = async () => {

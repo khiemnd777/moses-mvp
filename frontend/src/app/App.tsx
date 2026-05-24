@@ -16,6 +16,7 @@ import SearchDebugPage from '@/features/admin/vectors/SearchDebugPage';
 import VectorHealthPage from '@/features/admin/vectors/VectorHealthPage';
 import DeleteByFilterPage from '@/features/admin/vectors/DeleteByFilterPage';
 import ReindexControlsPage from '@/features/admin/vectors/ReindexControlsPage';
+import TelegramBotsPage from '@/features/admin/telegram/TelegramBotsPage';
 import Navbar from './Navbar';
 import ChatPage from '@/features/chat/ChatPage';
 import GuidePreviewPage from '@/features/guide/GuidePreviewPage';
@@ -57,6 +58,7 @@ const App = () => {
               <Route path="vectors/health" element={<VectorHealthPage />} />
               <Route path="vectors/delete" element={<DeleteByFilterPage />} />
               <Route path="vectors/reindex" element={<ReindexControlsPage />} />
+              <Route path="integrations/telegram" element={<TelegramBotsPage />} />
             </Route>
           </Route>
         </Routes>

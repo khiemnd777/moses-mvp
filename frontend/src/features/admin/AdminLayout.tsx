@@ -26,6 +26,10 @@ const navSections = [
       { to: '/tuning/vectors/delete', label: 'Delete by Filter' },
       { to: '/tuning/vectors/reindex', label: 'Reindex' }
     ]
+  },
+  {
+    label: 'Integrations',
+    items: [{ to: '/tuning/integrations/telegram', label: 'Telegram Bots' }]
   }
 ];
 

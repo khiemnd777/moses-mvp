@@ -14,7 +14,8 @@ MIGRATION_FILES?=\
 	$(MIGRATIONS_DIR)/008_force_password_change.sql \
 	$(MIGRATIONS_DIR)/009_chat_conversations.sql \
 	$(MIGRATIONS_DIR)/010_auth_refresh_sessions.sql \
-	$(MIGRATIONS_DIR)/011_doc_type_query_profiles.sql
+	$(MIGRATIONS_DIR)/011_doc_type_query_profiles.sql \
+	$(MIGRATIONS_DIR)/012_telegram_bots.sql
 
 .PHONY: api worker run migrate migrate-baseline migrate-status docker-up docker-down docker-restart docker-log docker-logs legal-up legal-down legal-restart legal-log legal-logs
 
