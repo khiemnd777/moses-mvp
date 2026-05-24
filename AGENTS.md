@@ -59,6 +59,12 @@ Verification emphasis differs by class:
 - `bug`: reproduce or describe the failing path, fix the minimal owning surface, and verify the regression path directly
 - `feature`: define the new contract or workflow first, then verify happy path plus existing neighboring flows that could regress
 
+## User Confirmation Workflow
+- For every user request, do not proceed directly to implementation. First classify the request, inspect the minimum relevant context, and present a plan with scope, expected files, risks, and verification.
+- Wait for explicit user confirmation before editing code, changing files, running mutating commands, installing dependencies, starting deploys, or otherwise performing implementation work.
+- For any request related to UI, UX, frontend screens, chat surfaces, admin screens, or rendered interaction, provide a `Mock Up as Text` before implementation. The mock up should describe layout, visible states, interactions, and displayed data clearly enough for review.
+- After confirmation, keep implementation scoped to the approved plan. If the scope changes materially, pause and ask for confirmation again.
+
 ## Main Runtime Facts
 - Backend API entrypoint: `backend/cmd/api/main.go`
 - Backend worker entrypoint: `backend/cmd/worker/main.go`
