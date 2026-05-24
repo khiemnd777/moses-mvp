@@ -138,6 +138,7 @@ cd /opt/legal_api/app
 
 - `install/config.sh` is the source of truth for production secrets and runtime paths.
 - `backend/.env` is rendered on the VPS from `install/config.sh`.
+- `OPENAI_EMBEDDINGS_MODEL` must match the existing Qdrant collection dimension. The default `text-embedding-3-small` uses 1536 dimensions.
 - The production compose file is `install/docker-compose.prod.yml`.
 - Nginx config is rendered to `install/nginx/rendered/default.conf` and mounted into the `web` container.
 - Certbot uses the compose `certbot` service and stores certificates under `LETSENCRYPT_DIR`.
