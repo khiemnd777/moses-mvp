@@ -8,6 +8,7 @@ Production runs through Docker Compose:
 
 - `postgres`
 - `qdrant`
+- `clamav` for upload malware scanning
 - `api`
 - `worker`
 - `web` container running Nginx and serving the built frontend
@@ -146,11 +147,34 @@ cd /opt/legal_api/app
 ./install/install.sh
 ```
 
+## Production RAG Verification
+
+After a production deploy and corpus ingest/reindex, run the RAG gate from the VPS:
+
+```bash
+cd /opt/legal_api/app/install
+./backend/verify_rag.sh
+```
+
+Useful overrides:
+
+```bash
+cd /opt/legal_api/app/install
+RAG_VERIFY_QUERY='Thu tuc ly hon.' RAG_VERIFY_TOP_K=5 RAG_VERIFY_MIN_HITS=1 ./backend/verify_rag.sh
+```
+
+If the admin password has been changed after bootstrap, set `RAG_VERIFY_AUTH_PASSWORD` for the verification run.
+
+The gate checks that `OPENAI_API_KEY` is not a placeholder, upload AV scanning is enabled and fail-closed, backend health is green, the configured Qdrant collection has the expected dimension and payload indexes, vector health has no strict drift, and sample retrieval returns chunk-backed hits. When `UPLOAD_AV_SCAN_MODE=clamd`, it also uploads an EICAR test file and requires the API to reject it with `malware_detected`.
+
 ## Notes
 
 - `install/config.sh` is the source of truth for production secrets and runtime paths.
 - `backend/.env` is rendered on the VPS from `install/config.sh`.
+- `OPENAI_API_KEY` must be set to a real production value outside git before deploy. Put it in the untracked VPS `install/config.sh` or provide it to the deploy runtime; placeholder values are rejected by `install/backend/install.sh`.
 - `OPENAI_EMBEDDINGS_MODEL` must match the existing Qdrant collection dimension. The default `text-embedding-3-small` uses 1536 dimensions.
+- `UPLOAD_AV_SCAN_MODE=clamd` and `UPLOAD_AV_FAIL_CLOSED=true` are the production defaults. The API streams upload bytes to the internal `clamav` container before writing storage or DB records.
+- `CLIENT_MAX_BODY_SIZE` controls the container Nginx upload body limit and should stay aligned with the backend upload limit, currently `50m`.
 - The production compose file is `install/docker-compose.prod.yml`; the local dev compose file is `install/docker-compose.dev.yml`.
 - Nginx config is rendered to `install/nginx/rendered/default.conf` and mounted into the `web` container.
 - Certbot uses the compose `certbot` service and stores certificates under `LETSENCRYPT_DIR`.

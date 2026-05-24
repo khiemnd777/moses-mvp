@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ledongthuc/pdf"
@@ -23,6 +25,7 @@ var (
 	docxCoordTailPattern  = regexp.MustCompile(`(?:\s+\d{5,7}\s+\d{4,6}){2,}\s*$`)
 	docxCoordLinePattern  = regexp.MustCompile(`^\d{5,7}\s+\d{4,6}(?:\s+\d{5,7}\s+\d{4,6})+$`)
 	docxNumberOnlyPattern = regexp.MustCompile(`^\d+(?:\s+\d+)+$`)
+	pptxSlidePathPattern  = regexp.MustCompile(`^ppt/slides/slide([0-9]+)\.xml$`)
 )
 
 func ExtractText(path string) (string, error) {
@@ -40,6 +43,8 @@ func ExtractText(path string) (string, error) {
 		text, err = extractDOCX(path)
 	case ".pdf":
 		text, err = extractPDF(path)
+	case ".pptx":
+		text, err = extractPPTX(path)
 	case ".txt":
 		text, err = extractTXT(path)
 	default:
@@ -112,6 +117,73 @@ func extractDOCX(path string) (string, error) {
 		return "", errors.New("word/document.xml not found in docx")
 	}
 
+	text, err := extractOOXMLText(xmlData)
+	if err != nil {
+		return "", err
+	}
+	return cleanDOCXLayoutArtifacts(html.UnescapeString(text)), nil
+}
+
+func extractPPTX(path string) (string, error) {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return "", err
+	}
+	defer zr.Close()
+
+	type slideFile struct {
+		number int
+		file   *zip.File
+	}
+	slides := make([]slideFile, 0)
+	for _, f := range zr.File {
+		matches := pptxSlidePathPattern.FindStringSubmatch(f.Name)
+		if len(matches) != 2 {
+			continue
+		}
+		number, err := strconv.Atoi(matches[1])
+		if err != nil {
+			continue
+		}
+		slides = append(slides, slideFile{number: number, file: f})
+	}
+	if len(slides) == 0 {
+		return "", errors.New("ppt/slides/slide*.xml not found in pptx")
+	}
+	sort.Slice(slides, func(i, j int) bool {
+		return slides[i].number < slides[j].number
+	})
+
+	parts := make([]string, 0, len(slides))
+	for _, slide := range slides {
+		rc, err := slide.file.Open()
+		if err != nil {
+			return "", err
+		}
+		xmlData, readErr := io.ReadAll(rc)
+		closeErr := rc.Close()
+		if readErr != nil {
+			return "", readErr
+		}
+		if closeErr != nil {
+			return "", closeErr
+		}
+		text, err := extractOOXMLText(xmlData)
+		if err != nil {
+			return "", err
+		}
+		text = strings.TrimSpace(html.UnescapeString(text))
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	if len(parts) == 0 {
+		return "", errors.New("pptx contains no slide text")
+	}
+	return strings.Join(parts, "\n"), nil
+}
+
+func extractOOXMLText(xmlData []byte) (string, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(xmlData))
 	var (
 		out          strings.Builder
@@ -150,9 +222,7 @@ func extractDOCX(path string) (string, error) {
 			}
 		}
 	}
-
-	text := html.UnescapeString(out.String())
-	return cleanDOCXLayoutArtifacts(text), nil
+	return out.String(), nil
 }
 
 func extractPDF(path string) (string, error) {

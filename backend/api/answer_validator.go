@@ -8,10 +8,13 @@ import (
 	"strings"
 
 	"github.com/khiemnd777/legal_api/core/answer"
+	"github.com/khiemnd777/legal_api/core/language"
 )
 
 var (
-	reArticleRef = regexp.MustCompile(`(?i)(?:điều|dieu)\s+([0-9]+[a-z]?)`)
+	reArticleRef        = regexp.MustCompile(`(?i)(?:điều|dieu)\s+([0-9]+[a-z]?)`)
+	reDocumentNumberRef = regexp.MustCompile(`(?i)([0-9]{1,4}/[0-9]{4}/[0-9A-ZĐđÐð\-–—−]+)`)
+	reReferenceNonWord  = regexp.MustCompile(`[^a-z0-9]+`)
 )
 
 func (h *Handler) validateGeneratedLegalAnswer(ctx context.Context, answerText string, sources []answer.Source) (string, []answer.Citation, bool, error) {
@@ -37,14 +40,16 @@ func (h *Handler) validateGeneratedLegalAnswerWithMode(ctx context.Context, answ
 		return originalText, []answer.Citation{}, true, nil
 	}
 
+	if !referencesExistInSources(trimmedText, sources) {
+		refusal, err := h.validationRefusalMessage(ctx)
+		return refusal, []answer.Citation{}, false, err
+	}
+
 	citations := deriveSupportingCitations(trimmedText, sources)
 	if !hasLegalAnswerStructure(trimmedText) {
 		return h.validationFailureResponse(ctx, originalText, replaceOnFailure)
 	}
 	if requiresSupportingCitations(trimmedText, sources) && len(citations) == 0 {
-		return h.validationFailureResponse(ctx, originalText, replaceOnFailure)
-	}
-	if !referencesExistInSources(trimmedText, sources) {
 		return h.validationFailureResponse(ctx, originalText, replaceOnFailure)
 	}
 	return originalText, citations, true, nil
@@ -116,12 +121,19 @@ func hasLegalAnswerStructure(value string) bool {
 
 func referencesExistInSources(answerText string, sources []answer.Source) bool {
 	referencedArticles := extractArticleRefs(answerText)
-	if len(referencedArticles) == 0 {
+	referencedDocuments := extractDocumentRefs(answerText)
+	if len(referencedArticles) == 0 && len(referencedDocuments) == 0 {
 		return true
 	}
 	allowed := collectAllowedArticles(sources)
 	for article := range referencedArticles {
 		if _, ok := allowed[article]; !ok {
+			return false
+		}
+	}
+	allowedDocuments := collectAllowedDocuments(sources)
+	for document := range referencedDocuments {
+		if _, ok := allowedDocuments[document]; !ok {
 			return false
 		}
 	}
@@ -137,6 +149,25 @@ func collectAllowedArticles(sources []answer.Source) map[string]struct{} {
 		}
 		for articleFromText := range extractArticleRefs(src.Text) {
 			out[articleFromText] = struct{}{}
+		}
+	}
+	return out
+}
+
+func collectAllowedDocuments(sources []answer.Source) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, src := range sources {
+		if document := normalizeDocumentRef(src.Citation.DocumentNumber); document != "" {
+			out[document] = struct{}{}
+		}
+		for documentFromText := range extractDocumentRefs(src.Text) {
+			out[documentFromText] = struct{}{}
+		}
+		for documentFromTitle := range extractDocumentRefs(src.Citation.DocumentTitle) {
+			out[documentFromTitle] = struct{}{}
+		}
+		for documentFromLawName := range extractDocumentRefs(src.Citation.LawName) {
+			out[documentFromLawName] = struct{}{}
 		}
 	}
 	return out
@@ -158,6 +189,22 @@ func extractArticleRefs(value string) map[string]struct{} {
 	return out
 }
 
+func extractDocumentRefs(value string) map[string]struct{} {
+	out := map[string]struct{}{}
+	matches := reDocumentNumberRef.FindAllStringSubmatch(value, -1)
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		normalized := normalizeDocumentRef(match[1])
+		if normalized == "" {
+			continue
+		}
+		out[normalized] = struct{}{}
+	}
+	return out
+}
+
 func normalizeArticleNumber(value string) string {
 	v := strings.TrimSpace(strings.ToLower(value))
 	if v == "" {
@@ -167,6 +214,20 @@ func normalizeArticleNumber(value string) string {
 		return strconv.Itoa(i)
 	}
 	return v
+}
+
+func normalizeDocumentRef(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = normalizeVietnameseRefText(value)
+	value = reReferenceNonWord.ReplaceAllString(value, "")
+	return strings.TrimSpace(value)
+}
+
+func normalizeVietnameseRefText(value string) string {
+	return language.FoldAccentsForSearch(value)
 }
 
 func normalizeValidationText(value string) string {
@@ -183,7 +244,10 @@ func deriveSupportingCitations(answerText string, sources []answer.Source) []ans
 		return []answer.Citation{}
 	}
 
-	documentMentions := extractDocumentMentions(normalizedAnswer, sources)
+	documentMentions := extractDocumentMentions(answerText, sources)
+	for document := range extractDocumentRefs(answerText) {
+		documentMentions[document] = struct{}{}
+	}
 	referencedArticles := extractArticleRefs(answerText)
 	if len(referencedArticles) == 0 && len(documentMentions) == 0 {
 		return []answer.Citation{}
@@ -207,15 +271,22 @@ func requiresSupportingCitations(answerText string, sources []answer.Source) boo
 	return normalizedAnswer != "" && !isNegativeFindingAnswer(normalizedAnswer)
 }
 
-func extractDocumentMentions(normalizedAnswer string, sources []answer.Source) map[string]struct{} {
+func extractDocumentMentions(answerText string, sources []answer.Source) map[string]struct{} {
 	out := map[string]struct{}{}
+	answerTexts := []string{
+		normalizeValidationText(answerText),
+		language.SearchKey(answerText),
+	}
 	for _, src := range sources {
 		for _, candidate := range citationDocumentKeys(src.Citation) {
 			if candidate == "" {
 				continue
 			}
-			if strings.Contains(normalizedAnswer, candidate) {
-				out[candidate] = struct{}{}
+			for _, answerText := range answerTexts {
+				if strings.Contains(answerText, candidate) {
+					out[candidate] = struct{}{}
+					break
+				}
 			}
 		}
 	}
@@ -261,6 +332,13 @@ func citationDocumentKeys(c answer.Citation) []string {
 		if normalized != "" {
 			keys = append(keys, normalized)
 		}
+		searchKey := language.SearchKey(candidate)
+		if searchKey != "" {
+			keys = append(keys, searchKey)
+		}
+	}
+	if documentNumber := normalizeDocumentRef(c.DocumentNumber); documentNumber != "" {
+		keys = append(keys, documentNumber)
 	}
 	sort.Strings(keys)
 	out := keys[:0]

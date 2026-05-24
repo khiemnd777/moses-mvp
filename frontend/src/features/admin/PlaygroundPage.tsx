@@ -21,7 +21,7 @@ const PlaygroundPage = () => {
     const filters: ChatFilters = {
       tone: 'default',
       topK: 5,
-      effectiveStatus: 'active',
+      effectiveStatus: '',
       domain: '',
       docType: ''
     };

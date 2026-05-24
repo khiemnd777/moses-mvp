@@ -74,9 +74,10 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 	normalized := normalize(content, form.SegmentRules.Normalization)
 	contentHash := contentHash(normalized)
 	metadata := extractMetadata(normalized, form.MappingRules)
+	metaCtx := chunkMetadataContextFromBundle(bundle)
 	logger.Info("chunk_generation_started")
 	chunkStartedAt := time.Now()
-	generatedChunks, chunkStats, err := s.generateChunks(bundle.Document.ID, bundle.Version.ID, normalized, form.SegmentRules, metadata)
+	generatedChunks, chunkStats, err := s.generateChunks(metaCtx, normalized, form.SegmentRules, metadata)
 	if err != nil {
 		return err
 	}
@@ -170,14 +171,22 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 		retrievalPayload := buildRetrievalPayload(metaMap)
 		payload := map[string]interface{}{
 			"chunk_id":            chunk.ID,
+			"document_id":         bundle.Document.ID,
 			"document_version_id": bundle.Version.ID,
 			"chunk_index":         chunk.Index,
 			"citation_id":         citationID(bundle.Version.ID, chunk.Index, chunk.Text),
 			"content_hash":        contentHash,
 			"form_hash":           formHash,
+			"pipeline_version":    currentIngestPipelineVersion,
 		}
 		for k, v := range retrievalPayload {
 			payload[k] = v
+		}
+		if bundle.Asset.ID != "" {
+			payload["asset_id"] = bundle.Asset.ID
+		}
+		if bundle.DocType.Code != "" {
+			payload["doc_type_code"] = bundle.DocType.Code
 		}
 		points = append(points, infra.PointInput{
 			ID:      vectorID,
@@ -222,6 +231,17 @@ type Storage interface {
 
 func (b Bundle) AssetContent() (string, error) {
 	return b.Storage.Read(b.Asset.StoragePath)
+}
+
+func chunkMetadataContextFromBundle(bundle Bundle) chunkMetadataContext {
+	return chunkMetadataContext{
+		DocumentID:        bundle.Document.ID,
+		DocumentVersionID: bundle.Version.ID,
+		AssetID:           bundle.Asset.ID,
+		DocTypeCode:       bundle.DocType.Code,
+		DocumentVersion:   bundle.Version.Version,
+		PipelineVersion:   currentIngestPipelineVersion,
+	}
 }
 
 func decodeForm(b []byte) (schema.DocTypeForm, error) {
@@ -324,16 +344,17 @@ func chunkSegments(segments []string, size, overlap int) []string {
 	return chunks
 }
 
-func (s *Service) generateChunks(documentID, versionID, normalized string, segmentRules schema.SegmentRules, metadata map[string]interface{}) ([]generatedChunk, chunkGenerationStats, error) {
+func (s *Service) generateChunks(metaCtx chunkMetadataContext, normalized string, segmentRules schema.SegmentRules, metadata map[string]interface{}) ([]generatedChunk, chunkGenerationStats, error) {
+	chunkSource := stripVietnameseLegalTOC(normalized)
 	if segmentRules.Strategy == "legal_article" {
 		generator, err := newLegalChunkGenerator(segmentRules)
 		if err != nil {
 			return nil, chunkGenerationStats{}, err
 		}
-		return generator.Generate(documentID, versionID, normalized, metadata)
+		return generator.GenerateWithContext(metaCtx, chunkSource, metadata)
 	}
 
-	segments := segment(normalized, segmentRules.Strategy)
+	segments := segment(chunkSource, segmentRules.Strategy)
 	chunks := chunkSegments(segments, s.Config.ChunkSize, s.Config.ChunkOverlap)
 	out := make([]generatedChunk, 0, len(chunks))
 	maxTokens := 0
@@ -348,7 +369,7 @@ func (s *Service) generateChunks(documentID, versionID, normalized string, segme
 		if tokens > hardAbortChunkTokens {
 			return nil, chunkGenerationStats{}, fmt.Errorf("chunk exceeds hard safety limit: estimated_tokens=%d limit=%d", tokens, hardAbortChunkTokens)
 		}
-		metaRaw, metaMap, err := builder.Build(metadata, documentID, versionID, idx, newStructuralPath(nil))
+		metaRaw, metaMap, err := builder.BuildWithContext(metadata, metaCtx, idx, newStructuralPath(nil))
 		if err != nil {
 			return nil, chunkGenerationStats{}, err
 		}
@@ -399,17 +420,38 @@ func extractMetadata(text string, rules []schema.MappingRule) map[string]interfa
 
 func buildRetrievalPayload(meta map[string]interface{}) map[string]interface{} {
 	out := map[string]interface{}{}
+	if v := pickMetaString(meta, "document_id"); v != "" {
+		out["document_id"] = v
+	}
+	if v := pickMetaString(meta, "document_version_id"); v != "" {
+		out["document_version_id"] = v
+	}
+	if v := pickMetaString(meta, "asset_id"); v != "" {
+		out["asset_id"] = v
+	}
+	if v := pickMetaString(meta, "doc_type_code"); v != "" {
+		out["doc_type_code"] = v
+	}
 	if v := pickMetaString(meta, "legal_domain", "domain", "legal_field"); v != "" {
 		out["legal_domain"] = legalmeta.NormalizeLegalDomain(v)
 	}
 	if v := pickMetaString(meta, "document_type", "doc_type", "type"); v != "" {
 		out["document_type"] = legalmeta.NormalizeDocumentType(v)
 	}
+	if v := pickMetaString(meta, "legal_doc_kind", "document_type", "doc_type", "type"); v != "" {
+		out["legal_doc_kind"] = legalmeta.NormalizeDocumentType(v)
+	}
 	if v := pickMetaString(meta, "document_number", "number", "doc_number", "so_hieu"); v != "" {
-		out["document_number"] = v
+		out["document_number"] = legalmeta.NormalizeDocumentNumber(v)
 	}
 	if v := pickMetaString(meta, "article_number", "article", "dieu"); v != "" {
 		out["article_number"] = v
+	}
+	if v := pickMetaString(meta, "clause_number", "clause", "khoan"); v != "" {
+		out["clause_number"] = v
+	}
+	if v := pickMetaString(meta, "point_marker", "point", "diem"); v != "" {
+		out["point_marker"] = v
 	}
 	if v := pickMetaString(meta, "effective_status", "status", "hieu_luc"); v != "" {
 		out["effective_status"] = legalmeta.NormalizeEffectiveStatus(v)
@@ -419,6 +461,9 @@ func buildRetrievalPayload(meta map[string]interface{}) map[string]interface{} {
 	}
 	if year := pickMetaInt(meta, "signed_year", "year", "nam_ban_hanh"); year > 0 {
 		out["signed_year"] = year
+	}
+	if v := pickMetaString(meta, "pipeline_version"); v != "" {
+		out["pipeline_version"] = v
 	}
 	return out
 }

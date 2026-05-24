@@ -43,6 +43,7 @@ const FiltersBar = () => {
             value={filters.effectiveStatus}
             onChange={(e) => updateFilters({ effectiveStatus: e.target.value })}
           >
+            <option value="">Tất cả hiệu lực</option>
             <option value="active">Còn hiệu lực</option>
             <option value="archived">Lưu trữ</option>
           </Select>

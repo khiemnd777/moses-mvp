@@ -154,18 +154,242 @@ export type DocType = {
   updated_at?: string;
 };
 
+export type DocumentLifecycleStatus =
+  | 'uploaded'
+  | 'security_scanning'
+  | 'security_failed'
+  | 'extracting'
+  | 'normalizing_vi'
+  | 'classified'
+  | 'profile_resolved'
+  | 'indexing'
+  | 'validating'
+  | 'ready'
+  | 'published'
+  | 'extract_failed'
+  | 'classification_low_confidence'
+  | 'needs_review'
+  | 'validation_failed'
+  | 'rejected'
+  | 'archived'
+  | (string & Record<never, never>);
+
+export type DocumentAdminActionName =
+  | 'approve'
+  | 'reindex'
+  | 'archive'
+  | 'reject'
+  | (string & Record<never, never>);
+
+export type DocumentAdminActionDescriptor = {
+  enabled?: boolean;
+  href?: string;
+  url?: string;
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  label?: string;
+  reason?: string;
+  payload?: Record<string, unknown>;
+};
+
+export type DocumentAdminActions = Partial<
+  Record<DocumentAdminActionName, boolean | DocumentAdminActionDescriptor>
+>;
+
+export type DocumentAssetVersion =
+  | number
+  | string
+  | {
+      id?: string;
+      document_version_id?: string;
+      version?: number | string;
+      status?: DocumentLifecycleStatus;
+      created_at?: string;
+    };
+
+export type DocumentAssetItem = {
+  id?: string;
+  file_name: string;
+  content_type: string;
+  created_at?: string;
+  versions?: DocumentAssetVersion[];
+  status?: DocumentLifecycleStatus;
+  analysis?: string;
+  confidence?: number;
+  detected_type?: string;
+  detected_domain?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type DocumentUploadAnalysis = Record<string, unknown> | string | null;
+
+export type DocumentUploadEvent = {
+  id: string;
+  upload_id?: string;
+  event_type: string;
+  stage: string;
+  status: string;
+  message?: string;
+  evidence?: Record<string, unknown> | string | null;
+  actor?: string;
+  file_name?: string;
+  content_type?: string;
+  file_size_bytes?: number;
+  sha256?: string;
+  created_at?: string;
+};
+
+export type DocumentUploadItem = {
+  id: string;
+  title: string;
+  file_name: string;
+  content_type: string;
+  file_size_bytes?: number;
+  sha256?: string;
+  status: DocumentLifecycleStatus;
+  analysis?: DocumentUploadAnalysis;
+  error_message?: string;
+  document_id?: string;
+  document_asset_id?: string;
+  document_version_id?: string;
+  confidence?: number;
+  detected_type?: string;
+  detected_doc_type?: string;
+  detected_doc_type_code?: string;
+  detected_domain?: string;
+  domain?: string;
+  pipeline_stage?: string;
+  stage?: string;
+  review_reasons?: string[];
+  validation_issues?: string[];
+  metadata?: Record<string, unknown>;
+  actions?: DocumentAdminActions;
+  admin_actions?: DocumentAdminActions;
+  available_actions?: DocumentAdminActionName[];
+  events?: DocumentUploadEvent[];
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type DocumentItem = {
   id: string;
   title: string;
-  doc_type_code: string;
-  assets?: Array<{
-    file_name: string;
-    content_type: string;
-    created_at?: string;
-    versions?: number[];
-  }>;
+  doc_type_code?: string;
+  doc_type_id?: string;
+  status?: DocumentLifecycleStatus;
+  lifecycle_status?: DocumentLifecycleStatus;
+  review_status?: DocumentLifecycleStatus;
+  ingest_status?: DocumentLifecycleStatus;
+  validation_status?: DocumentLifecycleStatus;
+  analysis?: string;
+  classification_analysis?: string;
+  review_analysis?: string;
+  confidence?: number;
+  classification_confidence?: number;
+  detected_type?: string;
+  detected_doc_type?: string;
+  detected_doc_type_code?: string;
+  detected_domain?: string;
+  domain?: string;
+  latest_asset_id?: string;
+  latest_version_id?: string;
+  document_version_id?: string;
+  latest_asset?: DocumentAssetItem;
+  assets?: DocumentAssetItem[];
+  metadata?: Record<string, unknown>;
+  actions?: DocumentAdminActions;
+  admin_actions?: DocumentAdminActions;
+  available_actions?: DocumentAdminActionName[];
   created_at?: string;
   updated_at?: string;
+};
+
+export type DocumentAdminActionResponse = {
+  status?: string;
+  summary?: string;
+  document?: DocumentItem;
+  document_upload?: DocumentUploadItem;
+  ingest_job?: IngestJob;
+  created?: boolean;
+};
+
+export type PipelineStatusCount = {
+  status: string;
+  count: number;
+};
+
+export type PipelineStageStatusCount = {
+  stage: string;
+  status: string;
+  count: number;
+};
+
+export type PipelineHealthSummary = {
+  total_uploads: number;
+  processing_uploads: number;
+  review_uploads: number;
+  failed_uploads: number;
+  published_uploads: number;
+  active_jobs: number;
+  failed_jobs: number;
+  stale_uploads: number;
+  recent_issues: number;
+  security_blocked: number;
+  security_unavailable: number;
+};
+
+export type PipelineSecurityStats = {
+  passed: number;
+  blocked: number;
+  unavailable: number;
+};
+
+export type PipelineLatencyStats = {
+  completed_count: number;
+  average_seconds: number;
+  p50_seconds: number;
+  p95_seconds: number;
+  max_seconds: number;
+};
+
+export type PipelineHealthSeverity = 'ok' | 'degraded' | 'critical' | (string & Record<never, never>);
+
+export type PipelineHealthAlert = {
+  code: string;
+  severity: PipelineHealthSeverity;
+  message: string;
+  value: number;
+  threshold: number;
+};
+
+export type PipelineHealthIssue = {
+  upload_id?: string;
+  title: string;
+  file_name: string;
+  status: string;
+  stage: string;
+  event_status: string;
+  message: string;
+  error_message?: string;
+  age_seconds: number;
+  created_at?: string;
+  updated_at?: string;
+  event_created_at?: string;
+};
+
+export type PipelineHealthResponse = {
+  generated_at: string;
+  recent_since: string;
+  stale_before: string;
+  severity: PipelineHealthSeverity;
+  alerts: PipelineHealthAlert[];
+  summary: PipelineHealthSummary;
+  upload_status_counts: PipelineStatusCount[];
+  job_status_counts: PipelineStatusCount[];
+  stage_status_counts: PipelineStageStatusCount[];
+  security: PipelineSecurityStats;
+  latency: PipelineLatencyStats;
+  stale_uploads: PipelineHealthIssue[];
+  recent_issues: PipelineHealthIssue[];
 };
 
 export type IngestJob = {

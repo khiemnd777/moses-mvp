@@ -83,6 +83,96 @@ func TestAnalyzeQueryWithRepresentativeProfilesSkipsGreetingSignals(t *testing.T
 	}
 }
 
+func TestAnalyzeQueryExtractsVietnameseLegalReferences(t *testing.T) {
+	index := buildQueryUnderstandingIndex(representativeProfileDocTypes(t))
+	cases := []struct {
+		name           string
+		query          string
+		article        string
+		clause         string
+		point          string
+		documentNumber string
+		legalDocKind   string
+	}{
+		{
+			name:    "diacritic article clause point",
+			query:   "Điều 56 khoản 3 điểm a về ly hôn",
+			article: "56",
+			clause:  "3",
+			point:   "a",
+		},
+		{
+			name:    "no diacritic article clause point",
+			query:   "Dieu 56 khoan 3 diem a ve ly hon",
+			article: "56",
+			clause:  "3",
+			point:   "a",
+		},
+		{
+			name:           "diacritic decree number",
+			query:          "NĐ 123/2015/NĐ-CP Điều 6",
+			article:        "6",
+			documentNumber: "123/2015/NĐ-CP",
+			legalDocKind:   "decree",
+		},
+		{
+			name:           "no diacritic decree number",
+			query:          "ND 123/2015/ND-CP Dieu 6",
+			article:        "6",
+			documentNumber: "123/2015/ND-CP",
+			legalDocKind:   "decree",
+		},
+		{
+			name:           "diacritic resolution number",
+			query:          "NQ 01/2024/NQ-HĐTP về ly hôn",
+			documentNumber: "01/2024/NQ-HĐTP",
+			legalDocKind:   "resolution",
+		},
+		{
+			name:           "no diacritic resolution number",
+			query:          "NQ 01/2024/NQ-HDTP ve ly hon",
+			documentNumber: "01/2024/NQ-HDTP",
+			legalDocKind:   "resolution",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := analyzeQueryWithIndex(tt.query, index)
+			if tt.article != "" && entityString(got, "article_number") != tt.article {
+				t.Fatalf("article_number = %q, want %q", entityString(got, "article_number"), tt.article)
+			}
+			if tt.clause != "" && entityString(got, "clause_number") != tt.clause {
+				t.Fatalf("clause_number = %q, want %q", entityString(got, "clause_number"), tt.clause)
+			}
+			if tt.point != "" && entityString(got, "point_marker") != tt.point {
+				t.Fatalf("point_marker = %q, want %q", entityString(got, "point_marker"), tt.point)
+			}
+			if tt.documentNumber != "" && entityString(got, "document_number") != tt.documentNumber {
+				t.Fatalf("document_number = %q, want %q", entityString(got, "document_number"), tt.documentNumber)
+			}
+			if tt.legalDocKind != "" && entityString(got, "legal_doc_kind") != tt.legalDocKind {
+				t.Fatalf("legal_doc_kind = %q, want %q", entityString(got, "legal_doc_kind"), tt.legalDocKind)
+			}
+		})
+	}
+}
+
+func TestAnalyzeQueryMatchesLyHonWithAndWithoutDiacritics(t *testing.T) {
+	index := buildQueryUnderstandingIndex(representativeProfileDocTypes(t))
+	for _, query := range []string{"ly hon", "ly hôn"} {
+		t.Run(query, func(t *testing.T) {
+			got := analyzeQueryWithIndex(query, index)
+			if !containsPhrase(got.CanonicalQuery, "ly hon") {
+				t.Fatalf("canonical query = %q, want ly hon", got.CanonicalQuery)
+			}
+			if got.LegalDomain != "marriage_family" || got.LegalTopic != "divorce" {
+				t.Fatalf("domain/topic = %q/%q, want marriage_family/divorce", got.LegalDomain, got.LegalTopic)
+			}
+		})
+	}
+}
+
 func TestBuildFollowUpSearchQueryWithRepresentativeProfilesPreservesDivorceContext(t *testing.T) {
 	index := buildQueryUnderstandingIndex(representativeProfileDocTypes(t))
 	history := []answer.ConversationMessage{
@@ -104,6 +194,25 @@ func TestBuildFollowUpSearchQueryWithRepresentativeProfilesPreservesDivorceConte
 	}
 }
 
+func TestBuildRetrievalPlanDoesNotApplyDefaultEffectiveStatusAsFilter(t *testing.T) {
+	cfg := defaultRuntimeConfig()
+	qu := QueryUnderstandingResult{
+		OriginalQuery:   "Thủ tục ly hôn.",
+		NormalizedQuery: "thu tuc ly hon",
+		CanonicalQuery:  "thu tuc ly hon",
+		Filters:         map[string]interface{}{},
+	}
+
+	got := BuildRetrievalPlan(qu, SearchOptions{}, cfg)
+	if _, ok := got.Filters["effective_status"]; ok {
+		t.Fatalf("expected default effective_status to be omitted, got %#v", got.Filters["effective_status"])
+	}
+	qf := buildQdrantFilter(got.Filters, got.PreferredDocTypes)
+	if qf != nil && len(qf.EffectiveStatus) != 0 {
+		t.Fatalf("expected qdrant effective_status filter to be empty, got %#v", qf.EffectiveStatus)
+	}
+}
+
 func TestBuildRetrievalPlanNormalizesExplicitFilters(t *testing.T) {
 	cfg := defaultRuntimeConfig()
 	qu := QueryUnderstandingResult{
@@ -117,6 +226,7 @@ func TestBuildRetrievalPlanNormalizesExplicitFilters(t *testing.T) {
 		Domain:          "Hôn nhân và gia đình",
 		DocType:         "BỘ LUẬT",
 		EffectiveStatus: "có hiệu lực thi hành từ ngày 01 tháng 01 năm 2017",
+		DocumentNumber:  "123/2015/ND-CP",
 	}, cfg)
 
 	if got.Filters["legal_domain"] != "marriage_family" {
@@ -127,6 +237,9 @@ func TestBuildRetrievalPlanNormalizesExplicitFilters(t *testing.T) {
 	}
 	if got.Filters["effective_status"] != "active" {
 		t.Fatalf("effective_status = %#v, want active", got.Filters["effective_status"])
+	}
+	if got.Filters["document_number"] != "123/2015/NĐ-CP" {
+		t.Fatalf("document_number = %#v, want 123/2015/NĐ-CP", got.Filters["document_number"])
 	}
 }
 

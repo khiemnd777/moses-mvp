@@ -2,11 +2,11 @@ import { NavLink, Outlet } from 'react-router-dom';
 
 const navSections = [
   {
-    label: 'Content',
+    label: 'Operations',
     items: [
-      { to: '/tuning/doc-types', label: 'Doc Types' },
-      { to: '/tuning/documents', label: 'Documents' },
-      { to: '/tuning/ingest-jobs', label: 'Ingest Jobs' }
+      { to: '/tuning/documents', label: 'Intake Pipeline' },
+      { to: '/tuning/ingest-jobs', label: 'Ingest Jobs' },
+      { to: '/tuning/doc-types', label: 'Ingestion Profiles' }
     ]
   },
   {

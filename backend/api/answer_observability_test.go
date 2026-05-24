@@ -55,7 +55,28 @@ func (f *fakeStore) GetDocument(ctx context.Context, id string) (domain.Document
 	return domain.Document{}, nil
 }
 func (f *fakeStore) ListDocuments(ctx context.Context) ([]domain.Document, error) { return nil, nil }
-func (f *fakeStore) DeleteDocument(ctx context.Context, id string) (bool, error)  { return false, nil }
+func (f *fakeStore) CreateDocumentUpload(ctx context.Context, input domain.DocumentUploadInput) (domain.DocumentUpload, error) {
+	return domain.DocumentUpload{}, nil
+}
+func (f *fakeStore) CreateDocumentUploadEvent(ctx context.Context, input domain.DocumentUploadEventInput) (domain.DocumentUploadEvent, error) {
+	return domain.DocumentUploadEvent{}, nil
+}
+func (f *fakeStore) GetDocumentUpload(ctx context.Context, id string) (domain.DocumentUpload, error) {
+	return domain.DocumentUpload{}, nil
+}
+func (f *fakeStore) ListDocumentUploads(ctx context.Context, limit int) ([]domain.DocumentUpload, error) {
+	return nil, nil
+}
+func (f *fakeStore) ApproveDocumentUpload(ctx context.Context, id string, docType domain.DocType, analysisJSON []byte, actor, reason string) (domain.DocumentUploadPromotion, error) {
+	return domain.DocumentUploadPromotion{}, nil
+}
+func (f *fakeStore) ReindexDocumentUpload(ctx context.Context, id, actor, reason string) (domain.IngestJob, bool, error) {
+	return domain.IngestJob{}, false, nil
+}
+func (f *fakeStore) UpdateDocumentUploadReviewStatus(ctx context.Context, id, status, action, actor, reason string) (domain.DocumentUpload, error) {
+	return domain.DocumentUpload{}, nil
+}
+func (f *fakeStore) DeleteDocument(ctx context.Context, id string) (bool, error) { return false, nil }
 func (f *fakeStore) ListDocumentVersionIDsByDocument(ctx context.Context, documentID string) ([]string, error) {
 	return nil, nil
 }
@@ -622,6 +643,116 @@ func TestValidateGeneratedLegalAnswerSuppressesCitationsForNegativeFinding(t *te
 	}
 	if len(citations) != 0 {
 		t.Fatalf("expected no citations for negative finding answer, got %d", len(citations))
+	}
+}
+
+func TestValidateGeneratedLegalAnswerRejectsUnsupportedLegalReferencesForStreamAndNonStream(t *testing.T) {
+	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
+	sources := []answer.Source{
+		{
+			Text: "Điều 54. Hòa giải tại Tòa án.",
+			Citation: answer.Citation{
+				ID:            "citation-54",
+				ChunkID:       "chunk-54",
+				DocumentTitle: "Luật Hôn nhân và gia đình 2014",
+				LawName:       "Luật Hôn nhân và gia đình 2014",
+				DocumentType:  "LUẬT",
+				Article:       "54",
+			},
+		},
+		{
+			Text: "Điều 6. Giá trị pháp lý của Giấy khai sinh theo Nghị định 123/2015/NĐ-CP.",
+			Citation: answer.Citation{
+				ID:             "citation-6",
+				ChunkID:        "chunk-6",
+				DocumentTitle:  "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				LawName:        "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				DocumentNumber: "123/2015/NĐ-CP",
+				DocumentType:   "NGHỊ ĐỊNH",
+				Article:        "6",
+			},
+		},
+	}
+	cases := []struct {
+		name string
+		text string
+	}{
+		{
+			name: "unsupported article",
+			text: "1. Vấn đề pháp lý\nXác định căn cứ hộ tịch.\n\n2. Áp dụng pháp luật\nNghị định 123/2015/NĐ-CP: Điều 999.\n\n3. Phân tích pháp lý\nĐiều 999 Nghị định 123/2015/NĐ-CP điều chỉnh vấn đề này.\n\n4. Kết luận\nÁp dụng Điều 999.",
+		},
+		{
+			name: "unsupported document",
+			text: "1. Vấn đề pháp lý\nXác định quyền, nghĩa vụ sau ly hôn.\n\n2. Áp dụng pháp luật\nNghị định 999/2020/NĐ-CP: Điều 54.\n\n3. Phân tích pháp lý\nĐiều 54 Nghị định 999/2020/NĐ-CP điều chỉnh vấn đề này.\n\n4. Kết luận\nÁp dụng Điều 54.",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, citations, valid, err := handler.validateGeneratedLegalAnswer(context.Background(), tt.text, sources)
+			if err != nil {
+				t.Fatalf("validate non-stream: %v", err)
+			}
+			if valid {
+				t.Fatalf("expected non-stream answer to be invalid")
+			}
+			if got == tt.text {
+				t.Fatalf("expected non-stream answer to be replaced")
+			}
+			if len(citations) != 0 {
+				t.Fatalf("expected no non-stream citations, got %d", len(citations))
+			}
+
+			streamGot, streamCitations, streamValid, err := handler.validateGeneratedLegalAnswerForStream(context.Background(), tt.text, sources)
+			if err != nil {
+				t.Fatalf("validate stream: %v", err)
+			}
+			if streamValid {
+				t.Fatalf("expected stream answer to be invalid")
+			}
+			if streamGot == tt.text {
+				t.Fatalf("expected stream answer to be replaced for unsupported references")
+			}
+			if len(streamCitations) != 0 {
+				t.Fatalf("expected no stream citations, got %d", len(streamCitations))
+			}
+		})
+	}
+}
+
+func TestValidateGeneratedLegalAnswerAcceptsSupportedNoDiacriticDocumentNumber(t *testing.T) {
+	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
+	sources := []answer.Source{
+		{
+			Text: "Điều 6. Giá trị pháp lý của Giấy khai sinh theo Nghị định 123/2015/NĐ-CP.",
+			Citation: answer.Citation{
+				ID:             "citation-6",
+				ChunkID:        "chunk-6",
+				DocumentTitle:  "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				LawName:        "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				DocumentNumber: "123/2015/NĐ-CP",
+				DocumentType:   "NGHỊ ĐỊNH",
+				Article:        "6",
+			},
+		},
+	}
+
+	answerText := "1. Vấn đề pháp lý\nXác định giá trị pháp lý giấy khai sinh.\n\n2. Áp dụng pháp luật\nNghị định 123/2015/ND-CP: Điều 6.\n\n3. Phân tích pháp lý\nĐiều 6 Nghị định 123/2015/ND-CP quy định về giá trị pháp lý của Giấy khai sinh.\n\n4. Kết luận\nÁp dụng Điều 6 Nghị định 123/2015/ND-CP."
+	got, citations, valid, err := handler.validateGeneratedLegalAnswer(context.Background(), answerText, sources)
+	if err != nil {
+		t.Fatalf("validate legal answer: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected answer to be valid")
+	}
+	if got != answerText {
+		t.Fatalf("expected answer to be preserved, got %q", got)
+	}
+	if len(citations) != 1 {
+		t.Fatalf("expected exactly 1 supporting citation, got %d", len(citations))
+	}
+	if citations[0].DocumentNumber != "123/2015/NĐ-CP" || citations[0].Article != "6" {
+		t.Fatalf("unexpected citation: %#v", citations[0])
 	}
 }
 

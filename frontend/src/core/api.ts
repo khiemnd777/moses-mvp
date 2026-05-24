@@ -11,11 +11,15 @@ import type {
   Conversation,
   DeleteByFilterRequest,
   DeleteByFilterResponse,
+  DocumentAdminActionDescriptor,
+  DocumentAdminActionResponse,
   DocType,
   DocTypeQueryDebugResponse,
   DocTypeForm,
   DocumentItem,
+  DocumentUploadItem,
   IngestJob,
+  PipelineHealthResponse,
   QdrantCollectionDetailResponse,
   QdrantCollectionsResponse,
   ReindexAcceptedResponse,
@@ -45,15 +49,27 @@ export type ApiError = {
   details?: unknown;
 };
 
+const VI_API_ERROR_MESSAGES: Record<string, string> = {
+  malware_detected: 'Tệp bị từ chối vì phát hiện mã độc.',
+  malware_scan_unavailable: 'Hệ thống quét an toàn tệp đang tạm thời không khả dụng. Vui lòng thử lại sau.',
+  file_too_large: 'Tệp vượt quá giới hạn dung lượng cho phép.',
+  unauthorized: 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn.',
+  forbidden: 'Bạn không có quyền thực hiện thao tác này.'
+};
+
 export const unwrapError = (error: unknown): string => {
   if (axios.isAxiosError(error)) {
     const data = error.response?.data as { error?: ApiError } | undefined;
+    if (data?.error?.code && VI_API_ERROR_MESSAGES[data.error.code]) return VI_API_ERROR_MESSAGES[data.error.code];
     if (data?.error?.message) return data.error.message;
     return error.message;
   }
   if (error instanceof Error) return error.message;
   return 'Unknown error';
 };
+
+export const isEndpointUnavailableError = (error: unknown) =>
+  axios.isAxiosError(error) && [404, 405, 501].includes(error.response?.status || 0);
 
 export const answer = async (question: string, filters: ChatFilters) => {
   const { data } = await api.post('/answer', { question, filters });
@@ -190,6 +206,38 @@ export const uploadDocumentAsset = async (id: string, file: File) => {
   form.append('file', file);
   const { data } = await api.post(`/documents/${id}/assets`, form);
   return data as { id: string };
+};
+
+export const listDocumentUploads = async (limit = 50) => {
+  const { data } = await api.get('/document-uploads', { params: { limit } });
+  if (!Array.isArray(data)) {
+    throw new Error('Document upload endpoint returned an invalid response.');
+  }
+  return data as DocumentUploadItem[];
+};
+
+export const uploadDocumentOnly = async (payload: { file: File; title?: string }) => {
+  const form = new FormData();
+  form.append('file', payload.file);
+  if (payload.title?.trim()) form.append('title', payload.title.trim());
+  const { data } = await api.post('/document-uploads', form);
+  return data as DocumentUploadItem;
+};
+
+export const runDocumentAdminAction = async (action: DocumentAdminActionDescriptor) => {
+  const endpoint = action.href || action.url;
+  if (!endpoint) throw new Error('Document action endpoint is missing');
+  const { data } = await api.request({
+    url: endpoint,
+    method: action.method || 'POST',
+    data: action.payload
+  });
+  return data as DocumentAdminActionResponse;
+};
+
+export const getPipelineHealth = async (params?: { recent_hours?: number; stale_minutes?: number; limit?: number }) => {
+  const { data } = await api.get('/admin/pipeline/health', { params });
+  return data as PipelineHealthResponse;
 };
 
 export const createDocumentVersion = async (id: string, payload: { asset_id: string }) => {

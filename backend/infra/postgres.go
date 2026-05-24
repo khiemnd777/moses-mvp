@@ -19,6 +19,8 @@ type Store struct {
 	DB *sql.DB
 }
 
+var ErrInvalidDocumentUploadAction = errors.New("invalid document upload action")
+
 type ChunkVectorRow struct {
 	ID                string
 	DocumentVersionID string
@@ -337,6 +339,1333 @@ func (s *Store) ListDocuments(ctx context.Context) ([]domain.Document, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) CreateDocumentUpload(ctx context.Context, input domain.DocumentUploadInput) (domain.DocumentUpload, error) {
+	status := strings.TrimSpace(input.Status)
+	if status == "" {
+		status = "uploaded"
+	}
+	analysisJSON := input.AnalysisJSON
+	if len(analysisJSON) == 0 {
+		analysisJSON = []byte(`{}`)
+	}
+
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.DocumentUpload{}, err
+	}
+	defer tx.Rollback()
+
+	var upload domain.DocumentUpload
+	query := `
+INSERT INTO document_uploads (
+	title,
+	file_name,
+	content_type,
+	storage_path,
+	file_size_bytes,
+	sha256,
+	status,
+	analysis_json
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+RETURNING id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at`
+	row := tx.QueryRowContext(
+		ctx,
+		query,
+		input.Title,
+		input.FileName,
+		input.ContentType,
+		input.StoragePath,
+		input.FileSizeBytes,
+		input.SHA256,
+		status,
+		analysisJSON,
+	)
+	if err := scanDocumentUpload(row, &upload); err != nil {
+		return domain.DocumentUpload{}, err
+	}
+	for _, eventInput := range input.Events {
+		if eventInput.UploadID == nil {
+			uploadID := upload.ID
+			eventInput.UploadID = &uploadID
+		}
+		if eventInput.FileName == "" {
+			eventInput.FileName = upload.FileName
+		}
+		if eventInput.ContentType == "" {
+			eventInput.ContentType = upload.ContentType
+		}
+		if eventInput.FileSizeBytes == 0 {
+			eventInput.FileSizeBytes = upload.FileSizeBytes
+		}
+		if eventInput.SHA256 == "" {
+			eventInput.SHA256 = upload.SHA256
+		}
+		event, err := insertDocumentUploadEvent(ctx, tx, eventInput)
+		if err != nil {
+			return domain.DocumentUpload{}, err
+		}
+		upload.Events = append(upload.Events, event)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.DocumentUpload{}, err
+	}
+	return upload, nil
+}
+
+func (s *Store) CreateDocumentUploadEvent(ctx context.Context, input domain.DocumentUploadEventInput) (domain.DocumentUploadEvent, error) {
+	return insertDocumentUploadEvent(ctx, s.DB, input)
+}
+
+func (s *Store) GetDocumentUpload(ctx context.Context, id string) (domain.DocumentUpload, error) {
+	var upload domain.DocumentUpload
+	row := s.DB.QueryRowContext(ctx, `
+SELECT id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at
+FROM document_uploads
+WHERE id = $1`, id)
+	if err := scanDocumentUpload(row, &upload); err != nil {
+		return domain.DocumentUpload{}, err
+	}
+	uploads := []domain.DocumentUpload{upload}
+	if err := s.attachDocumentUploadEvents(ctx, uploads); err != nil {
+		return domain.DocumentUpload{}, err
+	}
+	return uploads[0], nil
+}
+
+func (s *Store) ListDocumentUploads(ctx context.Context, limit int) ([]domain.DocumentUpload, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at
+FROM document_uploads
+ORDER BY created_at DESC
+LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.DocumentUpload, 0)
+	for rows.Next() {
+		var upload domain.DocumentUpload
+		if err := scanDocumentUpload(rows, &upload); err != nil {
+			return nil, err
+		}
+		out = append(out, upload)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachDocumentUploadEvents(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) GetPipelineHealth(ctx context.Context, opts domain.PipelineHealthOptions) (domain.PipelineHealth, error) {
+	generatedAt := time.Now().UTC()
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	recentSince := opts.RecentSince
+	if recentSince.IsZero() {
+		recentSince = generatedAt.Add(-24 * time.Hour)
+	}
+	staleBefore := opts.StaleBefore
+	if staleBefore.IsZero() {
+		staleBefore = generatedAt.Add(-15 * time.Minute)
+	}
+
+	uploadCounts, err := s.pipelineUploadStatusCounts(ctx)
+	if err != nil {
+		return domain.PipelineHealth{}, err
+	}
+	jobCounts, err := s.pipelineJobStatusCounts(ctx)
+	if err != nil {
+		return domain.PipelineHealth{}, err
+	}
+	stageCounts, err := s.pipelineStageStatusCounts(ctx, recentSince)
+	if err != nil {
+		return domain.PipelineHealth{}, err
+	}
+	security, err := s.pipelineSecurityStats(ctx, recentSince)
+	if err != nil {
+		return domain.PipelineHealth{}, err
+	}
+	latency, err := s.pipelineLatencyStats(ctx, recentSince)
+	if err != nil {
+		return domain.PipelineHealth{}, err
+	}
+	staleUploads, err := s.pipelineStaleUploads(ctx, staleBefore, generatedAt, limit)
+	if err != nil {
+		return domain.PipelineHealth{}, err
+	}
+	recentIssues, err := s.pipelineRecentIssues(ctx, recentSince, generatedAt, limit)
+	if err != nil {
+		return domain.PipelineHealth{}, err
+	}
+
+	summary := summarizePipelineHealth(uploadCounts, jobCounts, security, staleUploads, recentIssues)
+	alerts, severity := evaluatePipelineHealth(summary, latency)
+	return domain.PipelineHealth{
+		GeneratedAt:       generatedAt,
+		RecentSince:       recentSince,
+		StaleBefore:       staleBefore,
+		Severity:          severity,
+		Alerts:            alerts,
+		Summary:           summary,
+		UploadStatusCount: uploadCounts,
+		JobStatusCount:    jobCounts,
+		StageStatusCount:  stageCounts,
+		Security:          security,
+		Latency:           latency,
+		StaleUploads:      staleUploads,
+		RecentIssues:      recentIssues,
+	}, nil
+}
+
+func (s *Store) pipelineUploadStatusCounts(ctx context.Context) ([]domain.PipelineStatusCount, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT status, COUNT(*)
+FROM document_uploads
+GROUP BY status
+ORDER BY status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var counts []domain.PipelineStatusCount
+	for rows.Next() {
+		var status string
+		var count int64
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		counts = append(counts, domain.PipelineStatusCount{Status: status, Count: int(count)})
+	}
+	return counts, rows.Err()
+}
+
+func (s *Store) pipelineJobStatusCounts(ctx context.Context) ([]domain.PipelineStatusCount, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT status, COUNT(*)
+FROM ingest_jobs
+GROUP BY status
+ORDER BY status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var counts []domain.PipelineStatusCount
+	for rows.Next() {
+		var status string
+		var count int64
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		counts = append(counts, domain.PipelineStatusCount{Status: status, Count: int(count)})
+	}
+	return counts, rows.Err()
+}
+
+func (s *Store) pipelineStageStatusCounts(ctx context.Context, recentSince time.Time) ([]domain.PipelineStageStatusCount, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT stage, status, COUNT(*)
+FROM document_upload_events
+WHERE created_at >= $1
+GROUP BY stage, status
+ORDER BY stage, status`, recentSince)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var counts []domain.PipelineStageStatusCount
+	for rows.Next() {
+		var stage, status string
+		var count int64
+		if err := rows.Scan(&stage, &status, &count); err != nil {
+			return nil, err
+		}
+		counts = append(counts, domain.PipelineStageStatusCount{Stage: stage, Status: status, Count: int(count)})
+	}
+	return counts, rows.Err()
+}
+
+func (s *Store) pipelineSecurityStats(ctx context.Context, recentSince time.Time) (domain.PipelineSecurityStats, error) {
+	var passed, blocked, unavailable int64
+	err := s.DB.QueryRowContext(ctx, `
+SELECT
+	COUNT(*) FILTER (WHERE status = 'done') AS passed,
+	COUNT(*) FILTER (WHERE status IN ('blocked', 'failed', 'error', 'rejected')) AS blocked,
+	COUNT(*) FILTER (WHERE status = 'unavailable') AS unavailable
+FROM document_upload_events
+WHERE stage = 'security'
+  AND created_at >= $1`, recentSince).Scan(&passed, &blocked, &unavailable)
+	if err != nil {
+		return domain.PipelineSecurityStats{}, err
+	}
+	return domain.PipelineSecurityStats{
+		Passed:      int(passed),
+		Blocked:     int(blocked),
+		Unavailable: int(unavailable),
+	}, nil
+}
+
+func (s *Store) pipelineLatencyStats(ctx context.Context, recentSince time.Time) (domain.PipelineLatencyStats, error) {
+	var completed int64
+	var avg, p50, p95, max sql.NullFloat64
+	err := s.DB.QueryRowContext(ctx, `
+SELECT
+	COUNT(*),
+	AVG(EXTRACT(EPOCH FROM (updated_at - created_at))),
+	percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (updated_at - created_at))),
+	percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (updated_at - created_at))),
+	MAX(EXTRACT(EPOCH FROM (updated_at - created_at)))
+FROM document_uploads
+WHERE status IN ('ready', 'published')
+  AND updated_at >= $1`, recentSince).Scan(&completed, &avg, &p50, &p95, &max)
+	if err != nil {
+		return domain.PipelineLatencyStats{}, err
+	}
+	return domain.PipelineLatencyStats{
+		CompletedCount: int(completed),
+		AverageSeconds: pipelineNullFloat(avg),
+		P50Seconds:     pipelineNullFloat(p50),
+		P95Seconds:     pipelineNullFloat(p95),
+		MaxSeconds:     pipelineNullFloat(max),
+	}, nil
+}
+
+func (s *Store) pipelineStaleUploads(ctx context.Context, staleBefore, generatedAt time.Time, limit int) ([]domain.PipelineHealthIssue, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT id, title, file_name, status, COALESCE(error_message, ''), created_at, updated_at
+FROM document_uploads
+WHERE status = ANY($1::text[])
+  AND updated_at < $2
+ORDER BY updated_at ASC
+LIMIT $3`, pq.Array(pipelineProcessingUploadStatuses()), staleBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	issues := make([]domain.PipelineHealthIssue, 0)
+	for rows.Next() {
+		var issue domain.PipelineHealthIssue
+		var uploadID string
+		if err := rows.Scan(
+			&uploadID,
+			&issue.Title,
+			&issue.FileName,
+			&issue.Status,
+			&issue.ErrorMessage,
+			&issue.CreatedAt,
+			&issue.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		issue.UploadID = &uploadID
+		issue.Stage, issue.EventStatus, _ = documentUploadStatusEventShape(issue.Status)
+		issue.Message = "Upload has not advanced before the stale threshold"
+		issue.AgeSeconds = pipelineIssueAgeSeconds(generatedAt, issue.UpdatedAt)
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
+}
+
+func (s *Store) pipelineRecentIssues(ctx context.Context, recentSince, generatedAt time.Time, limit int) ([]domain.PipelineHealthIssue, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT
+	e.upload_id,
+	COALESCE(NULLIF(u.title, ''), e.file_name, '') AS title,
+	COALESCE(NULLIF(u.file_name, ''), e.file_name, '') AS file_name,
+	COALESCE(u.status, '') AS upload_status,
+	COALESCE(u.error_message, '') AS error_message,
+	e.stage,
+	e.status,
+	e.message,
+	COALESCE(u.created_at, e.created_at) AS created_at,
+	COALESCE(u.updated_at, e.created_at) AS updated_at,
+	e.created_at AS event_created_at
+FROM document_upload_events e
+LEFT JOIN document_uploads u ON u.id = e.upload_id
+WHERE e.created_at >= $1
+  AND (
+	e.event_type IN ('stage_error', 'stage_review')
+	OR e.status IN ('blocked', 'warning', 'failed', 'error', 'unavailable', 'rejected')
+	OR COALESCE(u.status, '') = ANY($2::text[])
+  )
+ORDER BY e.created_at DESC
+LIMIT $3`, recentSince, pq.Array(pipelineReviewOrFailureUploadStatuses()), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	issues := make([]domain.PipelineHealthIssue, 0)
+	for rows.Next() {
+		var issue domain.PipelineHealthIssue
+		var uploadID sql.NullString
+		var eventCreatedAt time.Time
+		if err := rows.Scan(
+			&uploadID,
+			&issue.Title,
+			&issue.FileName,
+			&issue.Status,
+			&issue.ErrorMessage,
+			&issue.Stage,
+			&issue.EventStatus,
+			&issue.Message,
+			&issue.CreatedAt,
+			&issue.UpdatedAt,
+			&eventCreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if uploadID.Valid {
+			issue.UploadID = &uploadID.String
+		}
+		issue.EventCreatedAt = &eventCreatedAt
+		issue.AgeSeconds = pipelineIssueAgeSeconds(generatedAt, eventCreatedAt)
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
+}
+
+func summarizePipelineHealth(uploadCounts, jobCounts []domain.PipelineStatusCount, security domain.PipelineSecurityStats, staleUploads, recentIssues []domain.PipelineHealthIssue) domain.PipelineHealthSummary {
+	uploadsByStatus := pipelineCountsByStatus(uploadCounts)
+	jobsByStatus := pipelineCountsByStatus(jobCounts)
+	summary := domain.PipelineHealthSummary{
+		StaleUploads:        len(staleUploads),
+		RecentIssues:        len(recentIssues),
+		SecurityBlocked:     security.Blocked,
+		SecurityUnavailable: security.Unavailable,
+	}
+	for _, item := range uploadCounts {
+		summary.TotalUploads += item.Count
+	}
+	for _, status := range pipelineProcessingUploadStatuses() {
+		summary.ProcessingUploads += uploadsByStatus[status]
+	}
+	for _, status := range []string{"classification_low_confidence", "needs_review", "validation_failed"} {
+		summary.ReviewUploads += uploadsByStatus[status]
+	}
+	for _, status := range []string{"extract_failed", "validation_failed", "rejected"} {
+		summary.FailedUploads += uploadsByStatus[status]
+	}
+	for _, status := range []string{"ready", "published"} {
+		summary.PublishedUploads += uploadsByStatus[status]
+	}
+	for _, status := range []string{"pending", "queued", "processing", "running"} {
+		summary.ActiveJobs += jobsByStatus[status]
+	}
+	summary.FailedJobs = jobsByStatus["failed"]
+	return summary
+}
+
+func evaluatePipelineHealth(summary domain.PipelineHealthSummary, latency domain.PipelineLatencyStats) ([]domain.PipelineHealthAlert, string) {
+	alerts := make([]domain.PipelineHealthAlert, 0)
+	add := func(code, severity, message string, value, threshold float64) {
+		alerts = append(alerts, domain.PipelineHealthAlert{
+			Code:      code,
+			Severity:  severity,
+			Message:   message,
+			Value:     value,
+			Threshold: threshold,
+		})
+	}
+	if summary.SecurityUnavailable > 0 {
+		add("security_scanner_unavailable", "critical", "Upload security scanner reported unavailable events", float64(summary.SecurityUnavailable), 0)
+	}
+	if summary.StaleUploads > 0 {
+		add("stale_uploads", "critical", "Uploads are stuck beyond the stale threshold", float64(summary.StaleUploads), 0)
+	}
+	if summary.FailedJobs > 0 {
+		add("failed_ingest_jobs", "critical", "Ingest jobs are failed and require operator action", float64(summary.FailedJobs), 0)
+	}
+	if summary.FailedUploads > 0 {
+		add("failed_uploads", "degraded", "Uploads reached failed terminal states", float64(summary.FailedUploads), 0)
+	}
+	if summary.ReviewUploads > 0 {
+		add("review_backlog", "degraded", "Uploads are waiting for operator review", float64(summary.ReviewUploads), 0)
+	}
+	if summary.SecurityBlocked > 0 {
+		add("security_blocked_uploads", "degraded", "Security scan blocked suspicious uploads", float64(summary.SecurityBlocked), 0)
+	}
+	if summary.ActiveJobs > 10 {
+		add("index_backlog_high", "degraded", "Index job backlog is above the expected operating threshold", float64(summary.ActiveJobs), 10)
+	}
+	if latency.CompletedCount > 0 && latency.P95Seconds > 600 {
+		add("publish_latency_high", "degraded", "Pipeline publish latency p95 is above threshold", latency.P95Seconds, 600)
+	}
+
+	severity := "ok"
+	for _, alert := range alerts {
+		if alert.Severity == "critical" {
+			return alerts, "critical"
+		}
+		if alert.Severity == "degraded" {
+			severity = "degraded"
+		}
+	}
+	return alerts, severity
+}
+
+func pipelineCountsByStatus(counts []domain.PipelineStatusCount) map[string]int {
+	out := make(map[string]int, len(counts))
+	for _, item := range counts {
+		out[item.Status] = item.Count
+	}
+	return out
+}
+
+func pipelineProcessingUploadStatuses() []string {
+	return []string{"uploaded", "extracting", "classified", "profile_resolved", "indexing", "validating"}
+}
+
+func pipelineReviewOrFailureUploadStatuses() []string {
+	return []string{"extract_failed", "classification_low_confidence", "needs_review", "validation_failed", "rejected"}
+}
+
+func pipelineNullFloat(value sql.NullFloat64) float64 {
+	if !value.Valid {
+		return 0
+	}
+	return value.Float64
+}
+
+func pipelineIssueAgeSeconds(now, since time.Time) int64 {
+	seconds := int64(now.Sub(since).Seconds())
+	if seconds < 0 {
+		return 0
+	}
+	return seconds
+}
+
+func (s *Store) ClaimNextDocumentUpload(ctx context.Context) (domain.DocumentUpload, bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.DocumentUpload{}, false, err
+	}
+	defer tx.Rollback()
+
+	var upload domain.DocumentUpload
+	row := tx.QueryRowContext(ctx, `
+SELECT id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at
+FROM document_uploads
+WHERE status = 'uploaded'
+ORDER BY created_at ASC
+FOR UPDATE SKIP LOCKED
+LIMIT 1`)
+	if err := scanDocumentUpload(row, &upload); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.DocumentUpload{}, false, nil
+		}
+		return domain.DocumentUpload{}, false, err
+	}
+
+	row = tx.QueryRowContext(ctx, `
+UPDATE document_uploads
+SET status = 'extracting', updated_at = NOW()
+WHERE id = $1
+RETURNING id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at`, upload.ID)
+	if err := scanDocumentUpload(row, &upload); err != nil {
+		return domain.DocumentUpload{}, false, err
+	}
+	if _, err := insertDocumentUploadEvent(ctx, tx, domain.DocumentUploadEventInput{
+		UploadID:      &upload.ID,
+		EventType:     "stage_transition",
+		Stage:         "extract",
+		Status:        "active",
+		Message:       "Worker claimed upload for extraction",
+		Actor:         "worker",
+		FileName:      upload.FileName,
+		ContentType:   upload.ContentType,
+		FileSizeBytes: upload.FileSizeBytes,
+		SHA256:        upload.SHA256,
+	}); err != nil {
+		return domain.DocumentUpload{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.DocumentUpload{}, false, err
+	}
+	return upload, true, nil
+}
+
+func (s *Store) UpdateDocumentUploadStatus(ctx context.Context, id, status string, analysisJSON []byte, errorMessage *string) error {
+	if len(analysisJSON) == 0 {
+		analysisJSON = []byte(`{}`)
+	}
+	var errValue sql.NullString
+	if errorMessage != nil {
+		errValue = sql.NullString{String: *errorMessage, Valid: true}
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var upload domain.DocumentUpload
+	row := tx.QueryRowContext(ctx, `
+UPDATE document_uploads
+SET status = $2,
+	analysis_json = $3,
+	error_message = $4,
+	updated_at = NOW()
+WHERE id = $1
+RETURNING id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at`, id, status, analysisJSON, errValue)
+	if err := scanDocumentUpload(row, &upload); err != nil {
+		return err
+	}
+	if eventInput, ok := documentUploadStatusEventInput(upload, status, analysisJSON, errorMessage); ok {
+		if _, err := insertDocumentUploadEvent(ctx, tx, eventInput); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) PromoteDocumentUpload(ctx context.Context, upload domain.DocumentUpload, docType domain.DocType, analysisJSON []byte) (domain.DocumentUploadPromotion, error) {
+	if len(analysisJSON) == 0 {
+		analysisJSON = []byte(`{}`)
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	defer tx.Rollback()
+
+	var promotion domain.DocumentUploadPromotion
+	if err := tx.QueryRowContext(ctx, `INSERT INTO documents (doc_type_id, title) VALUES ($1,$2) RETURNING id`, docType.ID, upload.Title).Scan(&promotion.DocumentID); err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	if err := tx.QueryRowContext(
+		ctx,
+		`INSERT INTO document_assets (document_id, file_name, content_type, storage_path) VALUES ($1,$2,$3,$4) RETURNING id`,
+		promotion.DocumentID,
+		upload.FileName,
+		upload.ContentType,
+		upload.StoragePath,
+	).Scan(&promotion.DocumentAssetID); err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	if err := tx.QueryRowContext(
+		ctx,
+		`INSERT INTO document_versions (document_id, asset_id, version) VALUES ($1,$2,1) RETURNING id`,
+		promotion.DocumentID,
+		promotion.DocumentAssetID,
+	).Scan(&promotion.DocumentVersionID); err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	if err := tx.QueryRowContext(
+		ctx,
+		`INSERT INTO ingest_jobs (document_version_id, status) VALUES ($1,'queued') RETURNING id`,
+		promotion.DocumentVersionID,
+	).Scan(&promotion.IngestJobID); err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	result, err := tx.ExecContext(ctx, `
+UPDATE document_uploads
+SET status = 'indexing',
+	analysis_json = $2,
+	error_message = NULL,
+	document_id = $3,
+	document_asset_id = $4,
+	document_version_id = $5,
+	updated_at = NOW()
+WHERE id = $1`, upload.ID, analysisJSON, promotion.DocumentID, promotion.DocumentAssetID, promotion.DocumentVersionID)
+	if err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	if affected == 0 {
+		return domain.DocumentUploadPromotion{}, sql.ErrNoRows
+	}
+	promotionEvidence := mustJSON(map[string]interface{}{
+		"doc_type_code":       docType.Code,
+		"document_id":         promotion.DocumentID,
+		"document_asset_id":   promotion.DocumentAssetID,
+		"document_version_id": promotion.DocumentVersionID,
+		"ingest_job_id":       promotion.IngestJobID,
+		"pipeline_version":    "rag_upload_intake_v1",
+		"status_reason":       "profile_resolved",
+	})
+	for _, eventInput := range []domain.DocumentUploadEventInput{
+		{
+			UploadID:      &upload.ID,
+			EventType:     "stage_transition",
+			Stage:         "profile",
+			Status:        "done",
+			Message:       "Resolved ingestion profile from classified document type",
+			EvidenceJSON:  promotionEvidence,
+			Actor:         "worker",
+			FileName:      upload.FileName,
+			ContentType:   upload.ContentType,
+			FileSizeBytes: upload.FileSizeBytes,
+			SHA256:        upload.SHA256,
+		},
+		{
+			UploadID:      &upload.ID,
+			EventType:     "stage_transition",
+			Stage:         "document_version",
+			Status:        "done",
+			Message:       "Created document, asset, and version records",
+			EvidenceJSON:  promotionEvidence,
+			Actor:         "worker",
+			FileName:      upload.FileName,
+			ContentType:   upload.ContentType,
+			FileSizeBytes: upload.FileSizeBytes,
+			SHA256:        upload.SHA256,
+		},
+		{
+			UploadID:      &upload.ID,
+			EventType:     "stage_transition",
+			Stage:         "embed_index",
+			Status:        "active",
+			Message:       "Queued ingest job for chunking, embedding, indexing, and validation",
+			EvidenceJSON:  promotionEvidence,
+			Actor:         "worker",
+			FileName:      upload.FileName,
+			ContentType:   upload.ContentType,
+			FileSizeBytes: upload.FileSizeBytes,
+			SHA256:        upload.SHA256,
+		},
+	} {
+		if _, err := insertDocumentUploadEvent(ctx, tx, eventInput); err != nil {
+			return domain.DocumentUploadPromotion{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	return promotion, nil
+}
+
+func (s *Store) ApproveDocumentUpload(ctx context.Context, id string, docType domain.DocType, analysisJSON []byte, actor, reason string) (domain.DocumentUploadPromotion, error) {
+	if len(analysisJSON) == 0 {
+		analysisJSON = []byte(`{}`)
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	defer tx.Rollback()
+
+	var upload domain.DocumentUpload
+	row := tx.QueryRowContext(ctx, `
+SELECT id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at
+FROM document_uploads
+WHERE id = $1
+FOR UPDATE`, id)
+	if err := scanDocumentUpload(row, &upload); err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	if upload.Status != "classification_low_confidence" && upload.Status != "needs_review" {
+		return domain.DocumentUploadPromotion{}, ErrInvalidDocumentUploadAction
+	}
+	if upload.DocumentVersionID != nil {
+		return domain.DocumentUploadPromotion{}, ErrInvalidDocumentUploadAction
+	}
+
+	var promotion domain.DocumentUploadPromotion
+	if err := tx.QueryRowContext(ctx, `INSERT INTO documents (doc_type_id, title) VALUES ($1,$2) RETURNING id`, docType.ID, upload.Title).Scan(&promotion.DocumentID); err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	if err := tx.QueryRowContext(
+		ctx,
+		`INSERT INTO document_assets (document_id, file_name, content_type, storage_path) VALUES ($1,$2,$3,$4) RETURNING id`,
+		promotion.DocumentID,
+		upload.FileName,
+		upload.ContentType,
+		upload.StoragePath,
+	).Scan(&promotion.DocumentAssetID); err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	if err := tx.QueryRowContext(
+		ctx,
+		`INSERT INTO document_versions (document_id, asset_id, version) VALUES ($1,$2,1) RETURNING id`,
+		promotion.DocumentID,
+		promotion.DocumentAssetID,
+	).Scan(&promotion.DocumentVersionID); err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	if err := tx.QueryRowContext(
+		ctx,
+		`INSERT INTO ingest_jobs (document_version_id, status) VALUES ($1,'queued') RETURNING id`,
+		promotion.DocumentVersionID,
+	).Scan(&promotion.IngestJobID); err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	result, err := tx.ExecContext(ctx, `
+UPDATE document_uploads
+SET status = 'indexing',
+	analysis_json = $2,
+	error_message = NULL,
+	document_id = $3,
+	document_asset_id = $4,
+	document_version_id = $5,
+	updated_at = NOW()
+WHERE id = $1`, upload.ID, analysisJSON, promotion.DocumentID, promotion.DocumentAssetID, promotion.DocumentVersionID)
+	if err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	if affected == 0 {
+		return domain.DocumentUploadPromotion{}, sql.ErrNoRows
+	}
+
+	evidence := mustJSON(map[string]interface{}{
+		"doc_type_code":       docType.Code,
+		"document_id":         promotion.DocumentID,
+		"document_asset_id":   promotion.DocumentAssetID,
+		"document_version_id": promotion.DocumentVersionID,
+		"ingest_job_id":       promotion.IngestJobID,
+		"pipeline_version":    "rag_upload_intake_v1",
+		"reason":              reason,
+		"status_reason":       "approved_by_operator",
+	})
+	for _, eventInput := range []domain.DocumentUploadEventInput{
+		{
+			UploadID:      &upload.ID,
+			EventType:     "review_action",
+			Stage:         "classify",
+			Status:        "done",
+			Message:       "Operator approved document type classification",
+			EvidenceJSON:  evidence,
+			Actor:         actor,
+			FileName:      upload.FileName,
+			ContentType:   upload.ContentType,
+			FileSizeBytes: upload.FileSizeBytes,
+			SHA256:        upload.SHA256,
+		},
+		{
+			UploadID:      &upload.ID,
+			EventType:     "stage_transition",
+			Stage:         "profile",
+			Status:        "done",
+			Message:       "Resolved ingestion profile from operator-approved document type",
+			EvidenceJSON:  evidence,
+			Actor:         "worker",
+			FileName:      upload.FileName,
+			ContentType:   upload.ContentType,
+			FileSizeBytes: upload.FileSizeBytes,
+			SHA256:        upload.SHA256,
+		},
+		{
+			UploadID:      &upload.ID,
+			EventType:     "stage_transition",
+			Stage:         "document_version",
+			Status:        "done",
+			Message:       "Created document, asset, and version records",
+			EvidenceJSON:  evidence,
+			Actor:         "worker",
+			FileName:      upload.FileName,
+			ContentType:   upload.ContentType,
+			FileSizeBytes: upload.FileSizeBytes,
+			SHA256:        upload.SHA256,
+		},
+		{
+			UploadID:      &upload.ID,
+			EventType:     "stage_transition",
+			Stage:         "embed_index",
+			Status:        "active",
+			Message:       "Queued ingest job for chunking, embedding, indexing, and validation",
+			EvidenceJSON:  evidence,
+			Actor:         "worker",
+			FileName:      upload.FileName,
+			ContentType:   upload.ContentType,
+			FileSizeBytes: upload.FileSizeBytes,
+			SHA256:        upload.SHA256,
+		},
+	} {
+		if _, err := insertDocumentUploadEvent(ctx, tx, eventInput); err != nil {
+			return domain.DocumentUploadPromotion{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.DocumentUploadPromotion{}, err
+	}
+	return promotion, nil
+}
+
+func (s *Store) ReindexDocumentUpload(ctx context.Context, id, actor, reason string) (domain.IngestJob, bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.IngestJob{}, false, err
+	}
+	defer tx.Rollback()
+
+	var upload domain.DocumentUpload
+	row := tx.QueryRowContext(ctx, `
+SELECT id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at
+FROM document_uploads
+WHERE id = $1
+FOR UPDATE`, id)
+	if err := scanDocumentUpload(row, &upload); err != nil {
+		return domain.IngestJob{}, false, err
+	}
+	if upload.DocumentVersionID == nil || strings.TrimSpace(*upload.DocumentVersionID) == "" {
+		return domain.IngestJob{}, false, ErrInvalidDocumentUploadAction
+	}
+	documentVersionID := *upload.DocumentVersionID
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, documentVersionID); err != nil {
+		return domain.IngestJob{}, false, err
+	}
+
+	var job domain.IngestJob
+	created := false
+	existingRow := tx.QueryRowContext(ctx, `
+SELECT id, document_version_id, status, error_message, created_at, updated_at
+FROM ingest_jobs
+WHERE document_version_id = $1
+  AND status IN ('pending', 'processing', 'queued', 'running')
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE`, documentVersionID)
+	switch err := existingRow.Scan(&job.ID, &job.DocumentVersionID, &job.Status, &job.ErrorMessage, &job.CreatedAt, &job.UpdatedAt); err {
+	case nil:
+	case sql.ErrNoRows:
+		created = true
+		if err := tx.QueryRowContext(ctx, `
+INSERT INTO ingest_jobs (document_version_id, status, error_message)
+VALUES ($1, 'pending', NULL)
+RETURNING id, document_version_id, status, error_message, created_at, updated_at`, documentVersionID).Scan(
+			&job.ID,
+			&job.DocumentVersionID,
+			&job.Status,
+			&job.ErrorMessage,
+			&job.CreatedAt,
+			&job.UpdatedAt,
+		); err != nil {
+			return domain.IngestJob{}, false, err
+		}
+	default:
+		return domain.IngestJob{}, false, err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+UPDATE document_uploads
+SET status = 'indexing',
+    error_message = NULL,
+    updated_at = NOW()
+WHERE id = $1`, upload.ID)
+	if err != nil {
+		return domain.IngestJob{}, false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.IngestJob{}, false, err
+	}
+	if affected == 0 {
+		return domain.IngestJob{}, false, sql.ErrNoRows
+	}
+	if _, err := insertDocumentUploadEvent(ctx, tx, domain.DocumentUploadEventInput{
+		UploadID:  &upload.ID,
+		EventType: "review_action",
+		Stage:     "embed_index",
+		Status:    "active",
+		Message:   "Operator requested reindex",
+		EvidenceJSON: mustJSON(map[string]interface{}{
+			"created":             created,
+			"document_version_id": documentVersionID,
+			"ingest_job_id":       job.ID,
+			"pipeline_version":    "rag_upload_intake_v1",
+			"reason":              reason,
+			"status_reason":       "reindex_requested",
+		}),
+		Actor:         actor,
+		FileName:      upload.FileName,
+		ContentType:   upload.ContentType,
+		FileSizeBytes: upload.FileSizeBytes,
+		SHA256:        upload.SHA256,
+	}); err != nil {
+		return domain.IngestJob{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.IngestJob{}, false, err
+	}
+	return job, created, nil
+}
+
+func (s *Store) UpdateDocumentUploadReviewStatus(ctx context.Context, id, status, action, actor, reason string) (domain.DocumentUpload, error) {
+	if status != "rejected" && status != "archived" {
+		return domain.DocumentUpload{}, ErrInvalidDocumentUploadAction
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.DocumentUpload{}, err
+	}
+	defer tx.Rollback()
+
+	var upload domain.DocumentUpload
+	var errValue sql.NullString
+	if status == "rejected" && strings.TrimSpace(reason) != "" {
+		errValue = sql.NullString{String: strings.TrimSpace(reason), Valid: true}
+	}
+	row := tx.QueryRowContext(ctx, `
+UPDATE document_uploads
+SET status = $2,
+    error_message = $3,
+    updated_at = NOW()
+WHERE id = $1
+  AND status NOT IN ('rejected', 'archived')
+RETURNING id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at`, id, status, errValue)
+	if err := scanDocumentUpload(row, &upload); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.DocumentUpload{}, ErrInvalidDocumentUploadAction
+		}
+		return domain.DocumentUpload{}, err
+	}
+	if _, err := insertDocumentUploadEvent(ctx, tx, domain.DocumentUploadEventInput{
+		UploadID:  &upload.ID,
+		EventType: "review_action",
+		Stage:     "publish",
+		Status:    "blocked",
+		Message:   "Operator marked upload as " + status,
+		EvidenceJSON: mustJSON(map[string]interface{}{
+			"action":           action,
+			"pipeline_version": "rag_upload_intake_v1",
+			"reason":           reason,
+			"status_reason":    status,
+		}),
+		Actor:         actor,
+		FileName:      upload.FileName,
+		ContentType:   upload.ContentType,
+		FileSizeBytes: upload.FileSizeBytes,
+		SHA256:        upload.SHA256,
+	}); err != nil {
+		return domain.DocumentUpload{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.DocumentUpload{}, err
+	}
+	uploads := []domain.DocumentUpload{upload}
+	if err := s.attachDocumentUploadEvents(ctx, uploads); err != nil {
+		return domain.DocumentUpload{}, err
+	}
+	return uploads[0], nil
+}
+
+func (s *Store) ResetStaleDocumentUploads(ctx context.Context, staleBefore time.Time) (int64, error) {
+	res, err := s.DB.ExecContext(ctx, `
+UPDATE document_uploads
+SET status = 'uploaded',
+    error_message = NULL,
+    updated_at = NOW()
+WHERE status = 'extracting'
+  AND updated_at < $1
+`, staleBefore)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+type documentUploadScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanDocumentUpload(scanner documentUploadScanner, upload *domain.DocumentUpload) error {
+	var (
+		contentType       sql.NullString
+		errorMessage      sql.NullString
+		documentID        sql.NullString
+		documentAssetID   sql.NullString
+		documentVersionID sql.NullString
+	)
+	err := scanner.Scan(
+		&upload.ID,
+		&upload.Title,
+		&upload.FileName,
+		&contentType,
+		&upload.StoragePath,
+		&upload.FileSizeBytes,
+		&upload.SHA256,
+		&upload.Status,
+		&upload.AnalysisJSON,
+		&errorMessage,
+		&documentID,
+		&documentAssetID,
+		&documentVersionID,
+		&upload.CreatedAt,
+		&upload.UpdatedAt,
+	)
+	if err != nil {
+		return err
+	}
+	if contentType.Valid {
+		upload.ContentType = contentType.String
+	}
+	if errorMessage.Valid {
+		upload.ErrorMessage = &errorMessage.String
+	}
+	if documentID.Valid {
+		upload.DocumentID = &documentID.String
+	}
+	if documentAssetID.Valid {
+		upload.DocumentAssetID = &documentAssetID.String
+	}
+	if documentVersionID.Valid {
+		upload.DocumentVersionID = &documentVersionID.String
+	}
+	return nil
+}
+
+type documentUploadEventInserter interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+type documentUploadEventScanner interface {
+	Scan(dest ...any) error
+}
+
+func insertDocumentUploadEvent(ctx context.Context, runner documentUploadEventInserter, input domain.DocumentUploadEventInput) (domain.DocumentUploadEvent, error) {
+	eventType := strings.TrimSpace(input.EventType)
+	if eventType == "" {
+		eventType = "stage_transition"
+	}
+	stage := strings.TrimSpace(input.Stage)
+	status := strings.TrimSpace(input.Status)
+	message := strings.TrimSpace(input.Message)
+	actor := strings.TrimSpace(input.Actor)
+	if actor == "" {
+		actor = "system"
+	}
+	evidenceJSON := input.EvidenceJSON
+	if len(evidenceJSON) == 0 {
+		evidenceJSON = []byte(`{}`)
+	}
+	var uploadID any
+	if input.UploadID != nil && strings.TrimSpace(*input.UploadID) != "" {
+		uploadID = strings.TrimSpace(*input.UploadID)
+	}
+
+	var event domain.DocumentUploadEvent
+	row := runner.QueryRowContext(ctx, `
+INSERT INTO document_upload_events (
+	upload_id,
+	event_type,
+	stage,
+	status,
+	message,
+	evidence_json,
+	actor,
+	file_name,
+	content_type,
+	file_size_bytes,
+	sha256
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+RETURNING id, upload_id, event_type, stage, status, message, evidence_json, actor, file_name, content_type,
+	file_size_bytes, sha256, created_at`,
+		uploadID,
+		eventType,
+		stage,
+		status,
+		message,
+		evidenceJSON,
+		actor,
+		input.FileName,
+		input.ContentType,
+		input.FileSizeBytes,
+		input.SHA256,
+	)
+	if err := scanDocumentUploadEvent(row, &event); err != nil {
+		return domain.DocumentUploadEvent{}, err
+	}
+	return event, nil
+}
+
+func (s *Store) attachDocumentUploadEvents(ctx context.Context, uploads []domain.DocumentUpload) error {
+	if len(uploads) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(uploads))
+	indexByID := make(map[string]int, len(uploads))
+	for idx, upload := range uploads {
+		if upload.ID == "" {
+			continue
+		}
+		ids = append(ids, upload.ID)
+		indexByID[upload.ID] = idx
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	rows, err := s.DB.QueryContext(ctx, `
+SELECT id, upload_id, event_type, stage, status, message, evidence_json, actor, file_name, content_type,
+	file_size_bytes, sha256, created_at
+FROM document_upload_events
+WHERE upload_id = ANY($1::uuid[])
+ORDER BY created_at ASC`, pq.Array(ids))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var event domain.DocumentUploadEvent
+		if err := scanDocumentUploadEvent(rows, &event); err != nil {
+			return err
+		}
+		if event.UploadID == nil {
+			continue
+		}
+		idx, ok := indexByID[*event.UploadID]
+		if !ok {
+			continue
+		}
+		uploads[idx].Events = append(uploads[idx].Events, event)
+	}
+	return rows.Err()
+}
+
+func scanDocumentUploadEvent(scanner documentUploadEventScanner, event *domain.DocumentUploadEvent) error {
+	var uploadID sql.NullString
+	if err := scanner.Scan(
+		&event.ID,
+		&uploadID,
+		&event.EventType,
+		&event.Stage,
+		&event.Status,
+		&event.Message,
+		&event.EvidenceJSON,
+		&event.Actor,
+		&event.FileName,
+		&event.ContentType,
+		&event.FileSizeBytes,
+		&event.SHA256,
+		&event.CreatedAt,
+	); err != nil {
+		return err
+	}
+	if uploadID.Valid {
+		event.UploadID = &uploadID.String
+	}
+	return nil
+}
+
+func documentUploadStatusEventInput(upload domain.DocumentUpload, status string, analysisJSON []byte, errorMessage *string) (domain.DocumentUploadEventInput, bool) {
+	stage, eventStatus, eventType := documentUploadStatusEventShape(status)
+	if stage == "" {
+		return domain.DocumentUploadEventInput{}, false
+	}
+	message := defaultDocumentUploadStatusEventMessage(status)
+	if errorMessage != nil && strings.TrimSpace(*errorMessage) != "" {
+		message = strings.TrimSpace(*errorMessage)
+	}
+	return domain.DocumentUploadEventInput{
+		UploadID:      &upload.ID,
+		EventType:     eventType,
+		Stage:         stage,
+		Status:        eventStatus,
+		Message:       message,
+		EvidenceJSON:  analysisJSON,
+		Actor:         "worker",
+		FileName:      upload.FileName,
+		ContentType:   upload.ContentType,
+		FileSizeBytes: upload.FileSizeBytes,
+		SHA256:        upload.SHA256,
+	}, true
+}
+
+func documentUploadStatusEventShape(status string) (stage, eventStatus, eventType string) {
+	switch status {
+	case "uploaded":
+		return "upload", "done", "stage_transition"
+	case "extracting":
+		return "extract", "active", "stage_transition"
+	case "extract_failed":
+		return "extract", "blocked", "stage_error"
+	case "classified":
+		return "classify", "done", "stage_transition"
+	case "classification_low_confidence":
+		return "classify", "warning", "stage_review"
+	case "profile_resolved":
+		return "profile", "done", "stage_transition"
+	case "indexing":
+		return "embed_index", "active", "stage_transition"
+	case "validating":
+		return "validate", "active", "stage_transition"
+	case "validation_failed":
+		return "validate", "blocked", "stage_error"
+	case "ready", "published":
+		return "publish", "done", "stage_transition"
+	case "needs_review":
+		return "publish", "warning", "stage_review"
+	case "rejected":
+		return "publish", "blocked", "review_action"
+	case "archived":
+		return "publish", "blocked", "review_action"
+	default:
+		return "", "", ""
+	}
+}
+
+func defaultDocumentUploadStatusEventMessage(status string) string {
+	switch status {
+	case "uploaded":
+		return "Upload accepted into intake queue"
+	case "extracting":
+		return "Extracting text from uploaded file"
+	case "extract_failed":
+		return "Text extraction failed"
+	case "classified":
+		return "Document type classified"
+	case "classification_low_confidence":
+		return "Classification confidence is below auto-publish threshold"
+	case "profile_resolved":
+		return "Ingestion profile resolved"
+	case "indexing":
+		return "Ingest job queued for chunking and indexing"
+	case "validating":
+		return "Validating indexed document"
+	case "validation_failed":
+		return "Ingest validation failed"
+	case "ready", "published":
+		return "Document published to retrieval index"
+	case "needs_review":
+		return "Upload requires operator review"
+	case "rejected":
+		return "Upload rejected by operator"
+	case "archived":
+		return "Upload archived by operator"
+	default:
+		return "Upload status changed"
+	}
+}
+
+func mustJSON(value map[string]interface{}) []byte {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return raw
+}
+
 func (s *Store) DeleteDocument(ctx context.Context, id string) (bool, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -622,8 +1951,14 @@ func (s *Store) UpdateJobStatus(ctx context.Context, id, status, errorMessage st
 }
 
 func (s *Store) ClaimNextIngestJob(ctx context.Context) (domain.IngestJob, bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.IngestJob{}, false, err
+	}
+	defer tx.Rollback()
+
 	var job domain.IngestJob
-	err := s.DB.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 WITH candidate AS (
 	SELECT id
 	FROM ingest_jobs
@@ -645,6 +1980,59 @@ RETURNING j.id, j.document_version_id, j.status, j.error_message, j.created_at, 
 	if err != nil {
 		return domain.IngestJob{}, false, err
 	}
+	var upload domain.DocumentUpload
+	row := tx.QueryRowContext(ctx, `
+SELECT id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at
+FROM document_uploads
+WHERE document_version_id = $1
+LIMIT 1`, job.DocumentVersionID)
+	if err := scanDocumentUpload(row, &upload); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return domain.IngestJob{}, false, err
+	}
+	if upload.ID != "" {
+		evidence := mustJSON(map[string]interface{}{
+			"ingest_job_id":       job.ID,
+			"document_version_id": job.DocumentVersionID,
+			"pipeline_version":    "rag_upload_intake_v1",
+			"status_reason":       "ingest_claimed",
+		})
+		for _, eventInput := range []domain.DocumentUploadEventInput{
+			{
+				UploadID:      &upload.ID,
+				EventType:     "stage_transition",
+				Stage:         "chunk",
+				Status:        "active",
+				Message:       "Ingest worker started chunk generation",
+				EvidenceJSON:  evidence,
+				Actor:         "worker",
+				FileName:      upload.FileName,
+				ContentType:   upload.ContentType,
+				FileSizeBytes: upload.FileSizeBytes,
+				SHA256:        upload.SHA256,
+			},
+			{
+				UploadID:      &upload.ID,
+				EventType:     "stage_transition",
+				Stage:         "embed_index",
+				Status:        "active",
+				Message:       "Ingest worker started embedding and indexing",
+				EvidenceJSON:  evidence,
+				Actor:         "worker",
+				FileName:      upload.FileName,
+				ContentType:   upload.ContentType,
+				FileSizeBytes: upload.FileSizeBytes,
+				SHA256:        upload.SHA256,
+			},
+		} {
+			if _, err := insertDocumentUploadEvent(ctx, tx, eventInput); err != nil {
+				return domain.IngestJob{}, false, err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.IngestJob{}, false, err
+	}
 	return job, true, nil
 }
 
@@ -654,14 +2042,107 @@ func (s *Store) TouchJob(ctx context.Context, id string) error {
 }
 
 func (s *Store) MarkJobCompleted(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, `
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var documentVersionID string
+	if err := tx.QueryRowContext(ctx, `
 UPDATE ingest_jobs
 SET status = 'completed',
     error_message = NULL,
     updated_at = NOW()
 WHERE id = $1
-`, id)
-	return err
+RETURNING document_version_id`, id).Scan(&documentVersionID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+
+	var upload domain.DocumentUpload
+	row := tx.QueryRowContext(ctx, `
+UPDATE document_uploads
+SET status = 'ready',
+    error_message = NULL,
+    updated_at = NOW()
+WHERE document_version_id = $1
+  AND status IN ('indexing', 'validating', 'validation_failed')
+RETURNING id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at`, documentVersionID)
+	if err := scanDocumentUpload(row, &upload); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return tx.Commit()
+		}
+		return err
+	}
+	evidence := mustJSON(map[string]interface{}{
+		"ingest_job_id":       id,
+		"document_version_id": documentVersionID,
+		"pipeline_version":    "rag_upload_intake_v1",
+		"status_reason":       "ingest_completed",
+	})
+	for _, eventInput := range []domain.DocumentUploadEventInput{
+		{
+			UploadID:      &upload.ID,
+			EventType:     "stage_transition",
+			Stage:         "chunk",
+			Status:        "done",
+			Message:       "Chunk rows and vector payloads were generated",
+			EvidenceJSON:  evidence,
+			Actor:         "worker",
+			FileName:      upload.FileName,
+			ContentType:   upload.ContentType,
+			FileSizeBytes: upload.FileSizeBytes,
+			SHA256:        upload.SHA256,
+		},
+		{
+			UploadID:      &upload.ID,
+			EventType:     "stage_transition",
+			Stage:         "embed_index",
+			Status:        "done",
+			Message:       "Embeddings indexed successfully",
+			EvidenceJSON:  evidence,
+			Actor:         "worker",
+			FileName:      upload.FileName,
+			ContentType:   upload.ContentType,
+			FileSizeBytes: upload.FileSizeBytes,
+			SHA256:        upload.SHA256,
+		},
+		{
+			UploadID:      &upload.ID,
+			EventType:     "stage_transition",
+			Stage:         "validate",
+			Status:        "done",
+			Message:       "Ingest validation completed",
+			EvidenceJSON:  evidence,
+			Actor:         "worker",
+			FileName:      upload.FileName,
+			ContentType:   upload.ContentType,
+			FileSizeBytes: upload.FileSizeBytes,
+			SHA256:        upload.SHA256,
+		},
+		{
+			UploadID:      &upload.ID,
+			EventType:     "stage_transition",
+			Stage:         "publish",
+			Status:        "done",
+			Message:       "Document published to retrieval index",
+			EvidenceJSON:  evidence,
+			Actor:         "worker",
+			FileName:      upload.FileName,
+			ContentType:   upload.ContentType,
+			FileSizeBytes: upload.FileSizeBytes,
+			SHA256:        upload.SHA256,
+		},
+	} {
+		if _, err := insertDocumentUploadEvent(ctx, tx, eventInput); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) MarkJobFailed(ctx context.Context, id string, attempt int, message string) error {
@@ -669,14 +2150,64 @@ func (s *Store) MarkJobFailed(ctx context.Context, id string, attempt int, messa
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.ExecContext(ctx, `
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var documentVersionID string
+	if err := tx.QueryRowContext(ctx, `
 UPDATE ingest_jobs
 SET status = 'failed',
     error_message = $1,
     updated_at = NOW()
 WHERE id = $2
-`, meta, id)
-	return err
+RETURNING document_version_id`, meta, id).Scan(&documentVersionID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+
+	var upload domain.DocumentUpload
+	row := tx.QueryRowContext(ctx, `
+UPDATE document_uploads
+SET status = 'validation_failed',
+    error_message = $1,
+    updated_at = NOW()
+WHERE document_version_id = $2
+RETURNING id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at`, meta, documentVersionID)
+	if err := scanDocumentUpload(row, &upload); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return tx.Commit()
+		}
+		return err
+	}
+	evidence := mustJSON(map[string]interface{}{
+		"attempt":             attempt,
+		"ingest_job_id":       id,
+		"document_version_id": documentVersionID,
+		"pipeline_version":    "rag_upload_intake_v1",
+		"status_reason":       "ingest_failed",
+	})
+	if _, err := insertDocumentUploadEvent(ctx, tx, domain.DocumentUploadEventInput{
+		UploadID:      &upload.ID,
+		EventType:     "stage_error",
+		Stage:         "validate",
+		Status:        "blocked",
+		Message:       message,
+		EvidenceJSON:  evidence,
+		Actor:         "worker",
+		FileName:      upload.FileName,
+		ContentType:   upload.ContentType,
+		FileSizeBytes: upload.FileSizeBytes,
+		SHA256:        upload.SHA256,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ResetStaleProcessingJobs(ctx context.Context, staleBefore time.Time) (int64, error) {
@@ -718,14 +2249,61 @@ LIMIT $1
 }
 
 func (s *Store) RequeueJob(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, `
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var documentVersionID string
+	if err := tx.QueryRowContext(ctx, `
 UPDATE ingest_jobs
 SET status = 'pending',
     updated_at = NOW()
 WHERE id = $1
   AND status = 'failed'
-`, id)
-	return err
+RETURNING document_version_id`, id).Scan(&documentVersionID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	var upload domain.DocumentUpload
+	row := tx.QueryRowContext(ctx, `
+UPDATE document_uploads
+SET status = 'indexing',
+    error_message = NULL,
+    updated_at = NOW()
+WHERE document_version_id = $1
+RETURNING id, title, file_name, content_type, storage_path, file_size_bytes, sha256, status, analysis_json,
+	error_message, document_id, document_asset_id, document_version_id, created_at, updated_at`, documentVersionID)
+	if err := scanDocumentUpload(row, &upload); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return tx.Commit()
+		}
+		return err
+	}
+	if _, err := insertDocumentUploadEvent(ctx, tx, domain.DocumentUploadEventInput{
+		UploadID:  &upload.ID,
+		EventType: "stage_transition",
+		Stage:     "embed_index",
+		Status:    "active",
+		Message:   "Failed ingest job was requeued",
+		EvidenceJSON: mustJSON(map[string]interface{}{
+			"ingest_job_id":       id,
+			"document_version_id": documentVersionID,
+			"pipeline_version":    "rag_upload_intake_v1",
+			"status_reason":       "job_requeued",
+		}),
+		Actor:         "worker",
+		FileName:      upload.FileName,
+		ContentType:   upload.ContentType,
+		FileSizeBytes: upload.FileSizeBytes,
+		SHA256:        upload.SHA256,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) GetDocumentVersionBundle(ctx context.Context, id string) (domain.DocumentVersion, domain.Document, domain.DocumentAsset, domain.DocType, error) {

@@ -17,6 +17,13 @@ type VectorRepairConfig struct {
 	MaxTasksPerPass int
 }
 
+type UploadAVConfig struct {
+	ScanMode    string
+	ClamDAddr   string
+	ScanTimeout time.Duration
+	FailClosed  bool
+}
+
 type Config struct {
 	ConfigPath             string
 	ServerHost             string
@@ -40,6 +47,7 @@ type Config struct {
 	JWTSecret              string
 	AdminBootstrapPassword string
 	VectorRepair           VectorRepairConfig
+	UploadAV               UploadAVConfig
 }
 
 func Load() (*Config, error) {
@@ -64,6 +72,25 @@ func Load() (*Config, error) {
 	repairEnabled, err := getRequiredEnvBool("VECTOR_REPAIR_ENABLED")
 	if err != nil {
 		return nil, err
+	}
+	uploadAVMode := strings.ToLower(strings.TrimSpace(os.Getenv("UPLOAD_AV_SCAN_MODE")))
+	if uploadAVMode == "" {
+		uploadAVMode = "disabled"
+	}
+	if uploadAVMode != "disabled" && uploadAVMode != "clamd" {
+		return nil, fmt.Errorf("invalid UPLOAD_AV_SCAN_MODE value %q: must be disabled or clamd", uploadAVMode)
+	}
+	uploadAVTimeout, err := getOptionalEnvDuration("UPLOAD_AV_SCAN_TIMEOUT", 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	uploadAVFailClosed, err := getOptionalEnvBool("UPLOAD_AV_FAIL_CLOSED", true)
+	if err != nil {
+		return nil, err
+	}
+	uploadAVClamDAddr := strings.TrimSpace(os.Getenv("UPLOAD_AV_CLAMD_ADDR"))
+	if uploadAVClamDAddr == "" {
+		uploadAVClamDAddr = "tcp://127.0.0.1:3310"
 	}
 
 	cfg := &Config{
@@ -92,6 +119,12 @@ func Load() (*Config, error) {
 			Enabled:         repairEnabled,
 			Interval:        repairInterval,
 			MaxTasksPerPass: repairMaxTasks,
+		},
+		UploadAV: UploadAVConfig{
+			ScanMode:    uploadAVMode,
+			ClamDAddr:   uploadAVClamDAddr,
+			ScanTimeout: uploadAVTimeout,
+			FailClosed:  uploadAVFailClosed,
 		},
 	}
 
@@ -188,6 +221,11 @@ vector_repair:
   enabled: %t
   interval: %s
   max_tasks_per_pass: %d
+upload_av:
+  scan_mode: %q
+  clamd_addr: %q
+  scan_timeout: %s
+  fail_closed: %t
 `,
 		cfg.ServerHost,
 		cfg.ServerPort,
@@ -208,6 +246,10 @@ vector_repair:
 		cfg.VectorRepair.Enabled,
 		cfg.VectorRepair.Interval,
 		cfg.VectorRepair.MaxTasksPerPass,
+		cfg.UploadAV.ScanMode,
+		cfg.UploadAV.ClamDAddr,
+		cfg.UploadAV.ScanTimeout,
+		cfg.UploadAV.FailClosed,
 	)
 
 	if err := os.WriteFile(cfg.ConfigPath, []byte(content), 0o644); err != nil {
@@ -281,6 +323,33 @@ func getRequiredEnvDuration(key string) (time.Duration, error) {
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		return 0, fmt.Errorf("invalid %s value %q: %w", key, value, err)
+	}
+	return parsed, nil
+}
+
+func getOptionalEnvBool(key string, defaultValue bool) (bool, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("invalid %s value %q: must be true or false", key, value)
+	}
+	return parsed, nil
+}
+
+func getOptionalEnvDuration(key string, defaultValue time.Duration) (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue, nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s value %q: %w", key, value, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("invalid %s value %q: must be greater than zero", key, value)
 	}
 	return parsed, nil
 }

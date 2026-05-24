@@ -14,6 +14,17 @@ BACKEND_DIR="$PROJECT_ROOT/backend"
 DEFAULT_NGINX_CONF_FILE="$PROJECT_ROOT/install/nginx/rendered/default.conf"
 
 require_vars JWT_SECRET ADMIN_BOOTSTRAP_PASSWORD OPENAI_API_KEY POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_HOST POSTGRES_PORT POSTGRES_SSLMODE QDRANT_HOST QDRANT_PORT QDRANT_COLLECTION DOMAIN VITE_API_BASE_URL
+case "${COMPOSE_RUNTIME:-prod}" in
+  local|dev)
+    ;;
+  *)
+    require_non_placeholder_var JWT_SECRET
+    require_min_length_var JWT_SECRET 32
+    require_non_placeholder_var ADMIN_BOOTSTRAP_PASSWORD
+    require_min_length_var ADMIN_BOOTSTRAP_PASSWORD 12
+    require_non_placeholder_var OPENAI_API_KEY
+    ;;
+esac
 require_dir "$BACKEND_DIR/docker"
 require_file "$PROJECT_ROOT/install/docker-compose.prod.yml"
 
@@ -48,11 +59,57 @@ fi
 POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR:-$BACKEND_DIR/data/postgres}"
 QDRANT_STORAGE_DIR="${QDRANT_STORAGE_DIR:-$BACKEND_DIR/data/qdrant}"
 UPLOADS_DATA_DIR="${UPLOADS_DATA_DIR:-$BACKEND_DIR/data/uploads}"
+CLAMAV_DB_DIR="${CLAMAV_DB_DIR:-$BACKEND_DIR/data/clamav}"
 LETSENCRYPT_DIR="${LETSENCRYPT_DIR:-/etc/letsencrypt}"
 CERTBOT_WEBROOT="${CERTBOT_WEBROOT:-/var/lib/legal_api/certbot/www}"
 NGINX_CONF_FILE="${NGINX_CONF_FILE:-$DEFAULT_NGINX_CONF_FILE}"
 
-mkdir -p "$POSTGRES_DATA_DIR" "$QDRANT_STORAGE_DIR" "$UPLOADS_DATA_DIR"
+case "${COMPOSE_RUNTIME:-prod}" in
+  local|dev)
+    DEFAULT_UPLOAD_AV_SCAN_MODE="disabled"
+    ;;
+  *)
+    DEFAULT_UPLOAD_AV_SCAN_MODE="clamd"
+    ;;
+esac
+
+UPLOAD_AV_SCAN_MODE="${UPLOAD_AV_SCAN_MODE:-$DEFAULT_UPLOAD_AV_SCAN_MODE}"
+UPLOAD_AV_SCAN_MODE="$(printf '%s' "$UPLOAD_AV_SCAN_MODE" | tr '[:upper:]' '[:lower:]')"
+UPLOAD_AV_CLAMD_ADDR="${UPLOAD_AV_CLAMD_ADDR:-tcp://clamav:3310}"
+UPLOAD_AV_SCAN_TIMEOUT="${UPLOAD_AV_SCAN_TIMEOUT:-30s}"
+UPLOAD_AV_FAIL_CLOSED="${UPLOAD_AV_FAIL_CLOSED:-true}"
+UPLOAD_AV_FAIL_CLOSED="$(printf '%s' "$UPLOAD_AV_FAIL_CLOSED" | tr '[:upper:]' '[:lower:]')"
+CLAMAV_IMAGE="${CLAMAV_IMAGE:-clamav/clamav:1.5_base}"
+CLAMD_STARTUP_TIMEOUT="${CLAMD_STARTUP_TIMEOUT:-1800}"
+FRESHCLAM_CHECKS="${FRESHCLAM_CHECKS:-12}"
+case "$UPLOAD_AV_SCAN_MODE" in
+  disabled|clamd)
+    ;;
+  *)
+    err "UPLOAD_AV_SCAN_MODE must be disabled or clamd"
+    ;;
+esac
+case "$UPLOAD_AV_FAIL_CLOSED" in
+  true|false)
+    ;;
+  *)
+    err "UPLOAD_AV_FAIL_CLOSED must be true or false"
+    ;;
+esac
+case "${COMPOSE_RUNTIME:-prod}" in
+  local|dev)
+    ;;
+  *)
+    if [[ "$UPLOAD_AV_SCAN_MODE" == "disabled" && "${ALLOW_UPLOAD_AV_DISABLED:-0}" != "1" ]]; then
+      err "UPLOAD_AV_SCAN_MODE=disabled is not allowed for production deploy; set clamd or ALLOW_UPLOAD_AV_DISABLED=1 for a break-glass deploy"
+    fi
+    if [[ "$UPLOAD_AV_FAIL_CLOSED" != "true" && "${ALLOW_UPLOAD_AV_FAIL_OPEN:-0}" != "1" ]]; then
+      err "UPLOAD_AV_FAIL_CLOSED must be true for production deploy; set ALLOW_UPLOAD_AV_FAIL_OPEN=1 for a break-glass deploy"
+    fi
+    ;;
+esac
+
+mkdir -p "$POSTGRES_DATA_DIR" "$QDRANT_STORAGE_DIR" "$UPLOADS_DATA_DIR" "$CLAMAV_DB_DIR"
 
 log "Rendering backend/.env"
 cat > "$BACKEND_DIR/.env" <<EOF
@@ -97,6 +154,14 @@ TONE_PROCEDURE_PROMPT_PATH=${TONE_PROCEDURE_PROMPT_PATH:-config/prompts/tone_pro
 VECTOR_REPAIR_ENABLED=${VECTOR_REPAIR_ENABLED:-true}
 VECTOR_REPAIR_INTERVAL=${VECTOR_REPAIR_INTERVAL:-30s}
 VECTOR_REPAIR_MAX_TASKS_PER_PASS=${VECTOR_REPAIR_MAX_TASKS_PER_PASS:-20}
+UPLOAD_AV_SCAN_MODE=$UPLOAD_AV_SCAN_MODE
+UPLOAD_AV_CLAMD_ADDR=$UPLOAD_AV_CLAMD_ADDR
+UPLOAD_AV_SCAN_TIMEOUT=$UPLOAD_AV_SCAN_TIMEOUT
+UPLOAD_AV_FAIL_CLOSED=$UPLOAD_AV_FAIL_CLOSED
+CLAMAV_IMAGE=$CLAMAV_IMAGE
+CLAMAV_DB_DIR=$CLAMAV_DB_DIR
+CLAMD_STARTUP_TIMEOUT=$CLAMD_STARTUP_TIMEOUT
+FRESHCLAM_CHECKS=$FRESHCLAM_CHECKS
 CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:5173,https://${DOMAIN}}
 PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-${WEB_PUBLIC_URL:-$VITE_API_BASE_URL}}
 QDRANT_STORAGE_DIR=$QDRANT_STORAGE_DIR

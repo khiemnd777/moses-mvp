@@ -51,6 +51,10 @@ func newLegalChunkGenerator(rules schema.SegmentRules) (legalChunkGenerator, err
 }
 
 func (g legalChunkGenerator) Generate(documentID, versionID, text string, baseMetadata map[string]interface{}) ([]generatedChunk, chunkGenerationStats, error) {
+	return g.GenerateWithContext(defaultChunkMetadataContext(documentID, versionID), text, baseMetadata)
+}
+
+func (g legalChunkGenerator) GenerateWithContext(metaCtx chunkMetadataContext, text string, baseMetadata map[string]interface{}) ([]generatedChunk, chunkGenerationStats, error) {
 	doc := g.parser.Parse(text)
 	chunks := make([]generatedChunk, 0)
 	maxTokens := 0
@@ -66,7 +70,7 @@ func (g legalChunkGenerator) Generate(documentID, versionID, text string, baseMe
 			return fmt.Errorf("chunk exceeds hard safety limit: estimated_tokens=%d limit=%d", tokens, hardAbortChunkTokens)
 		}
 		idx := len(chunks)
-		metaRaw, metaMap, err := g.metadata.Build(baseMetadata, documentID, versionID, idx, path)
+		metaRaw, metaMap, err := g.metadata.BuildWithContext(baseMetadata, metaCtx, idx, path)
 		if err != nil {
 			return err
 		}
@@ -118,7 +122,7 @@ func (g legalChunkGenerator) Generate(documentID, versionID, text string, baseMe
 				})
 			}
 			if len(parts) > 0 {
-				return g.appendSplitChunks(&chunks, &totalTokens, &maxTokens, baseMetadata, documentID, versionID, headers, node.Path, parts)
+				return g.appendSplitChunks(&chunks, &totalTokens, &maxTokens, baseMetadata, metaCtx, headers, node.Path, parts)
 			}
 		}
 
@@ -127,7 +131,7 @@ func (g legalChunkGenerator) Generate(documentID, versionID, text string, baseMe
 			if err != nil {
 				return err
 			}
-			return g.appendSplitChunks(&chunks, &totalTokens, &maxTokens, baseMetadata, documentID, versionID, headers, node.Path, splitParts)
+			return g.appendSplitChunks(&chunks, &totalTokens, &maxTokens, baseMetadata, metaCtx, headers, node.Path, splitParts)
 		}
 		return appendChunk(node.Path, fullText)
 	}
@@ -153,7 +157,7 @@ func (g legalChunkGenerator) appendSplitChunks(
 	totalTokens *int,
 	maxTokens *int,
 	baseMetadata map[string]interface{},
-	documentID, versionID string,
+	metaCtx chunkMetadataContext,
 	headers []string,
 	basePath structuralPath,
 	parts []chunkPart,
@@ -180,7 +184,7 @@ func (g legalChunkGenerator) appendSplitChunks(
 			return fmt.Errorf("unable to enforce chunk token safety: estimated_tokens=%d limit=%d", tokens, defaultMaxChunkTokens)
 		}
 		idx := len(*chunks)
-		metaRaw, metaMap, err := g.metadata.Build(baseMetadata, documentID, versionID, idx, part.Path)
+		metaRaw, metaMap, err := g.metadata.BuildWithContext(baseMetadata, metaCtx, idx, part.Path)
 		if err != nil {
 			return err
 		}

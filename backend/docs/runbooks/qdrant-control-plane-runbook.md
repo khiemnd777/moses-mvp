@@ -7,6 +7,13 @@ Scope: operational usage of `/admin/qdrant/*` in production.
 - Set `X-Admin-Actor` to a traceable identity (`oncall-email`, `incident-id`).
 - Capture request/response payloads in incident notes.
 
+For production rollout gates, prefer the scripted check first:
+
+```bash
+cd /opt/legal_api/app/install
+./backend/verify_rag.sh
+```
+
 ## 1) Inspect collections
 1. Call `GET /admin/qdrant/collections`.
 2. Check `collections[].validation.passed` and `vector_dimension`.

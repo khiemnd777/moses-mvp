@@ -15,6 +15,7 @@ BACKEND_PORT_VALUE="${BACKEND_PORT:-18088}"
 API_UPSTREAM="${NGINX_API_UPSTREAM:-http://api:${BACKEND_PORT_VALUE}}"
 LETSENCRYPT_DIR="${LETSENCRYPT_DIR:-/etc/letsencrypt}"
 CERTBOT_WEBROOT="${CERTBOT_WEBROOT:-/var/lib/legal_api/certbot/www}"
+CLIENT_MAX_BODY_SIZE="${CLIENT_MAX_BODY_SIZE:-50m}"
 NGINX_RENDERED_DIR="$PROJECT_ROOT/install/nginx/rendered"
 NGINX_CONF_FILE="${NGINX_CONF_FILE:-$NGINX_RENDERED_DIR/default.conf}"
 SSL_CERT_PATH="$LETSENCRYPT_DIR/live/$DOMAIN/fullchain.pem"
@@ -56,6 +57,7 @@ write_app_locations() {
   cat <<EOF
     root /usr/share/nginx/html;
     index index.html;
+    client_max_body_size $CLIENT_MAX_BODY_SIZE;
 
     location / {
         try_files \$uri \$uri/ /index.html;
@@ -68,6 +70,7 @@ write_app_locations() {
 EOF
   write_proxy_location "/auth/"
   write_proxy_location "/admin/"
+  write_proxy_location "/document-uploads"
   write_proxy_location "/documents"
   write_proxy_location "/document-versions/"
   write_proxy_location "/doc-types"

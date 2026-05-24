@@ -1,6 +1,10 @@
 package legalmeta
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/khiemnd777/legal_api/core/language"
+)
 
 var documentTypeAliases = map[string]string{
 	"law":        "law",
@@ -55,18 +59,22 @@ func NormalizeEffectiveStatus(value string) string {
 	switch normalized {
 	case "", "active", "archived":
 		return normalized
-	case "con hieu luc", "còn hiệu lực", "co hieu luc", "có hiệu lực":
+	case "con hieu luc", "co hieu luc":
 		return "active"
-	case "het hieu luc", "hết hiệu lực", "expired":
+	case "het hieu luc", "expired":
 		return "archived"
 	}
-	if strings.Contains(normalized, "co hieu luc") || strings.Contains(normalized, "có hiệu lực") {
+	if strings.Contains(normalized, "co hieu luc") {
 		return "active"
 	}
-	if strings.Contains(normalized, "het hieu luc") || strings.Contains(normalized, "hết hiệu lực") {
+	if strings.Contains(normalized, "het hieu luc") {
 		return "archived"
 	}
 	return strings.ReplaceAll(normalized, " ", "_")
+}
+
+func NormalizeDocumentNumber(value string) string {
+	return language.NormalizeLegalDocumentNumber(value)
 }
 
 func normalizeAlias(value string, aliases map[string]string) string {
@@ -81,8 +89,5 @@ func normalizeAlias(value string, aliases map[string]string) string {
 }
 
 func normalizeText(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	value = strings.ReplaceAll(value, "_", " ")
-	value = strings.ReplaceAll(value, "-", " ")
-	return strings.Join(strings.Fields(value), " ")
+	return language.SearchKey(value)
 }

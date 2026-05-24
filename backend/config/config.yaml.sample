@@ -25,3 +25,8 @@ vector_repair:
   enabled: true
   interval: 30s
   max_tasks_per_pass: 20
+upload_av:
+  scan_mode: "disabled"
+  clamd_addr: "tcp://127.0.0.1:3310"
+  scan_timeout: 30s
+  fail_closed: true

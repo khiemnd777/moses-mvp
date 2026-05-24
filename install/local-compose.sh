@@ -161,14 +161,20 @@ run_web_command() {
   fi
 }
 
+start_local_stack() {
+  local action="$1"
+
+  COMPOSE_RUNTIME=local SKIP_DOCKER_INSTALL=1 "$SCRIPT_DIR/backend/install.sh"
+  log "$action local development Docker Compose stack"
+  compose_local "$SCRIPT_DIR" up -d --build
+  COMPOSE_RUNTIME=local "$SCRIPT_DIR/backend/migrate-compose.sh"
+  wait_for_compose_state running
+  log "Local dev stack is running at http://localhost:${HTTP_PORT:-19080}"
+}
+
 case "$COMMAND" in
   up)
-    SKIP_DOCKER_INSTALL=1 "$SCRIPT_DIR/backend/install.sh"
-    log "Starting local development Docker Compose stack"
-    compose_local "$SCRIPT_DIR" up -d --build
-    COMPOSE_RUNTIME=local "$SCRIPT_DIR/backend/migrate-compose.sh"
-    wait_for_compose_state running
-    log "Local dev stack is running at http://localhost:${HTTP_PORT:-19080}"
+    start_local_stack "Starting"
     ;;
   migrate)
     COMPOSE_RUNTIME=local "$SCRIPT_DIR/backend/migrate-compose.sh"
@@ -202,8 +208,7 @@ case "$COMMAND" in
     wait_for_compose_state stopped
     ;;
   restart)
-    compose_local "$SCRIPT_DIR" restart
-    wait_for_compose_state running
+    start_local_stack "Restarting"
     ;;
   *)
     err "Usage: $0 [up|migrate|verify|ps|logs|web-install|web-add <package...>|down|stop|restart]"

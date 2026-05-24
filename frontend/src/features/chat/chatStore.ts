@@ -33,7 +33,7 @@ type ChatState = {
 const initialFilters: ChatFilters = {
   tone: 'default',
   topK: 5,
-  effectiveStatus: 'active',
+  effectiveStatus: '',
   domain: '',
   docType: '',
   documentNumber: '',

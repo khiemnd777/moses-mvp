@@ -13,6 +13,13 @@ type VectorRepairConfig struct {
 	MaxTasksPerPass int           `yaml:"max_tasks_per_pass"`
 }
 
+type UploadAVConfig struct {
+	ScanMode    string        `yaml:"scan_mode"`
+	ClamDAddr   string        `yaml:"clamd_addr"`
+	ScanTimeout time.Duration `yaml:"scan_timeout"`
+	FailClosed  bool          `yaml:"fail_closed"`
+}
+
 type Config struct {
 	Server struct {
 		Host string `yaml:"host"`
@@ -45,6 +52,7 @@ type Config struct {
 		ToneProcedure string `yaml:"tone_procedure"`
 	} `yaml:"prompts"`
 	VectorRepair VectorRepairConfig `yaml:"vector_repair"`
+	UploadAV     UploadAVConfig     `yaml:"upload_av"`
 }
 
 func Load(path string) (Config, error) {
@@ -53,6 +61,12 @@ func Load(path string) (Config, error) {
 			Enabled:         true,
 			Interval:        30 * time.Second,
 			MaxTasksPerPass: 20,
+		},
+		UploadAV: UploadAVConfig{
+			ScanMode:    "disabled",
+			ClamDAddr:   "tcp://127.0.0.1:3310",
+			ScanTimeout: 30 * time.Second,
+			FailClosed:  true,
 		},
 	}
 	b, err := os.ReadFile(path)

@@ -3,8 +3,8 @@ package ingest
 import (
 	"strings"
 
+	"github.com/khiemnd777/legal_api/core/language"
 	"github.com/khiemnd777/legal_api/core/schema"
-	"golang.org/x/text/unicode/norm"
 )
 
 func submatch(matches []string, idx int) string {
@@ -244,14 +244,8 @@ func (p legalStructureParser) normalize(in string) string {
 }
 
 func normalizeLegalText(in string) string {
-	in = norm.NFC.String(in)
-	replacer := strings.NewReplacer(
-		"\u00A0", " ",
-		"Ð", "Đ",
-		"ð", "đ",
-		"Ðiều", "Điều",
-		"ÐIỀU", "Điều",
-	)
+	in = language.NormalizeNFC(in)
+	replacer := strings.NewReplacer("\u00A0", " ")
 	in = replacer.Replace(in)
 	in = strings.ReplaceAll(in, "\r", "")
 
