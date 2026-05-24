@@ -63,7 +63,12 @@ export HTTP_PORT="80"
 export HTTPS_PORT="443"
 export HTTP_BIND="0.0.0.0"
 export HTTPS_BIND="0.0.0.0"
+export WEB_PUBLIC_URL="https://ai.dailyturning.com"
 export LETSENCRYPT_DIR="/etc/letsencrypt"
 export CERTBOT_WEBROOT="/var/lib/legal_api/certbot/www"
 export LETSENCRYPT_EMAIL="admin@dailyturning.com"
 export ENABLE_SSL="1"
+
+# If a host-level edge proxy such as Caddy already owns ports 80/443, keep
+# ENABLE_SSL=0 here, bind the web container to localhost on an unused HTTP_PORT,
+# and point the edge proxy at http://127.0.0.1:$HTTP_PORT.

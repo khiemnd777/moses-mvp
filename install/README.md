@@ -107,6 +107,17 @@ The workflow SSHes into the VPS, checks out the exact GitHub SHA, and runs:
 INSTALL_CONFIG_FILE="$APP_ROOT/install/config.sh" GIT_COMMIT_SHA="$DEPLOY_SHA" "$APP_ROOT/install/install.sh"
 ```
 
+If the VPS already has a host-level edge proxy such as Caddy owning ports `80` and `443`, keep that proxy as the public edge. Set the Legal API web container to a localhost-only port in `install/config.sh`, for example:
+
+```bash
+export HTTP_BIND="127.0.0.1"
+export HTTP_PORT="18081"
+export ENABLE_SSL="0"
+export WEB_PUBLIC_URL="https://ai.dailyturning.com"
+```
+
+Then point the edge proxy for `ai.dailyturning.com` at `http://127.0.0.1:18081`.
+
 Release example:
 
 ```bash
