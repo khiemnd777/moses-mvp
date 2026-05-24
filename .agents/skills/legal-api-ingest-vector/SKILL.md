@@ -1,3 +1,8 @@
+---
+name: legal-api-ingest-vector
+description: Legal API ingest and vector implementation for document jobs, chunking, embeddings, Qdrant payloads, worker loops, repair, delete-by-filter, and reindex flows. Use when work touches Postgres chunk rows, vector points, worker processing, or vector admin behavior.
+---
+
 # legal-api-ingest-vector
 
 ## When To Use This Skill
@@ -25,24 +30,26 @@ Fallback collaborator role: [`review-agent`](../../../docs/agent-roles.md#review
 - Admin vector tooling in the frontend depends on backend vector-control capabilities remaining coherent.
 
 ## Workflow
-1. Read [../../../backend/AGENTS.md](../../../backend/AGENTS.md).
-2. Determine which category the issue belongs to:
+1. Read [../legal-api-engineering-guardrails/SKILL.md](../legal-api-engineering-guardrails/SKILL.md) and [../../../backend/AGENTS.md](../../../backend/AGENTS.md).
+2. Classify the task as `bug` or `feature`, then choose the first ingest/vector feedback loop or vertical slice.
+3. Determine which category the issue belongs to:
    - content normalization or segmentation
    - metadata extraction and payload composition
    - vector write/delete behavior
    - worker retry or processing lifecycle
    - repair or reindex support
-3. Trace the full path from source asset to chunk rows to vector points.
-4. Prefer fixes that keep Postgres and Qdrant state synchronized, including cleanup of stale vectors.
-5. Check whether the worker runtime and admin control-plane paths both need updates.
-6. If the visible symptom is ranking or answer quality, coordinate with `legal-api-retrieval-answer`.
-7. If the visible symptom is dashboard or admin workflow breakage, coordinate with `legal-api-frontend-admin-chat`.
+4. Trace the full path from source asset to chunk rows to vector points.
+5. Prefer fixes that keep Postgres and Qdrant state synchronized, including cleanup of stale vectors.
+6. Check whether the worker runtime and admin control-plane paths both need updates.
+7. If the visible symptom is ranking or answer quality, coordinate with `legal-api-retrieval-answer`.
+8. If the visible symptom is dashboard or admin workflow breakage, coordinate with `legal-api-frontend-admin-chat`.
 
 ## Required Checks Before Finishing
 - DB chunk records and Qdrant point payloads remain aligned
 - worker retry, stale reset, and repair loops still make sense
 - delete, reindex, or repair commands remain safe and scoped
 - any API or admin surface touched remains contract-compatible
+- the selected ingest/vector feedback loop or feature vertical slice has been run or its blocker is documented
 
 ## Common Regressions To Look For
 - upserting new vectors without deleting stale ones

@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage as ChatMessageType, Citation } from '@/core/types';
+import { getCitationChipLabel, getCitationKey, getCitationSubtitle, getCitationTitle, uniqueCitations } from './citationUtils';
 
 const formatTimestamp = (value: string) =>
   new Intl.DateTimeFormat('vi-VN', {
@@ -17,6 +18,8 @@ const ChatMessage = ({
   message: ChatMessageType;
   onOpenCitation: (citation: Citation, citations: Citation[]) => void;
 }) => {
+  const citations = uniqueCitations(message.citations);
+
   return (
     <div className={`message ${message.role}`}>
       <div className="bubble">
@@ -25,16 +28,19 @@ const ChatMessage = ({
           <span>{formatTimestamp(message.created_at)}</span>
         </div>
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || '...'}</ReactMarkdown>
-        {message.citations.length > 0 && (
+        {citations.length > 0 && (
           <div className="citation-chips">
-            {message.citations.map((citation, index) => (
+            {citations.map((citation, index) => (
               <button
-                key={citation.id || citation.chunk_id || index}
-                className="button outline"
-                onClick={() => onOpenCitation(citation, message.citations)}
+                key={getCitationKey(citation, index)}
+                className="button outline citation-chip"
+                onClick={() => onOpenCitation(citation, citations)}
+                title={getCitationTitle(citation, index)}
                 type="button"
               >
-                [{index + 1}] {citation.article ? `Điều ${citation.article}` : citation.document_title}
+                <span className="citation-chip-index">[{index + 1}]</span>
+                <span className="citation-chip-main">{getCitationChipLabel(citation, index)}</span>
+                {getCitationSubtitle(citation) && <span className="citation-chip-subtitle">{getCitationSubtitle(citation)}</span>}
               </button>
             ))}
           </div>

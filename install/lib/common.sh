@@ -59,3 +59,26 @@ ensure_repo_present() {
 
   "$install_dir/repo/sync.sh"
 }
+
+compose_project_name() {
+  printf '%s\n' "${COMPOSE_PROJECT_NAME:-legal}"
+}
+
+compose_prod() {
+  local install_dir="$1"
+  shift
+
+  local root env_file compose_file
+  root="$(repo_root "$install_dir")"
+  env_file="$root/backend/.env"
+  compose_file="$root/install/docker-compose.prod.yml"
+
+  require_file "$env_file"
+  require_file "$compose_file"
+
+  docker compose \
+    --project-name "$(compose_project_name)" \
+    --env-file "$env_file" \
+    -f "$compose_file" \
+    "$@"
+}

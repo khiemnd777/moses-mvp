@@ -833,6 +833,39 @@ a {
   flex-wrap: wrap;
 }
 
+.citation-chip {
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 8px;
+  text-align: left;
+}
+
+.citation-chip-index {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.citation-chip-main,
+.citation-chip-subtitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citation-chip-main {
+  font-weight: 700;
+}
+
+.citation-chip-subtitle {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .citation-modal-overlay {
   position: fixed;
   inset: 0;
@@ -866,6 +899,12 @@ a {
   font-size: clamp(22px, 3vw, 28px);
 }
 
+.citation-modal-subtitle {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .citation-modal-eyebrow {
   font-size: 12px;
   letter-spacing: 0.12em;
@@ -882,6 +921,26 @@ a {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.citation-badge-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.citation-badge-active {
+  color: var(--status-ok-ink);
+  background: var(--status-ok-bg);
+}
+
+.citation-badge-warning {
+  color: var(--status-warn-ink);
+  background: var(--status-warn-bg);
+}
+
+.citation-badge-muted {
+  color: var(--muted);
 }
 
 .citation-modal-content {
@@ -907,6 +966,12 @@ a {
   display: grid;
   gap: 10px;
   flex-shrink: 0;
+}
+
+.chat-suggestion-button {
+  max-width: min(360px, 100%);
+  white-space: normal;
+  text-align: left;
 }
 
 .filters-bar {
@@ -966,8 +1031,43 @@ a {
   gap: 8px;
 }
 
+.source-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.source-group {
+  display: grid;
+  gap: 10px;
+}
+
+.source-group-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .source-item-title {
   font-weight: 700;
+}
+
+.source-item-subtitle {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 3px;
+}
+
+.source-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.source-excerpt {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .admin-list-item {

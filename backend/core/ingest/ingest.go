@@ -158,8 +158,13 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 		})
 	}
 
-	points := make([]infra.PointInput, 0, len(generatedChunks))
-	for _, chunk := range replacement {
+	insertedChunks, err := s.Store.ReplaceChunks(ctx, bundle.Version.ID, replacement)
+	if err != nil {
+		return err
+	}
+
+	points := make([]infra.PointInput, 0, len(insertedChunks))
+	for _, chunk := range insertedChunks {
 		vectorID := VectorPointID(bundle.Version.ID, chunk.Index)
 		metaMap := generatedChunks[chunk.Index].MetaMap
 		retrievalPayload := buildRetrievalPayload(metaMap)
@@ -181,10 +186,6 @@ func (s *Service) Run(ctx context.Context, job domain.IngestJob, bundle Bundle) 
 		})
 	}
 	if err := s.Qdrant.Upsert(ctx, points); err != nil {
-		return err
-	}
-	insertedChunks, err := s.Store.ReplaceChunks(ctx, bundle.Version.ID, replacement)
-	if err != nil {
 		return err
 	}
 	if oldChunkCount > len(insertedChunks) {
@@ -535,8 +536,8 @@ func (s *Service) recoverPartialIngest(ctx context.Context, versionID string) er
 	if found {
 		return nil
 	}
-	s.logger().Warn("orphan_chunks_detected_cleaning", slog.String("document_version_id", versionID), slog.Int("chunk_count", existingChunkCount))
-	return s.Store.DeleteChunksByVersion(ctx, versionID)
+	s.logger().Warn("chunks_without_vectors_detected_rebuilding", slog.String("document_version_id", versionID), slog.Int("chunk_count", existingChunkCount))
+	return nil
 }
 
 func (s *Service) embedInBatches(ctx context.Context, chunks []string, batchSize int) ([][]float64, error) {

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/khiemnd777/legal_api/admin/service"
@@ -126,10 +127,7 @@ func (h *PromptHandler) Test(c *fiber.Ctx) error {
 	if err != nil {
 		return respondError(c, fiber.StatusInternalServerError, "search_error", "failed to search", err.Error())
 	}
-	sources := make([]answer.Source, 0, len(results))
-	for _, r := range results {
-		sources = append(sources, answer.Source{Text: r.Text, Citation: answer.Citation{ID: r.ChunkID, Excerpt: r.Text}})
-	}
+	sources := promptTestSources(results)
 	ansSvc := &answer.Service{
 		Client:       h.AnswerClient,
 		SystemPrompt: prompt.SystemPrompt,
@@ -153,4 +151,60 @@ func (h *PromptHandler) notifyChanged() {
 	if h.OnConfigChanged != nil {
 		h.OnConfigChanged()
 	}
+}
+
+func promptTestSources(results []retrieval.Result) []answer.Source {
+	sources := make([]answer.Source, 0, len(results))
+	for idx, r := range results {
+		citation := answer.Citation{
+			ID:               firstNonEmpty(r.CitationID, r.ChunkID),
+			ChunkID:          r.ChunkID,
+			DocumentTitle:    promptMetaString(r.Metadata, "document_title", "title", "doc_title", "law_name"),
+			LawName:          promptMetaString(r.Metadata, "law_name", "document_title", "title"),
+			DocumentNumber:   promptMetaString(r.Metadata, "document_number", "number", "doc_number", "doc_code"),
+			DocumentType:     promptMetaString(r.Metadata, "document_type", "doc_type"),
+			IssuingAuthority: promptMetaString(r.Metadata, "issuing_authority", "authority", "co_quan_ban_hanh"),
+			EffectiveStatus:  promptMetaString(r.Metadata, "effective_status", "status", "hieu_luc"),
+			Article:          promptMetaString(r.Metadata, "article", "article_number", "dieu"),
+			Clause:           promptMetaString(r.Metadata, "clause", "clause_number", "khoan"),
+			Excerpt:          trimPromptExcerpt(r.Text, 320),
+			URL:              promptMetaString(r.Metadata, "url", "document_url", "source_url"),
+			Score:            r.Score,
+			SourceRank:       idx + 1,
+		}
+		sources = append(sources, answer.Source{Text: r.Text, Citation: citation})
+	}
+	return sources
+}
+
+func promptMetaString(meta map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		value, ok := meta[key]
+		if !ok || value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok {
+			if trimmed := strings.TrimSpace(text); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+func trimPromptExcerpt(value string, maxRunes int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if maxRunes <= 0 || len(runes) <= maxRunes {
+		return string(runes)
+	}
+	return string(runes[:maxRunes]) + "..."
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

@@ -7,23 +7,25 @@ import (
 )
 
 type Citation struct {
-	ID               string `json:"id"`
-	DocumentTitle    string `json:"document_title"`
-	LawName          string `json:"law_name,omitempty"`
-	Chapter          string `json:"chapter,omitempty"`
-	DocumentNumber   string `json:"document_number"`
-	DocumentType     string `json:"document_type,omitempty"`
-	IssuingAuthority string `json:"issuing_authority,omitempty"`
-	EffectiveStatus  string `json:"effective_status,omitempty"`
-	Article          string `json:"article"`
-	Clause           string `json:"clause"`
-	Year             int    `json:"year"`
-	CitationLabel    string `json:"citation_label,omitempty"`
-	Excerpt          string `json:"excerpt"`
-	URL              string `json:"url"`
-	ChunkID          string `json:"chunk_id,omitempty"`
-	AssetID          string `json:"asset_id,omitempty"`
-	FileURL          string `json:"file_url,omitempty"`
+	ID               string  `json:"id"`
+	DocumentTitle    string  `json:"document_title"`
+	LawName          string  `json:"law_name,omitempty"`
+	Chapter          string  `json:"chapter,omitempty"`
+	DocumentNumber   string  `json:"document_number"`
+	DocumentType     string  `json:"document_type,omitempty"`
+	IssuingAuthority string  `json:"issuing_authority,omitempty"`
+	EffectiveStatus  string  `json:"effective_status,omitempty"`
+	Article          string  `json:"article"`
+	Clause           string  `json:"clause"`
+	Year             int     `json:"year"`
+	CitationLabel    string  `json:"citation_label,omitempty"`
+	Excerpt          string  `json:"excerpt"`
+	URL              string  `json:"url"`
+	ChunkID          string  `json:"chunk_id,omitempty"`
+	AssetID          string  `json:"asset_id,omitempty"`
+	FileURL          string  `json:"file_url,omitempty"`
+	Score            float64 `json:"score,omitempty"`
+	SourceRank       int     `json:"source_rank,omitempty"`
 }
 
 func FormatLegalCitation(c Citation) string {

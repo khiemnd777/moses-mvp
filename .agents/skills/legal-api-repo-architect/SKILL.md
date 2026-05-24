@@ -1,3 +1,8 @@
+---
+name: legal-api-repo-architect
+description: Legal API monorepo routing skill for task classification, subsystem ownership, collaborator selection, and verification planning. Use first when requests are ambiguous, cross-cutting, or could belong to more than one subsystem.
+---
+
 # legal-api-repo-architect
 
 ## When To Use This Skill
@@ -22,22 +27,23 @@ It does not implement subsystem-specific logic. Hand off once routing is clear.
 - Retrieval/answer and ingest/vector are specialized backend domains and should not be treated as generic backend work by default.
 
 ## Workflow
-1. Read [../../../AGENTS.md](../../../AGENTS.md) and the local area guide for the suspected subsystem.
-2. Classify the request:
+1. Read [../legal-api-engineering-guardrails/SKILL.md](../legal-api-engineering-guardrails/SKILL.md), [../../../AGENTS.md](../../../AGENTS.md), and the local area guide for the suspected subsystem.
+2. Inspect enough code or docs to answer questions that can be resolved locally before asking the user.
+3. Classify the request:
    - `bug` if the user describes existing behavior as broken, regressed, inconsistent, or failing in a path that already exists
    - `feature` if the user is asking for net-new capability, surface area, workflow, or contract
    - if unclear, inspect whether the relevant surface already exists in the repo; if it does and the behavior is supposed to work, prefer `bug`
-3. Identify the request type:
+4. Identify the request type:
    - backend feature or auth/admin behavior
    - retrieval, prompt, answer, citation, or search behavior
    - ingest, worker, Qdrant, vector repair, or reindex behavior
    - frontend chat/admin/vector UI behavior
    - VPS install or deployment behavior
-4. Map affected paths before deciding ownership.
-5. Pick one lead skill and, if needed, one or two collaborator skills.
-6. Name the lead agent role and explicit handoff roles.
-7. List the verification surfaces that must be checked before completion.
-8. Adjust verification posture based on class:
+5. Map affected paths before deciding ownership.
+6. Pick one lead skill and, if needed, one or two collaborator skills.
+7. Name the lead agent role and explicit handoff roles.
+8. List the verification surfaces that must be checked before completion.
+9. Adjust verification posture based on class:
    - `bug`: verify the failing path and the nearest regression-prone neighbors
    - `feature`: verify the new happy path and the adjacent existing flows it extends
 
@@ -47,6 +53,7 @@ It does not implement subsystem-specific logic. Hand off once routing is clear.
 - exactly one lead role is identified
 - cross-cutting collaborators are named when required
 - backend, frontend, and install impacts are all considered for full-stack work
+- the first feedback loop or vertical slice is named for the implementation agent
 
 ## Common Regressions To Look For
 - routing a retrieval issue to generic backend work

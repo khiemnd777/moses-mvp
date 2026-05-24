@@ -8,10 +8,9 @@ load_install_config "$SCRIPT_DIR"
 
 "$SCRIPT_DIR/repo/sync.sh"
 "$SCRIPT_DIR/backend/install.sh"
-"$SCRIPT_DIR/backend/migrate.sh"
-"$SCRIPT_DIR/frontend/build.sh"
-"$SCRIPT_DIR/frontend/install.sh"
 "$SCRIPT_DIR/nginx/install.sh"
+"$SCRIPT_DIR/compose/up.sh"
+"$SCRIPT_DIR/backend/migrate.sh"
 
 if [[ "${ENABLE_SSL:-1}" == "1" ]]; then
   "$SCRIPT_DIR/nginx/issue-ssl.sh"

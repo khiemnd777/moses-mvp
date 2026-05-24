@@ -2,6 +2,12 @@ import { useState } from 'react';
 import Button from '@/shared/Button';
 import { useChatStore } from './chatStore';
 
+const suggestedQuestions = [
+  'Tóm tắt căn cứ pháp lý và điều khoản áp dụng cho trường hợp này',
+  'Điều kiện, hồ sơ và thủ tục cần thực hiện là gì?',
+  'Văn bản nào đang còn hiệu lực điều chỉnh vấn đề này?'
+];
+
 const ChatInput = () => {
   const [value, setValue] = useState('');
   const { sendMessage, isStreaming } = useChatStore();
@@ -35,6 +41,18 @@ const ChatInput = () => {
         <Button onClick={() => void handleSend()} disabled={!canSend}>
           Gửi câu hỏi
         </Button>
+        {!value.trim() &&
+          suggestedQuestions.map((question) => (
+            <button
+              className="button outline chat-suggestion-button"
+              disabled={isStreaming}
+              key={question}
+              onClick={() => setValue(question)}
+              type="button"
+            >
+              {question}
+            </button>
+          ))}
       </div>
     </div>
   );

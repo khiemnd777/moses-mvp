@@ -1,3 +1,8 @@
+---
+name: legal-api-backend-feature
+description: Standard Legal API backend implementation for HTTP handlers, auth, admin APIs, validation, config-sensitive behavior, and persistence wiring. Use when backend work is not primarily retrieval/answer-specific, ingest/vector-specific, frontend, or deploy work.
+---
+
 # legal-api-backend-feature
 
 ## When To Use This Skill
@@ -26,15 +31,18 @@ Fallback collaborator role: [`review-agent`](../../../docs/agent-roles.md#review
 - Error envelope conventions are defined in handler helpers and should remain consistent.
 
 ## Workflow
-1. Read [../../../backend/AGENTS.md](../../../backend/AGENTS.md).
-2. Find the live route, handler, repository, and auth entrypoints involved in the request.
-3. Decide whether the task remains in generic backend scope:
+1. Read [../legal-api-engineering-guardrails/SKILL.md](../legal-api-engineering-guardrails/SKILL.md) and [../../../backend/AGENTS.md](../../../backend/AGENTS.md).
+2. Classify the task as `bug` or `feature`, then choose the first feedback loop or vertical slice.
+3. Find the live route, handler, repository, and auth entrypoints involved in the request.
+4. Decide whether the task remains in generic backend scope:
    - if retrieval, prompt, citation, or answer behavior is primary, hand off to `legal-api-retrieval-answer`
    - if ingest, worker, Qdrant payloads, repair, or reindex behavior is primary, hand off to `legal-api-ingest-vector`
-4. Implement changes along the existing backend layering instead of bypassing it.
-5. Update tests closest to the changed layer.
-6. Check whether `frontend/src/core/api.ts` or frontend types must change.
-7. Check whether env names, startup assumptions, or deployment scripts are affected.
+5. Implement changes along the existing backend layering instead of bypassing it.
+6. For bugs, reproduce through the nearest public seam before fixing when feasible.
+7. For features, define the backend contract before editing consumers.
+8. Update tests closest to the changed layer.
+9. Check whether `frontend/src/core/api.ts` or frontend types must change.
+10. Check whether env names, startup assumptions, or deployment scripts are affected.
 
 ## Required Checks Before Finishing
 - route registration and auth middleware are correct
@@ -42,6 +50,7 @@ Fallback collaborator role: [`review-agent`](../../../docs/agent-roles.md#review
 - DB and repository interactions are coherent
 - frontend contract implications are called out
 - API and worker shared-code impact has been considered
+- the selected bug feedback loop or feature vertical slice has been run or its blocker is documented
 
 ## Common Regressions To Look For
 - changing auth behavior without checking refresh and change-password flow

@@ -55,7 +55,7 @@ export const unwrapError = (error: unknown): string => {
 
 export const answer = async (question: string, filters: ChatFilters) => {
   const { data } = await api.post('/answer', { question, filters });
-  return data as { answer: string; citations?: unknown[] };
+  return data as { answer: string; citations?: Citation[] };
 };
 
 export const createConversation = async (title?: string) => {
@@ -262,7 +262,7 @@ export const deleteAIPrompt = async (id: string) => {
 
 export const testAIPrompt = async (payload: { prompt_id: string; query: string; top_k?: number }) => {
   const { data } = await api.post('/admin/ai/prompts/test', payload);
-  return data as { answer: string; citations?: unknown[] };
+  return data as { answer: string; citations?: Citation[] };
 };
 
 export const listAIRetrievalConfigs = async () => {

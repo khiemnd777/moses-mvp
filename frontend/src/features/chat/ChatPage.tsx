@@ -74,10 +74,13 @@ const ChatPage = () => {
     });
   }, [isStreaming, messages]);
 
-  const latestAssistantCitations = useMemo(() => {
-    const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
-    return lastAssistant?.citations || [];
-  }, [messages]);
+  const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === 'assistant'), [messages]);
+  const latestAssistantCitations = latestAssistant?.citations || [];
+
+  useEffect(() => {
+    setSelectedCitations([]);
+    setActiveCitation(undefined);
+  }, [currentConversationId, latestAssistant?.message_id]);
 
   const handleDownloadCitation = (citation: Citation, fallbackFileName?: string) => {
     setDownloadNotice('Tài liệu đang được tải về');
@@ -140,6 +143,10 @@ const ChatPage = () => {
             <div className="source-panel-body">
               <SourcesPanel
                 citations={selectedCitations.length > 0 ? selectedCitations : latestAssistantCitations}
+                onOpen={(citation, citations) => {
+                  setSelectedCitations(citations);
+                  setActiveCitation(citation);
+                }}
                 onDownload={(citation) =>
                   void handleDownloadCitation(citation).catch((downloadError) => setCitationDetailError(unwrapError(downloadError)))
                 }

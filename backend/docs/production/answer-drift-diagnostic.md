@@ -16,7 +16,7 @@ Optional overrides:
 DEBUG_AUTH_PASSWORD='current-admin-password' \
 DEBUG_QUERY='Thủ tục ly dị.' \
 DEBUG_TOP_K=5 \
-DEBUG_API_BASE_URL='http://127.0.0.1:8080' \
+DEBUG_API_BASE_URL='http://127.0.0.1:18088' \
 cd install && bash ./backend/debug_answer_drift.sh
 ```
 

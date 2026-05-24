@@ -3,19 +3,10 @@ import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
 import Input from '@/shared/Input';
 import { createDocType, debugDocTypeQuery, deleteDocType, listDocTypes, unwrapError, updateDocType } from '@/core/api';
-import type { DocType, DocTypeForm, DocTypeQueryDebugResponse } from '@/core/types';
+import type { DocType, DocTypeQueryDebugResponse } from '@/core/types';
 import { useAdminStore } from './adminStore';
 import DocTypeEditor from './DocTypeEditor';
-
-const buildDefaultForm = (code: string, name: string): DocTypeForm => ({
-  version: 2,
-  doc_type: { code, name },
-  segment_rules: { strategy: 'legal_article', hierarchy: 'article', normalization: 'basic' },
-  metadata_schema: { fields: [{ name: 'title', type: 'string' }] },
-  mapping_rules: [{ field: 'title', regex: '^Title\\s*:\\s*(.+)$', group: 1 }],
-  reindex_policy: { on_content_change: true, on_form_change: true },
-  query_profile: {}
-});
+import { buildLegalRAGForm } from './legalRagPreset';
 
 const DocTypesPage = () => {
   const [docTypes, setDocTypes] = useState<DocType[]>([]);
@@ -57,7 +48,7 @@ const DocTypesPage = () => {
       const created = await createDocType({
         code: trimmedCode,
         name: trimmedName,
-        form: buildDefaultForm(trimmedCode, trimmedName)
+        form: buildLegalRAGForm(trimmedCode, trimmedName)
       });
       setDocTypes((prev) => [created, ...prev]);
       setSelectedDocTypeId(created.id);

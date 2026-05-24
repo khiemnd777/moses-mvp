@@ -128,7 +128,7 @@ func testBundle(t *testing.T, text string) Bundle {
 	}
 }
 
-func TestRunCrashBeforeVectorUpsert_DoesNotReplaceChunks(t *testing.T) {
+func TestRunVectorUpsertFailureLeavesChunksForRetry(t *testing.T) {
 	store := &fakeIngestStore{countByVersion: 0}
 	vectors := &fakeVectorStore{upsertErr: errors.New("qdrant unavailable")}
 	svc := &Service{Store: store, Qdrant: vectors, Embed: fakeEmbedder{}, Config: Config{ChunkSize: 50, ChunkOverlap: 0}}
@@ -140,12 +140,15 @@ func TestRunCrashBeforeVectorUpsert_DoesNotReplaceChunks(t *testing.T) {
 	if !vectors.upsertCalled {
 		t.Fatal("expected vector upsert to be attempted")
 	}
-	if store.replaceCalled {
-		t.Fatal("expected chunks to remain untouched when vector upsert fails")
+	if !store.replaceCalled {
+		t.Fatal("expected chunks to be replaced before vector upsert")
+	}
+	if store.replacedChunkCount == 0 {
+		t.Fatal("expected replacement chunks to be kept for retry")
 	}
 }
 
-func TestRunCrashAfterVectorUpsertBeforeChunkCommit_IsRetrySafe(t *testing.T) {
+func TestRunChunkCommitFailureDoesNotUpsertVectors(t *testing.T) {
 	store := &fakeIngestStore{countByVersion: 0, replaceErr: errors.New("tx failed")}
 	vectors := &fakeVectorStore{}
 	svc := &Service{Store: store, Qdrant: vectors, Embed: fakeEmbedder{}, Config: Config{ChunkSize: 50, ChunkOverlap: 0}}
@@ -154,11 +157,11 @@ func TestRunCrashAfterVectorUpsertBeforeChunkCommit_IsRetrySafe(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !vectors.upsertCalled {
-		t.Fatal("expected vector upsert to be completed before chunk replacement")
-	}
 	if !store.replaceCalled {
 		t.Fatal("expected chunk replacement to be attempted")
+	}
+	if vectors.upsertCalled {
+		t.Fatal("expected vector upsert to wait until chunk replacement succeeds")
 	}
 }
 
@@ -181,7 +184,7 @@ func TestShouldSkipIngestFalseWhenStaleTailVectorExists(t *testing.T) {
 	}
 }
 
-func TestRecoverPartialIngestDeletesOrphanChunks(t *testing.T) {
+func TestRecoverPartialIngestKeepsChunksForVectorRebuild(t *testing.T) {
 	store := &fakeIngestStore{countByVersion: 3}
 	vectors := &fakeVectorStore{payloadByID: map[string]map[string]interface{}{}}
 	svc := &Service{Store: store, Qdrant: vectors}
@@ -189,10 +192,7 @@ func TestRecoverPartialIngestDeletesOrphanChunks(t *testing.T) {
 	if err := svc.recoverPartialIngest(context.Background(), "version-1"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !store.deleteChunksCalled {
-		t.Fatal("expected orphan chunks to be deleted")
-	}
-	if store.deletedChunkVersion != "version-1" {
-		t.Fatalf("unexpected deleted version: %s", store.deletedChunkVersion)
+	if store.deleteChunksCalled {
+		t.Fatal("expected chunks to be kept so the retry can rebuild vectors")
 	}
 }

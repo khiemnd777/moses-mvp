@@ -210,7 +210,7 @@ func sanitizeGuardMessage(systemPrompt, fallback string) string {
 
 func buildAnswerSources(results []retrieval.Result) []answer.Source {
 	sources := make([]answer.Source, 0, len(results))
-	for _, r := range results {
+	for idx, r := range results {
 		citation := answer.Citation{
 			ID:               r.ChunkID,
 			DocumentTitle:    pickString(r.Metadata, "document_title", "title", "doc_title"),
@@ -223,6 +223,8 @@ func buildAnswerSources(results []retrieval.Result) []answer.Source {
 			Year:             pickInt(r.Metadata, "year", "document_year", "signed_year", "nam"),
 			Excerpt:          excerptText(r.Text, 320),
 			URL:              pickString(r.Metadata, "url", "document_url", "source_url"),
+			Score:            r.Score,
+			SourceRank:       idx + 1,
 		}
 		citation.CitationLabel = buildCitationLabel(citation)
 		sources = append(sources, answer.Source{
@@ -236,12 +238,12 @@ func buildAnswerSources(results []retrieval.Result) []answer.Source {
 func buildCitationLabel(c answer.Citation) string {
 	parts := make([]string, 0, 4)
 	if c.Article != "" {
-		parts = append(parts, "Dieu "+strings.TrimSpace(c.Article))
+		parts = append(parts, "Điều "+strings.TrimSpace(c.Article))
 	}
 	if c.DocumentTitle != "" {
 		parts = append(parts, strings.TrimSpace(c.DocumentTitle))
 	} else if c.DocumentNumber != "" {
-		parts = append(parts, "Van ban "+strings.TrimSpace(c.DocumentNumber))
+		parts = append(parts, "Văn bản "+strings.TrimSpace(c.DocumentNumber))
 	}
 	if c.Year > 0 {
 		parts = append(parts, strconv.Itoa(c.Year))

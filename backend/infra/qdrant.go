@@ -30,6 +30,16 @@ var allowedDeleteFilterFields = map[string]struct{}{
 	"document_id":         {},
 }
 
+var defaultPayloadIndexes = []payloadIndexDefinition{
+	{FieldName: "legal_domain", FieldSchema: "keyword"},
+	{FieldName: "document_type", FieldSchema: "keyword"},
+	{FieldName: "effective_status", FieldSchema: "keyword"},
+	{FieldName: "document_number", FieldSchema: "keyword"},
+	{FieldName: "article_number", FieldSchema: "keyword"},
+	{FieldName: "issuing_authority", FieldSchema: "keyword"},
+	{FieldName: "signed_year", FieldSchema: "integer"},
+}
+
 type QdrantClient struct {
 	URL                   string
 	Collection            string
@@ -62,6 +72,16 @@ type createCollectionRequest struct {
 	} `json:"vectors"`
 }
 
+type payloadIndexDefinition struct {
+	FieldName   string
+	FieldSchema string
+}
+
+type createPayloadIndexRequest struct {
+	FieldName   string `json:"field_name"`
+	FieldSchema string `json:"field_schema"`
+}
+
 type CollectionInfo struct {
 	VectorSize int
 	Distance   string
@@ -89,7 +109,50 @@ func (c *QdrantClient) EnsureCollection(ctx context.Context, vectorSize int) err
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("qdrant ensure collection failed: status=%s body=%s", resp.Status, strings.TrimSpace(string(body)))
 	}
-	return c.ValidateCollectionDimension(ctx, vectorSize)
+	if err := c.ValidateCollectionDimension(ctx, vectorSize); err != nil {
+		return err
+	}
+	if err := c.EnsurePayloadIndexes(ctx); err != nil {
+		c.logger().Warn("qdrant_payload_index_setup_failed", slog.String("collection", c.Collection), slog.String("error", err.Error()))
+	}
+	return nil
+}
+
+func (c *QdrantClient) EnsurePayloadIndexes(ctx context.Context) error {
+	for _, index := range defaultPayloadIndexes {
+		if err := c.CreatePayloadIndex(ctx, index.FieldName, index.FieldSchema); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *QdrantClient) CreatePayloadIndex(ctx context.Context, fieldName, fieldSchema string) error {
+	payload := createPayloadIndexRequest{FieldName: fieldName, FieldSchema: fieldSchema}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if err := c.doWithRetry(ctx, "create_payload_index", c.Collection, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.URL+"/collections/"+c.Collection+"/index?wait=true", bytes.NewReader(b))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 && resp.StatusCode != http.StatusConflict {
+			body, _ := io.ReadAll(resp.Body)
+			return qdrantHTTPError{Op: "create_payload_index", StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *QdrantClient) ValidateCollectionDimension(ctx context.Context, expected int) error {

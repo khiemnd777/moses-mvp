@@ -1,21 +1,33 @@
+name: legal
+
 services:
   postgres:
     image: ${POSTGRES_IMAGE}
+    container_name: legal-postgres
+    restart: unless-stopped
+    command: ["postgres", "-c", "port=${DOCKER_POSTGRES_PORT}"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "${POSTGRES_PORT}:${DOCKER_POSTGRES_PORT}"
     volumes:
       - ${POSTGRES_DATA_DIR}:/var/lib/postgresql/data
   qdrant:
     image: ${QDRANT_IMAGE}
+    container_name: legal-qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: ${DOCKER_QDRANT_PORT}
     ports:
-      - "${QDRANT_PORT}:6333"
+      - "${QDRANT_PORT}:${DOCKER_QDRANT_PORT}"
     volumes:
       - ${QDRANT_STORAGE_DIR}:/qdrant/storage
   api:
+    image: legal-api
+    container_name: legal-api
+    restart: unless-stopped
     build:
       context: ..
       dockerfile: docker/api.Dockerfile
@@ -25,15 +37,19 @@ services:
       POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
       POSTGRES_PORT: ${DOCKER_POSTGRES_PORT}
       QDRANT_HOST: ${DOCKER_QDRANT_HOST}
+      QDRANT_PORT: ${DOCKER_QDRANT_PORT}
       STORAGE_ROOT_DIR: ${DOCKER_STORAGE_ROOT_DIR}
     ports:
-      - "${PORT}:8080"
+      - "${PORT}:${PORT}"
     depends_on:
       - postgres
       - qdrant
     volumes:
       - ${UPLOADS_DATA_DIR}:/app/data/uploads
   worker:
+    image: legal-worker
+    container_name: legal-worker
+    restart: unless-stopped
     build:
       context: ..
       dockerfile: docker/worker.Dockerfile
@@ -43,9 +59,28 @@ services:
       POSTGRES_HOST: ${DOCKER_POSTGRES_HOST}
       POSTGRES_PORT: ${DOCKER_POSTGRES_PORT}
       QDRANT_HOST: ${DOCKER_QDRANT_HOST}
+      QDRANT_PORT: ${DOCKER_QDRANT_PORT}
       STORAGE_ROOT_DIR: ${DOCKER_STORAGE_ROOT_DIR}
     depends_on:
       - postgres
       - qdrant
     volumes:
       - ${UPLOADS_DATA_DIR}:/app/data/uploads
+  frontend:
+    image: legal-frontend
+    container_name: legal-frontend
+    restart: unless-stopped
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+    environment:
+      VITE_API_BASE_URL: ${FRONTEND_API_BASE_URL}
+    ports:
+      - "${FRONTEND_PORT}:${FRONTEND_PORT}"
+    command: ["bun", "run", "dev", "--host", "0.0.0.0", "--port", "${FRONTEND_PORT}"]
+    depends_on:
+      - api
+
+volumes:
+  legal-qdrant-data:
+    name: legal-qdrant-data

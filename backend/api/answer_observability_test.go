@@ -549,6 +549,38 @@ func TestValidateGeneratedLegalAnswerReturnsOnlySupportingCitations(t *testing.T
 	}
 }
 
+func TestValidateGeneratedLegalAnswerRejectsCitationlessPositiveAnswer(t *testing.T) {
+	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
+	sources := []answer.Source{
+		{
+			Text: "Điều 54. Hòa giải tại Tòa án.",
+			Citation: answer.Citation{
+				ID:            "citation-54",
+				ChunkID:       "chunk-54",
+				DocumentTitle: "Luật Hôn nhân và gia đình 2014",
+				LawName:       "Luật Hôn nhân và gia đình 2014",
+				DocumentType:  "LUẬT",
+				Article:       "54",
+			},
+		},
+	}
+
+	answerText := "1. Vấn đề pháp lý\nXác định quyền, nghĩa vụ sau ly hôn.\n\n2. Áp dụng pháp luật\nCó căn cứ pháp luật điều chỉnh.\n\n3. Phân tích pháp lý\nCác bên cần thực hiện theo quy định hiện hành.\n\n4. Kết luận\nCó thể áp dụng quy định pháp luật liên quan."
+	got, citations, valid, err := handler.validateGeneratedLegalAnswer(context.Background(), answerText, sources)
+	if err != nil {
+		t.Fatalf("validate citationless answer: %v", err)
+	}
+	if valid {
+		t.Fatalf("expected citationless positive answer to be invalid")
+	}
+	if got == answerText {
+		t.Fatalf("expected citationless positive answer to be replaced")
+	}
+	if len(citations) != 0 {
+		t.Fatalf("expected no citations for invalid answer, got %d", len(citations))
+	}
+}
+
 func TestValidateGeneratedLegalAnswerSuppressesCitationsForNegativeFinding(t *testing.T) {
 	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
 	sources := []answer.Source{

@@ -18,6 +18,8 @@ export type Citation = {
   chunk_id?: string;
   asset_id?: string;
   file_url?: string;
+  score?: number;
+  source_rank?: number;
 };
 
 export type CitationDetail = {

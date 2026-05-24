@@ -41,6 +41,9 @@ func (h *Handler) validateGeneratedLegalAnswerWithMode(ctx context.Context, answ
 	if !hasLegalAnswerStructure(trimmedText) {
 		return h.validationFailureResponse(ctx, originalText, replaceOnFailure)
 	}
+	if requiresSupportingCitations(trimmedText, sources) && len(citations) == 0 {
+		return h.validationFailureResponse(ctx, originalText, replaceOnFailure)
+	}
 	if !referencesExistInSources(trimmedText, sources) {
 		return h.validationFailureResponse(ctx, originalText, replaceOnFailure)
 	}
@@ -196,6 +199,14 @@ func deriveSupportingCitations(answerText string, sources []answer.Source) []ans
 	return validateCitations(filtered)
 }
 
+func requiresSupportingCitations(answerText string, sources []answer.Source) bool {
+	if len(sources) == 0 {
+		return false
+	}
+	normalizedAnswer := normalizeValidationText(answerText)
+	return normalizedAnswer != "" && !isNegativeFindingAnswer(normalizedAnswer)
+}
+
 func extractDocumentMentions(normalizedAnswer string, sources []answer.Source) map[string]struct{} {
 	out := map[string]struct{}{}
 	for _, src := range sources {
@@ -245,7 +256,7 @@ func citationSupportsAnswer(citation answer.Citation, referencedArticles map[str
 
 func citationDocumentKeys(c answer.Citation) []string {
 	keys := make([]string, 0, 4)
-	for _, candidate := range []string{c.LawName, c.DocumentTitle, c.DocumentNumber, c.DocumentType} {
+	for _, candidate := range []string{c.LawName, c.DocumentTitle, c.DocumentNumber} {
 		normalized := normalizeValidationText(candidate)
 		if normalized != "" {
 			keys = append(keys, normalized)

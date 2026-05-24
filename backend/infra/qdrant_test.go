@@ -52,6 +52,44 @@ func TestGetPayloadByPointID_UsesWithVectorField(t *testing.T) {
 	}
 }
 
+func TestEnsurePayloadIndexesCreatesLegalFilterIndexes(t *testing.T) {
+	t.Parallel()
+
+	seen := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/collections/legal_chunks/index" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("wait"); got != "true" {
+			t.Fatalf("expected wait=true, got %q", got)
+		}
+		var payload map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		seen[payload["field_name"]] = payload["field_schema"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+
+	client := NewQdrantClient(srv.URL, "legal_chunks")
+	if err := client.EnsurePayloadIndexes(context.Background()); err != nil {
+		t.Fatalf("EnsurePayloadIndexes returned error: %v", err)
+	}
+	for _, field := range []string{"legal_domain", "document_type", "effective_status", "document_number", "article_number", "issuing_authority"} {
+		if got := seen[field]; got != "keyword" {
+			t.Fatalf("expected %s keyword index, got %q", field, got)
+		}
+	}
+	if got := seen["signed_year"]; got != "integer" {
+		t.Fatalf("expected signed_year integer index, got %q", got)
+	}
+}
+
 func TestDeleteByFilter_RejectsEmptyFilter(t *testing.T) {
 	t.Parallel()
 

@@ -11,62 +11,79 @@ ensure_repo_present "$INSTALL_DIR"
 
 PROJECT_ROOT="$(repo_root "$INSTALL_DIR")"
 BACKEND_DIR="$PROJECT_ROOT/backend"
+DEFAULT_NGINX_CONF_FILE="$PROJECT_ROOT/install/nginx/rendered/default.conf"
 
-require_vars JWT_SECRET ADMIN_BOOTSTRAP_PASSWORD OPENAI_API_KEY POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_HOST POSTGRES_PORT POSTGRES_SSLMODE QDRANT_HOST QDRANT_PORT QDRANT_COLLECTION
+require_vars JWT_SECRET ADMIN_BOOTSTRAP_PASSWORD OPENAI_API_KEY POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_HOST POSTGRES_PORT POSTGRES_SSLMODE QDRANT_HOST QDRANT_PORT QDRANT_COLLECTION DOMAIN VITE_API_BASE_URL
 require_dir "$BACKEND_DIR/docker"
-require_file "$BACKEND_DIR/docker/docker-compose.yml"
+require_file "$PROJECT_ROOT/install/docker-compose.prod.yml"
 
-log "Installing backend dependencies"
-sudo apt-get update -y
-sudo apt-get install -y ca-certificates curl gnupg lsb-release postgresql-client make
-
-if ! command -v docker >/dev/null 2>&1; then
-  log "Installing Docker"
-  sudo install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  sudo chmod a+r /etc/apt/keyrings/docker.gpg
-  echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-    sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+if [[ "${SKIP_DOCKER_INSTALL:-0}" == "1" ]]; then
+  log "Skipping Docker dependency install"
+else
+  log "Installing backend dependencies"
   sudo apt-get update -y
-  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  sudo apt-get install -y ca-certificates curl gnupg lsb-release postgresql-client make
+
+  if ! command -v docker >/dev/null 2>&1; then
+    log "Installing Docker"
+    sudo install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    sudo chmod a+r /etc/apt/keyrings/docker.gpg
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+      sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+    sudo apt-get update -y
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  fi
+
+  sudo systemctl enable docker
+  sudo systemctl start docker
 fi
 
-sudo systemctl enable docker
-sudo systemctl start docker
+if ! command -v docker >/dev/null 2>&1; then
+  err "Docker is required"
+fi
 
 POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR:-$BACKEND_DIR/data/postgres}"
 QDRANT_STORAGE_DIR="${QDRANT_STORAGE_DIR:-$BACKEND_DIR/data/qdrant}"
 UPLOADS_DATA_DIR="${UPLOADS_DATA_DIR:-$BACKEND_DIR/data/uploads}"
+LETSENCRYPT_DIR="${LETSENCRYPT_DIR:-/etc/letsencrypt}"
+CERTBOT_WEBROOT="${CERTBOT_WEBROOT:-/var/lib/legal_api/certbot/www}"
+NGINX_CONF_FILE="${NGINX_CONF_FILE:-$DEFAULT_NGINX_CONF_FILE}"
 
 mkdir -p "$POSTGRES_DATA_DIR" "$QDRANT_STORAGE_DIR" "$UPLOADS_DATA_DIR"
 
 log "Rendering backend/.env"
 cat > "$BACKEND_DIR/.env" <<EOF
 CONFIG_PATH=config/config.yaml
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-legal}
 JWT_SECRET=$JWT_SECRET
 ADMIN_BOOTSTRAP_PASSWORD=$ADMIN_BOOTSTRAP_PASSWORD
 SERVER_HOST=${SERVER_HOST:-0.0.0.0}
-PORT=${BACKEND_PORT:-8080}
+PORT=${BACKEND_PORT:-18088}
+API_BIND=${API_BIND:-127.0.0.1}
 POSTGRES_IMAGE=${POSTGRES_IMAGE:-postgres:15}
 POSTGRES_USER=${POSTGRES_USER:-legal}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-legal}
 POSTGRES_DB=${POSTGRES_DB:-legal_rag}
 POSTGRES_HOST=${POSTGRES_HOST:-localhost}
-POSTGRES_PORT=${POSTGRES_PORT:-5433}
+POSTGRES_PORT=${POSTGRES_PORT:-15433}
+POSTGRES_BIND=${POSTGRES_BIND:-127.0.0.1}
 DOCKER_POSTGRES_HOST=${DOCKER_POSTGRES_HOST:-postgres}
-DOCKER_POSTGRES_PORT=${DOCKER_POSTGRES_PORT:-5432}
+DOCKER_POSTGRES_PORT=${DOCKER_POSTGRES_PORT:-15432}
 POSTGRES_SSLMODE=${POSTGRES_SSLMODE:-disable}
 DATABASE_URL=${DATABASE_URL:-}
 POSTGRES_DATA_DIR=$POSTGRES_DATA_DIR
 QDRANT_IMAGE=${QDRANT_IMAGE:-qdrant/qdrant:v1.9.3}
 QDRANT_HOST=${QDRANT_HOST:-localhost}
-QDRANT_PORT=${QDRANT_PORT:-6333}
+QDRANT_PORT=${QDRANT_PORT:-16334}
+QDRANT_BIND=${QDRANT_BIND:-127.0.0.1}
 DOCKER_QDRANT_HOST=${DOCKER_QDRANT_HOST:-qdrant}
+DOCKER_QDRANT_PORT=${DOCKER_QDRANT_PORT:-16333}
 QDRANT_COLLECTION=$QDRANT_COLLECTION
 OPENAI_API_KEY=$OPENAI_API_KEY
-OPENAI_EMBEDDINGS_MODEL=${OPENAI_EMBEDDINGS_MODEL:-text-embedding-3-small}
+OPENAI_EMBEDDINGS_MODEL=${OPENAI_EMBEDDINGS_MODEL:-text-embedding-3-large}
 OPENAI_CHAT_MODEL=${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
 STORAGE_ROOT_DIR=${STORAGE_ROOT_DIR:-/app/data/uploads}
 DOCKER_STORAGE_ROOT_DIR=${DOCKER_STORAGE_ROOT_DIR:-$STORAGE_ROOT_DIR}
@@ -83,13 +100,19 @@ VECTOR_REPAIR_MAX_TASKS_PER_PASS=${VECTOR_REPAIR_MAX_TASKS_PER_PASS:-20}
 CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:5173,https://${DOMAIN}}
 QDRANT_STORAGE_DIR=$QDRANT_STORAGE_DIR
 UPLOADS_DATA_DIR=$UPLOADS_DATA_DIR
+DOMAIN=$DOMAIN
+HTTP_PORT=${HTTP_PORT:-80}
+HTTPS_PORT=${HTTPS_PORT:-443}
+HTTP_BIND=${HTTP_BIND:-0.0.0.0}
+HTTPS_BIND=${HTTPS_BIND:-0.0.0.0}
+LETSENCRYPT_DIR=$LETSENCRYPT_DIR
+CERTBOT_WEBROOT=$CERTBOT_WEBROOT
+NGINX_CONF_FILE=$NGINX_CONF_FILE
+VITE_API_BASE_URL=$VITE_API_BASE_URL
+VITE_ADMIN_API_KEY=${VITE_ADMIN_API_KEY:-}
+VITE_ADMIN_BEARER_TOKEN=${VITE_ADMIN_BEARER_TOKEN:-}
 EOF
 
 if [[ "${SKIP_BACKEND_START:-0}" == "1" ]]; then
-  warn "Skipping backend start because SKIP_BACKEND_START=1"
-  exit 0
+  warn "SKIP_BACKEND_START is set; production compose startup is handled by install/compose/up.sh"
 fi
-
-log "Starting backend services"
-cd "$BACKEND_DIR"
-docker compose --env-file .env -f docker/docker-compose.yml up -d --build

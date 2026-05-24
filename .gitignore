@@ -11,3 +11,6 @@ backend/vendor/
 secret.sh
 **/secret.sh
 install/config.sh
+install/config.local.sh
+install/nginx/rendered/
+.local/

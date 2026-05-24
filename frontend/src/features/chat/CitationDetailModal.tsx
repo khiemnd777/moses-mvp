@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import Button from '@/shared/Button';
 import type { Citation, CitationDetail } from '@/core/types';
+import { getCitationBadges, getCitationSubtitle, getCitationTitle } from './citationUtils';
 
 const CitationDetailModal = ({
   citation,
@@ -28,7 +29,8 @@ const CitationDetailModal = ({
   }, [onClose]);
 
   const resolved = detail?.citation || citation;
-  const title = resolved.citation_label || resolved.document_title || 'Dẫn chứng pháp lý';
+  const title = getCitationTitle(resolved);
+  const subtitle = getCitationSubtitle(resolved);
 
   return (
     <div
@@ -42,16 +44,18 @@ const CitationDetailModal = ({
           <div>
             <div className="citation-modal-eyebrow">Chi tiết dẫn chứng</div>
             <h3>{title}</h3>
+            {subtitle && <div className="citation-modal-subtitle">{subtitle}</div>}
           </div>
           <button aria-label="Đóng popup" className="button outline citation-modal-close" onClick={onClose} type="button">
             Đóng
           </button>
         </div>
         <div className="citation-modal-meta">
-          {resolved.law_name && <span className="badge">{resolved.law_name}</span>}
-          {resolved.article && <span className="badge">Điều {resolved.article}</span>}
-          {resolved.clause && <span className="badge">Khoản {resolved.clause}</span>}
-          {resolved.document_number && <span className="badge">Số {resolved.document_number}</span>}
+          {getCitationBadges(resolved).map((badge) => (
+            <span className={`badge citation-badge ${badge.tone ? `citation-badge-${badge.tone}` : ''}`.trim()} key={badge.label}>
+              {badge.label}
+            </span>
+          ))}
           {detail?.file_name && <span className="badge">{detail.file_name}</span>}
         </div>
         <div className="citation-modal-actions">

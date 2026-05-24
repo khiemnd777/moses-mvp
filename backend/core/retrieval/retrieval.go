@@ -308,17 +308,13 @@ func (s *Service) searchWithFallback(ctx context.Context, vector []float64, limi
 
 	attempts := []*infra.SearchFilter{
 		filter,
-		withoutEffectiveStatus(filter),
-		withoutLegalDomain(withoutEffectiveStatus(filter)),
-		withoutDocumentType(withoutLegalDomain(withoutEffectiveStatus(filter))),
-		nil,
+		withoutLegalDomain(filter),
+		withoutDocumentType(withoutLegalDomain(filter)),
 	}
 	reasons := []string{
 		"initial",
-		"removed_effective_status",
 		"removed_legal_domain",
 		"removed_document_type",
-		"no_filter",
 	}
 	stages := make([]FallbackStage, 0, len(attempts))
 
@@ -388,19 +384,6 @@ func candidateValueCount(values []string) int {
 
 func UnderstandQuery(query string) QueryUnderstandingResult {
 	return analyzeQueryWithIndex(query, queryUnderstandingIndex{Profiles: map[string]docTypeQueryProfile{}})
-}
-
-func withoutEffectiveStatus(filter *infra.SearchFilter) *infra.SearchFilter {
-	if filter == nil {
-		return nil
-	}
-	return &infra.SearchFilter{
-		LegalDomain:     append([]string{}, filter.LegalDomain...),
-		DocumentType:    append([]string{}, filter.DocumentType...),
-		EffectiveStatus: nil,
-		DocumentNumber:  append([]string{}, filter.DocumentNumber...),
-		ArticleNumber:   append([]string{}, filter.ArticleNumber...),
-	}
 }
 
 func withoutLegalDomain(filter *infra.SearchFilter) *infra.SearchFilter {

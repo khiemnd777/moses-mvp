@@ -18,6 +18,6 @@ RUN apk add --no-cache ca-certificates antiword
 COPY --from=build /bin/api /app/api
 COPY config /app/config
 
-EXPOSE 8080
+EXPOSE 18088
 
 CMD ["/app/api"]

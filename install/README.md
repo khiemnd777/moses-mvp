@@ -1,43 +1,125 @@
-# VPS Install Flow
+# VPS Docker Compose Deploy Flow
 
-This directory contains the deployment flow for a Linux VPS.
+This directory contains the production deployment flow for a Linux VPS.
 
-## Flow
+## Production Runtime
 
-1. On local machine, upload the deployment bundle:
+Production runs through Docker Compose:
+
+- `postgres`
+- `qdrant`
+- `api`
+- `worker`
+- `web` container running Nginx and serving the built frontend
+- `certbot` container for certificate issuance
+
+Host Nginx is not installed or reloaded by this flow.
+
+## Local Docker Compose
+
+Local development also runs through Docker Compose:
+
+```bash
+cd /Users/khiemnguyen/Works/project_legal_ai/legal_api
+make up
+```
+
+The first run creates `install/config.local.sh` from `install/config.local.sh.sample`. The local app URL is:
+
+```text
+http://localhost:19080
+```
+
+Useful local commands:
+
+```bash
+make down
+make stop
+make restart
+make log
+./install/local-compose.sh ps
+./install/local-compose.sh migrate
+./install/local-compose.sh verify
+```
+
+Local published ports are web `19080`, API `19088`, Postgres `19433`, Qdrant `19334`, and HTTPS `19443`.
+
+Local compose uses `.local/` for Postgres, Qdrant, uploads, Certbot webroot, and local certificate storage.
+
+## One-Time VPS Bootstrap
+
+Before the first GitHub Actions deploy, clone the repository to `APP_ROOT` on the VPS:
+
+```bash
+sudo mkdir -p /opt/legal_api
+git clone git@github.com:your-org/legal_api.git /opt/legal_api/app
+```
+
+The VPS must be able to fetch the repository through `GIT_REPO_URL` from `install/config.sh`.
+
+## One-Time Local Secret Sync
+
+On the local machine:
 
 ```bash
 cd install
 cp secret.sh.sample secret.sh
-# edit secret.sh
-./copy.sh
+cp config.sh.sample config.sh
+# edit secret.sh for SSH access
+# edit config.sh for production app secrets and paths
+./sync-secrets.sh
 ```
 
-2. SSH into the VPS manually.
+`sync-secrets.sh` uploads only `install/config.sh` to `APP_ROOT/install/config.sh` on the VPS. The app secrets stay on the VPS and are not stored in GitHub Actions.
 
-3. On the VPS, finish configuration and run:
+## GitHub Actions Deploy
+
+Configure GitHub repository secrets:
+
+- `VPS_HOST`
+- `VPS_USER`
+- `VPS_SSH_KEY`
+- optional `VPS_PORT`
+- optional `VPS_KNOWN_HOSTS`
+
+Configure GitHub repository variable:
+
+- optional `VPS_APP_ROOT`, default `/opt/legal_api/app`
+
+CI runs from `.github/workflows/deploy.yml` on pull requests, pushes to `main`, and pushes to release tags that match `v*`.
+
+Production deploy runs only on:
+
+- pushing a tag that matches `v*`, for example `v2026.05.24` or `v2026.05.24-1`
+- `workflow_dispatch`
+
+The workflow SSHes into the VPS, checks out the exact GitHub SHA, and runs:
 
 ```bash
-cd /opt/legal_api
-cp install/config.sh.sample install/config.sh
-# edit install/config.sh
+INSTALL_CONFIG_FILE="$APP_ROOT/install/config.sh" GIT_COMMIT_SHA="$DEPLOY_SHA" "$APP_ROOT/install/install.sh"
+```
+
+Release example:
+
+```bash
+git tag v2026.05.24
+git push origin v2026.05.24
+```
+
+## Manual VPS Run
+
+After secrets are synced, the same deploy can be run manually on the VPS:
+
+```bash
+cd /opt/legal_api/app
 ./install/install.sh
 ```
 
-## What gets uploaded
-
-- `install/` scripts only
-
 ## Notes
 
-- Backend runs with Docker Compose.
-- Backend installer uses the repo's `backend/docker/docker-compose.yml`.
-- Production host storage paths are declared in `install/config.sh` via `POSTGRES_DATA_DIR`, `QDRANT_STORAGE_DIR`, and `UPLOADS_DATA_DIR`.
-- The app still reads uploads from `STORAGE_ROOT_DIR`, which should stay `/app/data/uploads` for the Docker deployment.
-- Frontend is served by Nginx.
-- Frontend installer builds from the repo source on the VPS with Bun.
-- SSL is issued for `ai.dailyturning.com` by Certbot.
-- Installers clone or update the repo from Git on the VPS before running.
-- All VPS install variables live in `install/config.sh`, and the installer renders them into `backend/.env`. The backend then derives `config/config.yaml` from that same `.env`.
-- Configure backend CORS with `CORS_ALLOWED_ORIGINS` in `install/config.sh`.
-- If you keep the default same-origin deployment (`VITE_API_BASE_URL` equals `https://ai.dailyturning.com` and Nginx proxies API routes), production usually does not need cross-origin browser calls.
+- `install/config.sh` is the source of truth for production secrets and runtime paths.
+- `backend/.env` is rendered on the VPS from `install/config.sh`.
+- The production compose file is `install/docker-compose.prod.yml`.
+- Nginx config is rendered to `install/nginx/rendered/default.conf` and mounted into the `web` container.
+- Certbot uses the compose `certbot` service and stores certificates under `LETSENCRYPT_DIR`.
+- `VITE_*` values are browser-public build-time values; do not use them for private secrets.

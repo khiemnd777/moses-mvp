@@ -6,6 +6,18 @@ This document defines the seven primary agent roles for this repository. Use it 
 - [../frontend/AGENTS.md](../frontend/AGENTS.md)
 - [../install/AGENTS.md](../install/AGENTS.md)
 
+Project-scoped custom agent definitions live in [../.codex/agents](../.codex/agents).
+Repository-local skills live in [../.agents/skills](../.agents/skills).
+
+## Shared Execution Guardrails
+All roles should use [`legal-api-engineering-guardrails`](../.agents/skills/legal-api-engineering-guardrails/SKILL.md) with their owning skill for non-trivial work.
+
+The shared guardrail requires:
+- a `bug` or `feature` classification before implementation
+- a feedback loop for bugs, or a vertical slice for features
+- optional use of `CONTEXT.md`, `CONTEXT-MAP.md`, and `docs/adr/` when those docs exist and the task touches project language or durable decisions
+- concise handoff notes when work stops before completion
+
 ## Repo Architect
 **Mission**
 
@@ -42,6 +54,7 @@ Triages requests, maps impact, chooses the lead subsystem, and decides whether w
 - the request has one clear lead subsystem
 - any required collaborator roles are identified
 - the planned verification surface is complete
+- the first feedback loop or vertical slice is named for the implementation role
 
 **Must not decide unilaterally**
 
@@ -58,7 +71,7 @@ Triages requests, maps impact, chooses the lead subsystem, and decides whether w
 
 **Invoke first**
 
-- [`legal-api-repo-architect`](../.codex/skills/legal-api-repo-architect/SKILL.md)
+- [`legal-api-repo-architect`](../.agents/skills/legal-api-repo-architect/SKILL.md)
 
 **Collaborate with**
 
@@ -98,6 +111,7 @@ Implements standard backend features, HTTP handlers, auth-aware APIs, config-sen
 - route protection and auth behavior
 - error envelope consistency
 - impact on frontend contracts and install env if applicable
+- bug feedback loop or feature vertical slice has been run, or the blocker is documented
 
 **Must not decide unilaterally**
 
@@ -108,7 +122,7 @@ Implements standard backend features, HTTP handlers, auth-aware APIs, config-sen
 
 **Invoke first**
 
-- [`legal-api-backend-feature`](../.codex/skills/legal-api-backend-feature/SKILL.md)
+- [`legal-api-backend-feature`](../.agents/skills/legal-api-backend-feature/SKILL.md)
 
 **Collaborate with**
 
@@ -152,6 +166,7 @@ Owns search behavior, prompt routing, answer composition, citation semantics, an
 - citation stability
 - cache invalidation implications
 - trace output implications
+- bug feedback loop or feature vertical slice has been run, or the blocker is documented
 
 **Must not decide unilaterally**
 
@@ -161,7 +176,7 @@ Owns search behavior, prompt routing, answer composition, citation semantics, an
 
 **Invoke first**
 
-- [`legal-api-retrieval-answer`](../.codex/skills/legal-api-retrieval-answer/SKILL.md)
+- [`legal-api-retrieval-answer`](../.agents/skills/legal-api-retrieval-answer/SKILL.md)
 
 **Collaborate with**
 
@@ -206,6 +221,7 @@ Owns ingestion, embeddings, Qdrant payloads, worker flow, vector consistency, re
 - chunk row and vector point alignment
 - worker retry and stale-job handling implications
 - reindex or delete-by-filter impact
+- bug feedback loop or feature vertical slice has been run, or the blocker is documented
 
 **Must not decide unilaterally**
 
@@ -215,7 +231,7 @@ Owns ingestion, embeddings, Qdrant payloads, worker flow, vector consistency, re
 
 **Invoke first**
 
-- [`legal-api-ingest-vector`](../.codex/skills/legal-api-ingest-vector/SKILL.md)
+- [`legal-api-ingest-vector`](../.agents/skills/legal-api-ingest-vector/SKILL.md)
 
 **Collaborate with**
 
@@ -259,6 +275,7 @@ Owns the React frontend, including chat, auth redirects, admin tooling, and vect
 - auth redirect flow
 - backend contract alignment
 - build health
+- bug feedback loop or feature vertical slice has been run, or the blocker is documented
 
 **Must not decide unilaterally**
 
@@ -268,7 +285,7 @@ Owns the React frontend, including chat, auth redirects, admin tooling, and vect
 
 **Invoke first**
 
-- [`legal-api-frontend-admin-chat`](../.codex/skills/legal-api-frontend-admin-chat/SKILL.md)
+- [`legal-api-frontend-admin-chat`](../.agents/skills/legal-api-frontend-admin-chat/SKILL.md)
 
 **Collaborate with**
 
@@ -280,13 +297,14 @@ Owns the React frontend, including chat, auth redirects, admin tooling, and vect
 ## Deploy Agent
 **Mission**
 
-Owns the VPS install flow, env rendering, repo sync, frontend deployment, backend container startup, nginx, and SSL behavior.
+Owns the VPS install flow, GitHub Actions deployment, env rendering, repo sync, local secret sync, Docker Compose runtime, container Nginx, and SSL behavior.
 
 **Primary decision authority**
 
 - install script changes
 - required production variables
 - deploy sequence and verification steps
+- local compose entrypoints and published port choices
 
 **Owned areas**
 
@@ -308,7 +326,10 @@ Owns the VPS install flow, env rendering, repo sync, frontend deployment, backen
 
 - variable requirements
 - script order
-- backend health and nginx verification expectations
+- compose config validity
+- backend health and container Nginx verification expectations
+- local compose command behavior when local runtime is touched
+- bug feedback loop or feature vertical slice has been run, or the blocker is documented
 
 **Must not decide unilaterally**
 
@@ -318,7 +339,7 @@ Owns the VPS install flow, env rendering, repo sync, frontend deployment, backen
 
 **Invoke first**
 
-- [`legal-api-deploy-vps`](../.codex/skills/legal-api-deploy-vps/SKILL.md)
+- [`legal-api-deploy-vps`](../.agents/skills/legal-api-deploy-vps/SKILL.md)
 
 **Collaborate with**
 
@@ -366,7 +387,7 @@ Performs regression-oriented review across contracts, auth, retrieval, ingest/ve
 
 **Invoke first**
 
-- [../AGENTS.md](../AGENTS.md)
+- [`legal-api-regression-review`](../.agents/skills/legal-api-regression-review/SKILL.md)
 
 **Collaborate with**
 

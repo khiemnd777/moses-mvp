@@ -749,7 +749,7 @@ func (h *Handler) buildChatAnswerSources(ctx context.Context, results []retrieva
 		asset domain.DocumentAsset
 		doc   domain.Document
 	})
-	for _, r := range results {
+	for idx, r := range results {
 		var bundle struct {
 			asset domain.DocumentAsset
 			doc   domain.Document
@@ -784,6 +784,8 @@ func (h *Handler) buildChatAnswerSources(ctx context.Context, results []retrieva
 			URL:              pickString(r.Metadata, "url", "document_url", "source_url"),
 			AssetID:          pickString(r.Metadata, "asset_id"),
 			FileURL:          pickString(r.Metadata, "file_url"),
+			Score:            r.Score,
+			SourceRank:       idx + 1,
 		}
 		if citation.DocumentTitle == "" {
 			citation.DocumentTitle = bundle.doc.Title
@@ -1047,13 +1049,13 @@ func buildDeterministicCitationLabel(c answer.Citation) string {
 		parts = append(parts, c.DocumentTitle)
 	}
 	if c.Chapter != "" {
-		parts = append(parts, "Chuong "+strings.TrimSpace(c.Chapter))
+		parts = append(parts, "Chương "+strings.TrimSpace(c.Chapter))
 	}
 	if c.Article != "" {
-		parts = append(parts, "Dieu "+strings.TrimSpace(c.Article))
+		parts = append(parts, "Điều "+strings.TrimSpace(c.Article))
 	}
 	if c.Clause != "" {
-		parts = append(parts, "Khoan "+strings.TrimSpace(c.Clause))
+		parts = append(parts, "Khoản "+strings.TrimSpace(c.Clause))
 	}
 	return strings.TrimSpace(strings.Join(parts, " "))
 }

@@ -54,6 +54,7 @@ Do not casually edit:
 
 ## Runtime Invariants
 - `backend/.env` is the source of truth. The app renders `config/config.yaml` from that env during startup.
+- Local runtime is the root Docker Compose flow (`make up` or `./install/local-compose.sh up`), not direct `go run`.
 - API and worker share config loading, Postgres setup, Qdrant setup, and some seed/repair initialization.
 - The API depends on Postgres, Qdrant, and OpenAI health. `/health` reflects all three.
 - Ingest writes must keep chunk rows and Qdrant points aligned, including stale vector cleanup.
@@ -62,13 +63,13 @@ Do not casually edit:
 - Worker behavior includes stale job recovery, failed job requeue, ingest processing, and vector repair ticker execution.
 
 ## Required Commands For Verification
+- From repo root, run local stack: `make up`
+- From repo root, tail local stack logs: `make log`
+- From repo root, apply local migrations through Compose: `./install/local-compose.sh migrate`
+- From repo root, verify local stack: `./install/local-compose.sh verify`
 - Build API: `cd backend && go build -o bin/api ./cmd/api`
 - Build worker: `cd backend && go build -o bin/worker ./cmd/worker`
-- Run API locally: `cd backend && go run ./cmd/api`
-- Run worker locally: `cd backend && go run ./cmd/worker`
 - Run tests: `cd backend && go test ./...`
-- Apply migrations: `cd backend && make migrate`
-- Migration status: `cd backend && make migrate-status`
 
 Use targeted tests when changing a subsystem with dedicated coverage, especially under:
 - `api/*_test.go`
@@ -85,9 +86,9 @@ Use targeted tests when changing a subsystem with dedicated coverage, especially
 - Changing config env names or defaults without checking both local and install-rendered `.env`
 
 ## When To Involve Another Agent Or Skill
-- Use [`legal-api-backend-feature`](../.codex/skills/legal-api-backend-feature/SKILL.md) for standard route, auth, config, and admin backend work.
-- Use [`legal-api-retrieval-answer`](../.codex/skills/legal-api-retrieval-answer/SKILL.md) when the change affects search, prompts, answer generation, citations, or traces.
-- Use [`legal-api-ingest-vector`](../.codex/skills/legal-api-ingest-vector/SKILL.md) when the change affects chunking, worker flow, Qdrant payloads, vector repair, or reindex paths.
+- Use [`legal-api-backend-feature`](../.agents/skills/legal-api-backend-feature/SKILL.md) for standard route, auth, config, and admin backend work.
+- Use [`legal-api-retrieval-answer`](../.agents/skills/legal-api-retrieval-answer/SKILL.md) when the change affects search, prompts, answer generation, citations, or traces.
+- Use [`legal-api-ingest-vector`](../.agents/skills/legal-api-ingest-vector/SKILL.md) when the change affects chunking, worker flow, Qdrant payloads, vector repair, or reindex paths.
 - Involve [`frontend-agent`](../docs/agent-roles.md#frontend-agent) if a backend contract change affects `frontend/src/core/api.ts` or UI state.
 - Involve [`deploy-agent`](../docs/agent-roles.md#deploy-agent) if env variables, compose assumptions, or production endpoints change.
 - Involve [`review-agent`](../docs/agent-roles.md#review-agent) before sign-off on auth, retrieval, ingest, or migration-heavy work.

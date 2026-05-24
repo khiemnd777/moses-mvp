@@ -1,4 +1,6 @@
 APP_NAME=github.com/khiemnd777/legal_api
+COMPOSE_PROJECT_NAME?=legal
+COMPOSE=docker compose --project-name $(COMPOSE_PROJECT_NAME) --env-file .env -f docker/docker-compose.yml
 MIGRATIONS_DIR?=infra/migrations
 MIGRATION_TABLE?=schema_migrations
 MIGRATION_FILES?=\
@@ -14,7 +16,7 @@ MIGRATION_FILES?=\
 	$(MIGRATIONS_DIR)/010_auth_refresh_sessions.sql \
 	$(MIGRATIONS_DIR)/011_doc_type_query_profiles.sql
 
-.PHONY: api worker run migrate migrate-baseline migrate-status docker-up docker-down
+.PHONY: api worker run migrate migrate-baseline migrate-status docker-up docker-down docker-restart docker-log docker-logs legal-up legal-down legal-restart legal-log legal-logs
 
 api:
 	go build -o bin/api ./cmd/api
@@ -61,7 +63,26 @@ migrate-status:
 	psql "$$POSTGRES_DSN" -v ON_ERROR_STOP=1 -c "SELECT version, applied_at FROM $(MIGRATION_TABLE) ORDER BY version;"
 
 docker-up:
-	docker compose --env-file .env -f docker/docker-compose.yml up --build
+	$(COMPOSE) up --build
 
 docker-down:
-	docker compose --env-file .env -f docker/docker-compose.yml down
+	$(COMPOSE) down
+
+docker-restart:
+	$(COMPOSE) down
+	$(COMPOSE) up -d --build
+
+docker-log:
+	$(COMPOSE) logs -f api worker
+
+docker-logs: docker-log
+
+legal-up: docker-up
+
+legal-down: docker-down
+
+legal-restart: docker-restart
+
+legal-log: docker-log
+
+legal-logs: legal-log

@@ -7,6 +7,7 @@ import Select from '@/shared/Select';
 import type { DocType, DocTypeForm, QueryProfile } from '@/core/types';
 import { canonicalStringify, sha256 } from '@/core/utils';
 import { useDisplayModeStore } from '@/app/displayModeStore';
+import { applyLegalRAGPreset } from './legalRagPreset';
 
 const safeParseForm = (value: string): DocTypeForm | null => {
   try {
@@ -166,12 +167,14 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
   const [hash, setHash] = useState<string>('');
   const [error, setError] = useState<string | undefined>();
   const [valueMapErrors, setValueMapErrors] = useState<Record<string, string>>({});
+  const [presetApplied, setPresetApplied] = useState(false);
   const resolvedDisplayMode = useDisplayModeStore((state) => state.resolvedDisplayMode);
 
   useEffect(() => {
     setFormText(JSON.stringify(docType.form, null, 2));
     setError(undefined);
     setValueMapErrors({});
+    setPresetApplied(false);
   }, [docType]);
 
   const jsonExtensions = useMemo(() => [json()], []);
@@ -189,7 +192,13 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
       JSON.stringify(syncMappingRulesWithMetadata(withDefaults(parsedForm, docType)))
     ) as DocTypeForm;
     updater(next);
+    setPresetApplied(false);
     setFormText(JSON.stringify(syncMappingRulesWithMetadata(next), null, 2));
+  };
+
+  const handleFormTextChange = (value: string) => {
+    setPresetApplied(false);
+    setFormText(value);
   };
 
   useEffect(() => {
@@ -220,10 +229,26 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
     onSave(payload);
   };
 
+  const handleApplyLegalPreset = () => {
+    if (!parsedForm) return;
+    const base = syncMappingRulesWithMetadata(withDefaults(parsedForm, docType));
+    const next = applyLegalRAGPreset(base, docType);
+    setFormText(JSON.stringify(syncMappingRulesWithMetadata(next), null, 2));
+    setPresetApplied(true);
+  };
+
   return (
     <div className="grid">
       {!isFormValid && <div className="badge">Fix JSON to edit structured fields.</div>}
       {error && <div className="badge">{error}</div>}
+      <PanelSection title="Legal RAG Preset">
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Button type="button" variant="secondary" disabled={!isFormValid} onClick={handleApplyLegalPreset}>
+            Apply Preset
+          </Button>
+          {presetApplied && <div className="badge">Preset applied. Save to persist.</div>}
+        </div>
+      </PanelSection>
       <label>
         <div className="label">Doc Type Form (JSON)</div>
         <div className="codemirror">
@@ -232,7 +257,7 @@ const DocTypeEditor = ({ docType, onSave }: { docType: DocType; onSave: (docType
             height="520px"
             theme={resolvedDisplayMode}
             extensions={jsonExtensions}
-            onChange={setFormText}
+            onChange={handleFormTextChange}
           />
         </div>
       </label>

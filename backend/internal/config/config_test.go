@@ -14,18 +14,18 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("SERVER_HOST", "0.0.0.0")
 	t.Setenv("JWT_SECRET", "jwt-secret")
 	t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "admin-pass")
-	t.Setenv("PORT", "8080")
+	t.Setenv("PORT", "18088")
 	t.Setenv("POSTGRES_HOST", "localhost")
-	t.Setenv("POSTGRES_PORT", "5433")
+	t.Setenv("POSTGRES_PORT", "15433")
 	t.Setenv("POSTGRES_USER", "legal")
 	t.Setenv("POSTGRES_PASSWORD", "legal")
 	t.Setenv("POSTGRES_DB", "legal_rag")
 	t.Setenv("POSTGRES_SSLMODE", "disable")
 	t.Setenv("QDRANT_HOST", "localhost")
-	t.Setenv("QDRANT_PORT", "6333")
+	t.Setenv("QDRANT_PORT", "16334")
 	t.Setenv("QDRANT_COLLECTION", "legal_chunks")
 	t.Setenv("OPENAI_API_KEY", "test-openai-key")
-	t.Setenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-small")
+	t.Setenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-large")
 	t.Setenv("OPENAI_CHAT_MODEL", "gpt-4.1-mini")
 	t.Setenv("STORAGE_ROOT_DIR", "./data/uploads")
 	t.Setenv("INGEST_DEFAULT_SEGMENTER", "free_text")
@@ -52,10 +52,10 @@ func TestLoadSuccessWithDefaults(t *testing.T) {
 	if cfg.ConfigPath != "config/config.yaml" {
 		t.Fatalf("expected default config path, got %q", cfg.ConfigPath)
 	}
-	if cfg.ServerPort != "8080" {
-		t.Fatalf("expected default port 8080, got %q", cfg.ServerPort)
+	if cfg.ServerPort != "18088" {
+		t.Fatalf("expected configured port 18088, got %q", cfg.ServerPort)
 	}
-	if cfg.DatabaseURL != "postgres://legal:legal@localhost:5433/legal_rag?sslmode=disable" {
+	if cfg.DatabaseURL != "postgres://legal:legal@localhost:15433/legal_rag?sslmode=disable" {
 		t.Fatalf("expected Postgres DSN built from env, got %q", cfg.DatabaseURL)
 	}
 	if cfg.IngestChunkSize != 800 {
@@ -113,9 +113,9 @@ func TestLoadReadsDotEnvWhenEnvironmentIsEmpty(t *testing.T) {
 		"SERVER_HOST=0.0.0.0\n" +
 		"JWT_SECRET=jwt-from-file\n" +
 		"ADMIN_BOOTSTRAP_PASSWORD=admin-from-file\n" +
-		"PORT=8080\n" +
+		"PORT=18088\n" +
 		"POSTGRES_HOST=localhost\n" +
-		"POSTGRES_PORT=5433\n" +
+		"POSTGRES_PORT=15433\n" +
 		"POSTGRES_USER=legal\n" +
 		"POSTGRES_PASSWORD=legal\n" +
 		"POSTGRES_DB=legal_rag\n" +
@@ -123,8 +123,8 @@ func TestLoadReadsDotEnvWhenEnvironmentIsEmpty(t *testing.T) {
 		"QDRANT_COLLECTION=legal_chunks\n" +
 		"OPENAI_API_KEY=file-openai-key\n" +
 		"QDRANT_HOST=qdrant\n" +
-		"QDRANT_PORT=6333\n" +
-		"OPENAI_EMBEDDINGS_MODEL=text-embedding-3-small\n" +
+		"QDRANT_PORT=16333\n" +
+		"OPENAI_EMBEDDINGS_MODEL=text-embedding-3-large\n" +
 		"OPENAI_CHAT_MODEL=gpt-4.1-mini\n" +
 		"STORAGE_ROOT_DIR=./data/uploads\n" +
 		"INGEST_DEFAULT_SEGMENTER=free_text\n" +
@@ -158,7 +158,7 @@ func TestLoadReadsDotEnvWhenEnvironmentIsEmpty(t *testing.T) {
 	if cfg.JWTSecret != "jwt-from-file" {
 		t.Fatalf("expected JWT secret from .env, got %q", cfg.JWTSecret)
 	}
-	if cfg.DatabaseURL != "postgres://legal:legal@localhost:5433/legal_rag?sslmode=disable" {
+	if cfg.DatabaseURL != "postgres://legal:legal@localhost:15433/legal_rag?sslmode=disable" {
 		t.Fatalf("expected Postgres DSN from .env components, got %q", cfg.DatabaseURL)
 	}
 }
@@ -167,12 +167,12 @@ func TestRenderAppConfigWritesDerivedConfigYAML(t *testing.T) {
 	cfg := &Config{
 		ConfigPath:             filepath.Join(t.TempDir(), "config", "config.yaml"),
 		ServerHost:             "0.0.0.0",
-		ServerPort:             "8080",
+		ServerPort:             "18088",
 		DatabaseURL:            "postgres://legal",
-		QdrantURL:              "http://qdrant:6333",
+		QdrantURL:              "http://qdrant:16333",
 		QdrantCollection:       "legal_chunks",
 		OpenAIAPIKey:           "key",
-		OpenAIEmbeddingsModel:  "text-embedding-3-small",
+		OpenAIEmbeddingsModel:  "text-embedding-3-large",
 		OpenAIChatModel:        "gpt-4.1-mini",
 		StorageRootDir:         "/app/data/uploads",
 		IngestDefaultSegmenter: "free_text",
@@ -200,7 +200,7 @@ func TestRenderAppConfigWritesDerivedConfigYAML(t *testing.T) {
 	text := string(data)
 	for _, fragment := range []string{
 		`dsn: "postgres://legal"`,
-		`url: "http://qdrant:6333"`,
+		`url: "http://qdrant:16333"`,
 		`root_dir: "/app/data/uploads"`,
 		`interval: 30s`,
 	} {
@@ -214,7 +214,7 @@ func TestLoadFailsWhenJWTSecretMissing(t *testing.T) {
 	t.Setenv("JWT_SECRET", "")
 	t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "admin-pass")
 	t.Setenv("POSTGRES_HOST", "localhost")
-	t.Setenv("POSTGRES_PORT", "5433")
+	t.Setenv("POSTGRES_PORT", "15433")
 	t.Setenv("POSTGRES_USER", "legal")
 	t.Setenv("POSTGRES_PASSWORD", "legal")
 	t.Setenv("POSTGRES_DB", "legal_rag")
@@ -234,7 +234,7 @@ func TestLoadFailsWhenAdminBootstrapPasswordMissing(t *testing.T) {
 	t.Setenv("JWT_SECRET", "jwt-secret")
 	t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "")
 	t.Setenv("POSTGRES_HOST", "localhost")
-	t.Setenv("POSTGRES_PORT", "5433")
+	t.Setenv("POSTGRES_PORT", "15433")
 	t.Setenv("POSTGRES_USER", "legal")
 	t.Setenv("POSTGRES_PASSWORD", "legal")
 	t.Setenv("POSTGRES_DB", "legal_rag")

@@ -1,149 +1,79 @@
 # Backend
 
-This backend uses Postgres and Qdrant. `backend/.env` is the single source of truth; `config/config.yaml` is rendered from it at runtime, and local migration commands also read `backend/.env`.
+This backend uses Postgres and Qdrant. `backend/.env` is rendered from the active install config, and `config/config.yaml` is rendered from `backend/.env` at runtime.
 
-## 1) Install infra: Postgres, Qdrant
+## Local Runtime
 
-### Option A: Docker Compose (recommended)
+Local development runs through the root Docker Compose flow:
 
-1. Install Docker Desktop.
-2. From `backend/`, start the infra containers:
+```bash
+cd /Users/khiemnguyen/Works/project_legal_ai/legal_api
+make up
+```
+
+The first run creates `install/config.local.sh` from `install/config.local.sh.sample`, renders `backend/.env`, builds the API and worker images, starts Postgres and Qdrant, and applies migrations through the Postgres container.
+
+Default local endpoints:
+
+- Web app: `http://localhost:19080`
+- API: `http://localhost:19088`
+- Postgres: `localhost:19433`
+- Qdrant: `localhost:19334`
+
+Useful local commands:
+
+```bash
+make log
+make restart
+make stop
+make down
+./install/local-compose.sh ps
+./install/local-compose.sh migrate
+./install/local-compose.sh verify
+```
+
+Local data is stored under `.local/` at the repository root. To change ports, paths, or local secrets, edit `install/config.local.sh`; do not edit rendered files as the source of truth.
+
+## Production Runtime
+
+Production also runs through Docker Compose. GitHub Actions deploys by SSHing to the VPS, checking out the exact commit SHA, and running:
+
+```bash
+INSTALL_CONFIG_FILE="$APP_ROOT/install/config.sh" GIT_COMMIT_SHA="$DEPLOY_SHA" "$APP_ROOT/install/install.sh"
+```
+
+Production config comes from `install/config.sh`. That file is synced from the local machine with:
+
+```bash
+cd install
+./sync-secrets.sh
+```
+
+The compose services are `postgres`, `qdrant`, `api`, `worker`, `web`, and `certbot`. The `web` service serves the frontend through container Nginx; host Nginx is not the runtime path.
+
+## Backend Checks
+
+Use these commands for backend code verification:
 
 ```bash
 cd backend
-
-docker compose -f docker/docker-compose.yml up -d postgres qdrant
+go test ./...
+go build -o bin/api ./cmd/api
+go build -o bin/worker ./cmd/worker
 ```
 
-This exposes:
-- Postgres on `localhost:5433` (user `legal`, password `legal`, db `legal_rag`)
-- Qdrant on `localhost:6333`
-- Data paths default to `backend/data/postgres`, `backend/data/qdrant`, and `backend/data/uploads`
-
-If you need different host-side bind mounts, set them in `backend/.env`:
-- `POSTGRES_DATA_DIR`
-- `QDRANT_STORAGE_DIR`
-- `UPLOADS_DATA_DIR`
-
-If you run the backend in Docker, the container runtime endpoints also come from `backend/.env`:
-- `DOCKER_POSTGRES_HOST`
-- `DOCKER_POSTGRES_PORT`
-- `DOCKER_QDRANT_HOST`
-- `DOCKER_STORAGE_ROOT_DIR`
-
-### Option B: Native installs
-
-If you prefer native installs, install:
-- Postgres 15
-- Qdrant v1.9.x
-
-Then update `backend/.env` to point at your local endpoints. The app will render `config/config.yaml` from that file automatically.
-
-## 2) Start/stop Qdrant
-
-If you used Docker Compose:
-
-Start Qdrant:
-```bash
-cd backend
-
-docker compose -f docker/docker-compose.yml up -d qdrant
-```
-
-Stop Qdrant:
-```bash
-cd backend
-
-docker compose -f docker/docker-compose.yml stop qdrant
-```
-
-Remove the container and data volume:
-```bash
-cd backend
-
-docker compose -f docker/docker-compose.yml down
-```
-
-## 3) Start/stop API
-
-### Option A: Run API in Docker
-
-Start:
-```bash
-cd backend
-
-docker compose -f docker/docker-compose.yml up -d api
-```
-
-Stop:
-```bash
-cd backend
-
-docker compose -f docker/docker-compose.yml stop api
-```
-
-### Option B: Run API locally with Go
-
-1. Ensure Postgres and Qdrant are running.
-2. Create a local env file:
+Migration state is tracked in the `schema_migrations` table. For local compose, run migrations from the repository root:
 
 ```bash
-cd backend
-
-cp .env.example .env
+cd /Users/khiemnguyen/Works/project_legal_ai/legal_api
+./install/local-compose.sh migrate
 ```
 
-Edit `backend/.env`:
-- `POSTGRES_HOST`: use `localhost`
-- `POSTGRES_PORT`: use `5433`
-- `QDRANT_HOST`: use `localhost`
-- `QDRANT_PORT`: use `6333`
-- `OPENAI_API_KEY`: set your API key
+The backend `Makefile` still contains lower-level build, migration, and compose helpers for targeted maintenance, but the standard local app runtime is the root compose flow.
 
-3. Run the API:
+## Env Notes
 
-```bash
-cd backend
-
-go run ./cmd/api
-```
-
-Stop it with `Ctrl+C`.
-
-## 4) Database migrations (with version tracking)
-
-Migration state is tracked in Postgres table `schema_migrations`.
-
-Apply pending migrations:
-```bash
-cd backend
-make migrate
-```
-
-Show applied versions:
-```bash
-cd backend
-make migrate-status
-```
-
-If your database already exists and was migrated before this tracking was added, baseline first (mark as applied without executing SQL files):
-```bash
-cd backend
-make migrate-baseline
-```
-
-Then use `make migrate` normally for new migration files.
-
----
-
-Notes:
-- Default API port is `8080`.
-- If you run the API in Docker, Compose reads `backend/.env`, and the app renders `config/config.yaml` from the same values on startup.
-- Backend CORS is configured by env var `CORS_ALLOWED_ORIGINS`, defaulting to `http://localhost:5173`.
-- Example local run with a custom frontend origin:
-
-```bash
-cd backend
-
-CORS_ALLOWED_ORIGINS=http://localhost:5173,https://ai.dailyturning.com go run ./cmd/api
-```
+- `backend/.env` is generated by `install/backend/install.sh`.
+- `config/config.yaml` is generated from `backend/.env` when the API or worker starts.
+- Container runtime endpoints use `DOCKER_POSTGRES_HOST`, `DOCKER_POSTGRES_PORT`, `DOCKER_QDRANT_HOST`, and `DOCKER_QDRANT_PORT`.
+- Browser CORS origins are controlled by `CORS_ALLOWED_ORIGINS`.

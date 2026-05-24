@@ -12,14 +12,16 @@ Use this file as the entrypoint for routing work. Read the local area guide befo
 - [frontend/AGENTS.md](frontend/AGENTS.md)
 - [install/AGENTS.md](install/AGENTS.md)
 - [docs/agent-roles.md](docs/agent-roles.md)
-- [.codex/skills/](.codex/skills/)
+- [.codex/agents/](.codex/agents/)
+- [.agents/skills/](.agents/skills/)
 
 ## Repository Map
 - `backend/`: Go services, migrations, prompt config, worker logic, tests
 - `frontend/`: Vite + React + TypeScript UI for chat, auth, admin, and vector tooling
-- `install/`: Linux VPS install, repo sync, backend deploy, frontend build/install, nginx, SSL
+- `install/`: Linux VPS install, repo sync, Docker Compose production deploy, container nginx, SSL
 - `docs/`: repository-local operational docs, including agent roles
-- `.codex/skills/`: repository-local skill definitions
+- `.codex/agents/`: project-scoped Codex custom agent definitions
+- `.agents/skills/`: repository-local Codex skill definitions
 
 ## Ownership And Routing
 - Backend work: API handlers, auth, retrieval, answer generation, ingest, worker, migrations, Qdrant, Postgres
@@ -63,20 +65,22 @@ Verification emphasis differs by class:
 - Frontend app entrypoint: `frontend/src/main.tsx`
 - Frontend route shell: `frontend/src/app/App.tsx`
 - Install orchestrator: `install/install.sh`
+- Local runtime entrypoint: root `make up`, backed by `install/local-compose.sh`
+- Production deployment entrypoint: `.github/workflows/deploy.yml` on `v*` tag push or manual dispatch, SSHing to VPS and running `install/install.sh`
 - Backend reads `backend/.env`, then renders `backend/config/config.yaml` at runtime
 - Backend depends on Postgres and Qdrant
 - Frontend depends on `VITE_API_BASE_URL` and stores auth token in local storage
+- Local default ports: web `19080`, API `19088`, Postgres `19433`, Qdrant `19334`
 
 ## Shared Commands
-- Backend local API: `cd backend && go run ./cmd/api`
-- Backend local worker: `cd backend && go run ./cmd/worker`
-- Backend migrations: `cd backend && make migrate`
-- Backend migration status: `cd backend && make migrate-status`
+- Local full stack up/down: `make up`, `make down`
+- Local stack stop/restart/logs: `make stop`, `make restart`, `make log`
+- Local compose direct entrypoint: `./install/local-compose.sh up|down|stop|restart|logs|ps|migrate|verify`
 - Backend tests: `cd backend && go test ./...`
-- Frontend dev: `cd frontend && bun run dev`
+- Backend build checks: `cd backend && go build -o bin/api ./cmd/api && go build -o bin/worker ./cmd/worker`
 - Frontend build: `cd frontend && bun run build`
-- Frontend preview: `cd frontend && bun run preview`
-- Install flow entrypoint: `cd install && ./install.sh`
+- Production secret sync: `cd install && ./sync-secrets.sh`
+- Production install flow entrypoint: `cd install && ./install.sh`
 
 ## Cross-Cutting Invariants
 - Do not treat `backend/config/config.yaml` as the source of truth. The source is `backend/.env`; the YAML is rendered from it.
@@ -85,6 +89,7 @@ Verification emphasis differs by class:
 - Ingest and vector operations must preserve consistency between chunk rows in Postgres and vector payloads in Qdrant.
 - Frontend admin pages mirror real backend capabilities. Do not add UI-only behavior that has no backend support.
 - Deployment scripts render production env files. Do not assume local `.env` behavior matches VPS behavior unless verified.
+- Local and production runtimes both use Docker Compose. Do not document or depend on direct host `go run`, Vite dev server, or host Nginx as the normal runtime path.
 
 ## Common Failure Modes
 - Updating backend request or response shapes without updating `frontend/src/core/api.ts` and related types
@@ -95,12 +100,14 @@ Verification emphasis differs by class:
 
 ## Skills And Roles
 Primary skills:
-- [`legal-api-repo-architect`](.codex/skills/legal-api-repo-architect/SKILL.md)
-- [`legal-api-backend-feature`](.codex/skills/legal-api-backend-feature/SKILL.md)
-- [`legal-api-retrieval-answer`](.codex/skills/legal-api-retrieval-answer/SKILL.md)
-- [`legal-api-ingest-vector`](.codex/skills/legal-api-ingest-vector/SKILL.md)
-- [`legal-api-frontend-admin-chat`](.codex/skills/legal-api-frontend-admin-chat/SKILL.md)
-- [`legal-api-deploy-vps`](.codex/skills/legal-api-deploy-vps/SKILL.md)
+- [`legal-api-engineering-guardrails`](.agents/skills/legal-api-engineering-guardrails/SKILL.md)
+- [`legal-api-repo-architect`](.agents/skills/legal-api-repo-architect/SKILL.md)
+- [`legal-api-backend-feature`](.agents/skills/legal-api-backend-feature/SKILL.md)
+- [`legal-api-retrieval-answer`](.agents/skills/legal-api-retrieval-answer/SKILL.md)
+- [`legal-api-ingest-vector`](.agents/skills/legal-api-ingest-vector/SKILL.md)
+- [`legal-api-frontend-admin-chat`](.agents/skills/legal-api-frontend-admin-chat/SKILL.md)
+- [`legal-api-deploy-vps`](.agents/skills/legal-api-deploy-vps/SKILL.md)
+- [`legal-api-regression-review`](.agents/skills/legal-api-regression-review/SKILL.md)
 
 Primary roles:
 - [`repo-architect`](docs/agent-roles.md#repo-architect)
@@ -111,14 +118,20 @@ Primary roles:
 - [`deploy-agent`](docs/agent-roles.md#deploy-agent)
 - [`review-agent`](docs/agent-roles.md#review-agent)
 
+Local subagents:
+- Project-scoped custom agents live in [`.codex/agents/`](.codex/agents/).
+- These definitions are repo-local and are not synced into the global Codex runtime.
+- Available subagents: `legal-api-repo-architect`, `legal-api-backend-worker`, `legal-api-retrieval-worker`, `legal-api-ingest-vector-worker`, `legal-api-frontend-worker`, `legal-api-deploy-worker`, and `legal-api-reviewer`.
+
 ## When To Involve Another Agent Or Skill
+- Use `legal-api-engineering-guardrails` alongside the owning subsystem skill for non-trivial implementation, debugging, prototype, architecture, or handoff work.
 - Involve `legal-api-repo-architect` when the request is unclear, cross-cutting, or could land in more than one subsystem.
 - Involve `legal-api-repo-architect` first when bug versus feature classification is unclear.
 - Involve `legal-api-retrieval-answer` for search ranking, answer quality, citation behavior, prompt routing, or trace semantics.
 - Involve `legal-api-ingest-vector` for chunking, embeddings, Qdrant payloads, worker loops, vector repair, or reindex behavior.
 - Involve `legal-api-frontend-admin-chat` whenever a backend contract change affects rendered UI or user interaction flow.
 - Involve `legal-api-deploy-vps` for any change touching `install/`, server paths, nginx, SSL, or rendered production env.
-- Involve `review-agent` before sign-off on full-stack, auth, retrieval, or deploy-sensitive work.
+- Involve `legal-api-regression-review` or `review-agent` before sign-off on full-stack, auth, retrieval, ingest/vector, frontend-contract, or deploy-sensitive work.
 
 ## Definition Of Done
 - Backend task: code, tests, and command paths are coherent across API and worker if shared.

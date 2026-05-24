@@ -1,3 +1,8 @@
+---
+name: legal-api-retrieval-answer
+description: Legal API retrieval and answer workflow for search ranking, prompt routing, citations, answer streaming, runtime config, and trace behavior. Use when work affects answer quality, context assembly, prompt behavior, citation shape, or retrieval observability.
+---
+
 # legal-api-retrieval-answer
 
 ## When To Use This Skill
@@ -26,17 +31,18 @@ Fallback collaborator role: [`review-agent`](../../../docs/agent-roles.md#review
 - Citations are part of the answer contract and may be consumed by the frontend chat UI.
 
 ## Workflow
-1. Read [../../../backend/AGENTS.md](../../../backend/AGENTS.md).
-2. Identify whether the issue is:
+1. Read [../legal-api-engineering-guardrails/SKILL.md](../legal-api-engineering-guardrails/SKILL.md) and [../../../backend/AGENTS.md](../../../backend/AGENTS.md).
+2. Classify the task as `bug` or `feature`, then choose the first retrieval/answer feedback loop or vertical slice.
+3. Identify whether the issue is:
    - retrieval candidate selection
    - reranking or context assembly
    - prompt selection or tone behavior
    - answer formatting or streaming
    - citation generation or trace emission
-3. Inspect the relevant API path and core service together. Do not change one in isolation when the behavior crosses layers.
-4. Preserve or intentionally update trace and observability output when changing answer behavior.
-5. If ranking issues are actually caused by bad chunking or vector payloads, hand off to `legal-api-ingest-vector`.
-6. If response shape changes affect UI rendering, coordinate with `legal-api-frontend-admin-chat`.
+4. Inspect the relevant API path and core service together. Do not change one in isolation when the behavior crosses layers.
+5. Preserve or intentionally update trace and observability output when changing answer behavior.
+6. If ranking issues are actually caused by bad chunking or vector payloads, hand off to `legal-api-ingest-vector`.
+7. If response shape changes affect UI rendering, coordinate with `legal-api-frontend-admin-chat`.
 
 ## Required Checks Before Finishing
 - retrieval result ordering and context limits are still coherent
@@ -44,6 +50,7 @@ Fallback collaborator role: [`review-agent`](../../../docs/agent-roles.md#review
 - prompt or runtime config changes have a clear invalidation path
 - streaming and non-streaming answer paths stay aligned where required
 - trace data still matches the changed behavior
+- the selected retrieval/answer feedback loop or feature vertical slice has been run or its blocker is documented
 
 ## Common Regressions To Look For
 - changing ranking behavior without updating trace expectations

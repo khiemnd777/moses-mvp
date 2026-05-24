@@ -3,12 +3,15 @@ import {
   createAIPrompt,
   deleteAIPrompt,
   listAIPrompts,
+  testAIPrompt,
   unwrapError,
   updateAIPrompt
 } from '@/core/api';
 import type { AIPrompt } from '@/core/types';
 import Panel from '@/shared/Panel';
 import Button from '@/shared/Button';
+import Input from '@/shared/Input';
+import Select from '@/shared/Select';
 import PromptForm from './PromptForm';
 
 const emptyPrompt: Omit<AIPrompt, 'id' | 'created_at' | 'updated_at'> = {
@@ -27,6 +30,12 @@ const PromptsPage = () => {
   const [error, setError] = useState<string>();
   const [editingId, setEditingId] = useState<string>();
   const [creating, setCreating] = useState(false);
+  const [testPromptId, setTestPromptId] = useState('');
+  const [testQuery, setTestQuery] = useState('');
+  const [testTopK, setTestTopK] = useState('5');
+  const [testLoading, setTestLoading] = useState(false);
+  const [testError, setTestError] = useState<string>();
+  const [testOutput, setTestOutput] = useState<Awaited<ReturnType<typeof testAIPrompt>> | null>(null);
 
   const fetchItems = async () => {
     setLoading(true);
@@ -45,6 +54,12 @@ const PromptsPage = () => {
   }, []);
 
   const editingItem = useMemo(() => items.find((item) => item.id === editingId), [items, editingId]);
+
+  useEffect(() => {
+    if (!testPromptId && items.length) {
+      setTestPromptId(items.find((item) => item.enabled)?.id || items[0].id);
+    }
+  }, [items, testPromptId]);
 
   const handleCreate = async (payload: Omit<AIPrompt, 'id' | 'created_at' | 'updated_at'>) => {
     try {
@@ -90,6 +105,25 @@ const PromptsPage = () => {
       await fetchItems();
     } catch (err) {
       setError(unwrapError(err));
+    }
+  };
+
+  const handleRunPromptTest = async () => {
+    if (!testPromptId || !testQuery.trim()) return;
+    setTestLoading(true);
+    try {
+      const parsedTopK = Number.parseInt(testTopK, 10);
+      const data = await testAIPrompt({
+        prompt_id: testPromptId,
+        query: testQuery.trim(),
+        top_k: Number.isNaN(parsedTopK) ? 5 : Math.max(parsedTopK, 1)
+      });
+      setTestOutput(data);
+      setTestError(undefined);
+    } catch (err) {
+      setTestError(unwrapError(err));
+    } finally {
+      setTestLoading(false);
     }
   };
 
@@ -147,6 +181,37 @@ const PromptsPage = () => {
               </tbody>
             </table>
           </div>
+        </div>
+      </Panel>
+      <Panel title="Prompt Test">
+        <div className="grid">
+          {testError && <div className="badge">{testError}</div>}
+          <Select label="Prompt" value={testPromptId} onChange={(e) => setTestPromptId(e.target.value)}>
+            <option value="">Select prompt</option>
+            {items.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name} ({item.prompt_type})
+              </option>
+            ))}
+          </Select>
+          <Input label="Query" value={testQuery} onChange={(e) => setTestQuery(e.target.value)} />
+          <Input
+            label="Top K"
+            type="number"
+            min={1}
+            value={testTopK}
+            onChange={(e) => setTestTopK(e.target.value)}
+          />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button onClick={() => void handleRunPromptTest()} disabled={testLoading || !testPromptId || !testQuery.trim()}>
+              {testLoading ? 'Running...' : 'Run Test'}
+            </Button>
+          </div>
+          {testOutput && (
+            <pre className="source-item" style={{ whiteSpace: 'pre-wrap' }}>
+              {JSON.stringify(testOutput, null, 2)}
+            </pre>
+          )}
         </div>
       </Panel>
       {editingItem && (
