@@ -1,15 +1,23 @@
 package api
 
 import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/khiemnd777/legal_api/core/answer"
 	"github.com/khiemnd777/legal_api/core/guard"
@@ -18,6 +26,7 @@ import (
 	cprompt "github.com/khiemnd777/legal_api/core/prompt"
 	"github.com/khiemnd777/legal_api/core/retrieval"
 	"github.com/khiemnd777/legal_api/core/schema"
+	"github.com/khiemnd777/legal_api/core/uploadscan"
 	"github.com/khiemnd777/legal_api/domain"
 	"github.com/khiemnd777/legal_api/infra"
 	"github.com/khiemnd777/legal_api/observability"
@@ -26,18 +35,29 @@ import (
 	"github.com/google/uuid"
 )
 
+const maxDocumentUploadBytes int64 = 50 << 20
+
+var allowedDocumentUploadExtensions = map[string]struct{}{
+	".doc":  {},
+	".docx": {},
+	".pdf":  {},
+	".pptx": {},
+	".txt":  {},
+}
+
 type Handler struct {
-	Store        handlerStore
-	Storage      *infra.Storage
-	Qdrant       *infra.QdrantClient
-	Retriever    retriever
-	AnswerCli    *answer.Client
-	Tones        map[string]string
-	IngestSvc    *ingest.Service
-	Logger       *slog.Logger
-	TraceRepo    observability.TraceRepository
-	PromptRouter *cprompt.Router
-	GuardEngine  *guard.Engine
+	Store         handlerStore
+	Storage       *infra.Storage
+	Qdrant        *infra.QdrantClient
+	Retriever     retriever
+	AnswerCli     *answer.Client
+	Tones         map[string]string
+	IngestSvc     *ingest.Service
+	Logger        *slog.Logger
+	TraceRepo     observability.TraceRepository
+	PromptRouter  *cprompt.Router
+	GuardEngine   *guard.Engine
+	UploadScanner uploadscan.Scanner
 	PublicBaseURL string
 	SigningSecret string
 
@@ -94,6 +114,51 @@ type documentResponse struct {
 	UpdatedAt   time.Time               `json:"updated_at"`
 }
 
+type documentUploadResponse struct {
+	ID                string                        `json:"id"`
+	Title             string                        `json:"title"`
+	FileName          string                        `json:"file_name"`
+	ContentType       string                        `json:"content_type"`
+	FileSizeBytes     int64                         `json:"file_size_bytes"`
+	SHA256            string                        `json:"sha256"`
+	Status            string                        `json:"status"`
+	Analysis          json.RawMessage               `json:"analysis"`
+	ErrorMessage      *string                       `json:"error_message,omitempty"`
+	DocumentID        *string                       `json:"document_id,omitempty"`
+	DocumentAssetID   *string                       `json:"document_asset_id,omitempty"`
+	DocumentVersionID *string                       `json:"document_version_id,omitempty"`
+	Actions           documentAdminActions          `json:"actions,omitempty"`
+	Events            []documentUploadEventResponse `json:"events,omitempty"`
+	CreatedAt         time.Time                     `json:"created_at"`
+	UpdatedAt         time.Time                     `json:"updated_at"`
+}
+
+type documentAdminActionDescriptor struct {
+	Enabled bool   `json:"enabled"`
+	Href    string `json:"href,omitempty"`
+	Method  string `json:"method,omitempty"`
+	Label   string `json:"label,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+type documentAdminActions map[string]documentAdminActionDescriptor
+
+type documentUploadEventResponse struct {
+	ID            string          `json:"id"`
+	UploadID      *string         `json:"upload_id,omitempty"`
+	EventType     string          `json:"event_type"`
+	Stage         string          `json:"stage"`
+	Status        string          `json:"status"`
+	Message       string          `json:"message,omitempty"`
+	Evidence      json.RawMessage `json:"evidence"`
+	Actor         string          `json:"actor"`
+	FileName      string          `json:"file_name,omitempty"`
+	ContentType   string          `json:"content_type,omitempty"`
+	FileSizeBytes int64           `json:"file_size_bytes,omitempty"`
+	SHA256        string          `json:"sha256,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+}
+
 type documentAssetResponse struct {
 	FileName    string    `json:"file_name"`
 	ContentType string    `json:"content_type"`
@@ -108,6 +173,14 @@ type ingestJobResponse struct {
 	ErrorMessage      *string   `json:"error_message,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type documentUploadActionResponse struct {
+	Status         string                  `json:"status"`
+	Summary        string                  `json:"summary,omitempty"`
+	DocumentUpload *documentUploadResponse `json:"document_upload,omitempty"`
+	IngestJob      *ingestJobResponse      `json:"ingest_job,omitempty"`
+	Created        *bool                   `json:"created,omitempty"`
 }
 
 func toDocTypeResponse(d domain.DocType) (docTypeResponse, error) {
@@ -146,6 +219,115 @@ func toDocumentResponse(d domain.Document, assets []domain.DocumentAssetWithVers
 		Assets:      respAssets,
 		CreatedAt:   d.CreatedAt,
 		UpdatedAt:   d.UpdatedAt,
+	}
+}
+
+func toDocumentUploadResponse(upload domain.DocumentUpload) documentUploadResponse {
+	analysis := upload.AnalysisJSON
+	if len(analysis) == 0 {
+		analysis = []byte(`{}`)
+	}
+	events := make([]documentUploadEventResponse, 0, len(upload.Events))
+	for _, event := range upload.Events {
+		events = append(events, toDocumentUploadEventResponse(event))
+	}
+	return documentUploadResponse{
+		ID:                upload.ID,
+		Title:             upload.Title,
+		FileName:          upload.FileName,
+		ContentType:       upload.ContentType,
+		FileSizeBytes:     upload.FileSizeBytes,
+		SHA256:            upload.SHA256,
+		Status:            upload.Status,
+		Analysis:          json.RawMessage(analysis),
+		ErrorMessage:      upload.ErrorMessage,
+		DocumentID:        upload.DocumentID,
+		DocumentAssetID:   upload.DocumentAssetID,
+		DocumentVersionID: upload.DocumentVersionID,
+		Actions:           buildDocumentUploadActions(upload),
+		Events:            events,
+		CreatedAt:         upload.CreatedAt,
+		UpdatedAt:         upload.UpdatedAt,
+	}
+}
+
+func buildDocumentUploadActions(upload domain.DocumentUpload) documentAdminActions {
+	actionURL := func(name string) string {
+		return "/document-uploads/" + upload.ID + "/actions/" + name
+	}
+	canApprove := (upload.Status == "classification_low_confidence" || upload.Status == "needs_review") && upload.DocumentVersionID == nil
+	canReindex := upload.DocumentVersionID != nil && upload.Status != "indexing" && upload.Status != "extracting" && upload.Status != "archived" && upload.Status != "rejected"
+	canReject := upload.Status != "ready" && upload.Status != "published" && upload.Status != "archived" && upload.Status != "rejected"
+	canArchive := upload.Status != "archived" && upload.Status != "rejected"
+
+	actions := documentAdminActions{
+		"approve": {
+			Enabled: canApprove,
+			Href:    actionURL("approve"),
+			Method:  "POST",
+			Label:   "Duyệt & publish",
+		},
+		"reindex": {
+			Enabled: canReindex,
+			Href:    actionURL("reindex"),
+			Method:  "POST",
+			Label:   "Reindex",
+		},
+		"reject": {
+			Enabled: canReject,
+			Href:    actionURL("reject"),
+			Method:  "POST",
+			Label:   "Từ chối",
+		},
+		"archive": {
+			Enabled: canArchive,
+			Href:    actionURL("archive"),
+			Method:  "POST",
+			Label:   "Lưu trữ",
+		},
+	}
+	if !canApprove {
+		descriptor := actions["approve"]
+		descriptor.Reason = "upload must be waiting for review and must not already have a document version"
+		actions["approve"] = descriptor
+	}
+	if !canReindex {
+		descriptor := actions["reindex"]
+		descriptor.Reason = "document_version_id is required and upload must not already be indexing"
+		actions["reindex"] = descriptor
+	}
+	if !canReject {
+		descriptor := actions["reject"]
+		descriptor.Reason = "published, rejected, or archived uploads cannot be rejected"
+		actions["reject"] = descriptor
+	}
+	if !canArchive {
+		descriptor := actions["archive"]
+		descriptor.Reason = "upload is already archived or rejected"
+		actions["archive"] = descriptor
+	}
+	return actions
+}
+
+func toDocumentUploadEventResponse(event domain.DocumentUploadEvent) documentUploadEventResponse {
+	evidence := event.EvidenceJSON
+	if len(evidence) == 0 {
+		evidence = []byte(`{}`)
+	}
+	return documentUploadEventResponse{
+		ID:            event.ID,
+		UploadID:      event.UploadID,
+		EventType:     event.EventType,
+		Stage:         event.Stage,
+		Status:        event.Status,
+		Message:       event.Message,
+		Evidence:      json.RawMessage(evidence),
+		Actor:         event.Actor,
+		FileName:      event.FileName,
+		ContentType:   event.ContentType,
+		FileSizeBytes: event.FileSizeBytes,
+		SHA256:        event.SHA256,
+		CreatedAt:     event.CreatedAt,
 	}
 }
 
@@ -317,6 +499,461 @@ func (h *Handler) CreateDocument(c *fiber.Ctx) error {
 		return respondError(c, 500, "db_error", "failed to load document", err.Error())
 	}
 	return c.JSON(toDocumentResponse(doc, nil))
+}
+
+func (h *Handler) ListDocumentUploads(c *fiber.Ctx) error {
+	limit := 50
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed <= 0 {
+			return respondError(c, 400, "validation", "limit must be a positive integer", nil)
+		}
+		limit = parsed
+	}
+	items, err := h.Store.ListDocumentUploads(c.Context(), limit)
+	if err != nil {
+		return respondError(c, 500, "db_error", "failed to list document uploads", err.Error())
+	}
+	resp := make([]documentUploadResponse, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, toDocumentUploadResponse(item))
+	}
+	return c.JSON(resp)
+}
+
+func (h *Handler) UploadDocument(c *fiber.Ctx) error {
+	if h.Storage == nil {
+		return respondError(c, 500, "config_error", "document storage is not configured", nil)
+	}
+	fileHeader, err := c.FormFile("file")
+	if err != nil || fileHeader == nil {
+		return respondError(c, 400, "validation", "file is required", nil)
+	}
+	if err := validateDocumentUploadHeader(fileHeader); err != nil {
+		return respondError(c, 400, "validation", err.Error(), nil)
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return respondError(c, 400, "invalid_request", "failed to read upload", err.Error())
+	}
+	defer file.Close()
+
+	limited := io.LimitReader(file, maxDocumentUploadBytes+1)
+	content, err := io.ReadAll(limited)
+	if err != nil {
+		return respondError(c, 500, "storage_error", "failed to read upload", err.Error())
+	}
+	if int64(len(content)) > maxDocumentUploadBytes {
+		return respondError(c, 413, "file_too_large", "file exceeds upload limit", fiber.Map{"max_bytes": maxDocumentUploadBytes})
+	}
+	if len(content) == 0 {
+		return respondError(c, 400, "validation", "file must not be empty", nil)
+	}
+	if err := validateDocumentUploadContent(fileHeader.Filename, content); err != nil {
+		return respondError(c, 400, "validation", err.Error(), nil)
+	}
+
+	fileName := strings.TrimSpace(fileHeader.Filename)
+	contentType := strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	scanEvidence := documentUploadEventJSON(map[string]interface{}{
+		"pipeline_version": "rag_upload_intake_v1",
+		"file_name":        fileName,
+		"content_type":     contentType,
+		"file_size_bytes":  int64(len(content)),
+		"sha256":           hash,
+	})
+	securityStatus := "skipped"
+	securityMessage := "Malware scanner was not configured for this request"
+	if h.UploadScanner != nil {
+		err := h.UploadScanner.Scan(c.UserContext(), uploadscan.File{
+			Name:        fileName,
+			ContentType: contentType,
+			Size:        int64(len(content)),
+			Content:     content,
+		})
+		if err != nil {
+			if errors.Is(err, uploadscan.ErrMalwareDetected) {
+				h.recordDocumentUploadEvent(c.Context(), domain.DocumentUploadEventInput{
+					EventType:     "security_scan",
+					Stage:         "security",
+					Status:        "blocked",
+					Message:       "Malware scan detected unsafe content",
+					EvidenceJSON:  documentUploadEventJSON(map[string]interface{}{"pipeline_version": "rag_upload_intake_v1", "error": err.Error()}),
+					Actor:         "api",
+					FileName:      fileName,
+					ContentType:   contentType,
+					FileSizeBytes: int64(len(content)),
+					SHA256:        hash,
+				})
+				if h.Logger != nil {
+					h.Logger.Warn("document upload rejected by malware scanner", slog.String("file_name", fileName), slog.String("error", err.Error()))
+				}
+				return respondError(c, 400, "malware_detected", "upload failed malware scan", nil)
+			}
+			h.recordDocumentUploadEvent(c.Context(), domain.DocumentUploadEventInput{
+				EventType:     "security_scan",
+				Stage:         "security",
+				Status:        "unavailable",
+				Message:       "Malware scanner is unavailable",
+				EvidenceJSON:  documentUploadEventJSON(map[string]interface{}{"pipeline_version": "rag_upload_intake_v1", "error": err.Error()}),
+				Actor:         "api",
+				FileName:      fileName,
+				ContentType:   contentType,
+				FileSizeBytes: int64(len(content)),
+				SHA256:        hash,
+			})
+			if h.Logger != nil {
+				h.Logger.Error("document upload malware scan failed", slog.String("file_name", fileName), slog.String("error", err.Error()))
+			}
+			return respondError(c, 503, "malware_scan_unavailable", "malware scanner is unavailable", nil)
+		}
+		securityStatus = "done"
+		securityMessage = "Malware scan passed"
+	}
+	title := strings.TrimSpace(c.FormValue("title"))
+	if title == "" {
+		title = defaultDocumentTitle(fileName)
+	}
+	ext := strings.ToLower(filepath.Ext(fileName))
+	storagePath := filepath.Join("document_uploads", uuid.NewString()+ext)
+
+	analysisJSON, err := json.Marshal(fiber.Map{
+		"pipeline_version": "rag_upload_intake_v1",
+		"status_reason":    "awaiting_auto_classification",
+	})
+	if err != nil {
+		return respondError(c, 500, "encode_error", "failed to encode upload analysis", err.Error())
+	}
+
+	if err := h.Storage.Write(storagePath, content); err != nil {
+		return respondError(c, 500, "storage_error", "failed to store upload", err.Error())
+	}
+	upload, err := h.Store.CreateDocumentUpload(c.Context(), domain.DocumentUploadInput{
+		Title:         title,
+		FileName:      fileName,
+		ContentType:   contentType,
+		StoragePath:   storagePath,
+		FileSizeBytes: int64(len(content)),
+		SHA256:        hash,
+		Status:        "uploaded",
+		AnalysisJSON:  analysisJSON,
+		Events: []domain.DocumentUploadEventInput{
+			{
+				EventType:     "intake_received",
+				Stage:         "upload",
+				Status:        "done",
+				Message:       "File accepted into intake queue",
+				EvidenceJSON:  scanEvidence,
+				Actor:         "api",
+				FileName:      fileName,
+				ContentType:   contentType,
+				FileSizeBytes: int64(len(content)),
+				SHA256:        hash,
+			},
+			{
+				EventType:     "security_scan",
+				Stage:         "security",
+				Status:        securityStatus,
+				Message:       securityMessage,
+				EvidenceJSON:  scanEvidence,
+				Actor:         "api",
+				FileName:      fileName,
+				ContentType:   contentType,
+				FileSizeBytes: int64(len(content)),
+				SHA256:        hash,
+			},
+		},
+	})
+	if err != nil {
+		if removeErr := h.Storage.Remove(storagePath); removeErr != nil {
+			if h.Logger != nil {
+				h.Logger.Error("failed to remove orphaned document upload", slog.String("path", storagePath), slog.String("error", removeErr.Error()))
+			}
+		}
+		return respondError(c, 500, "db_error", "failed to create document upload", err.Error())
+	}
+
+	return c.Status(fiber.StatusAccepted).JSON(toDocumentUploadResponse(upload))
+}
+
+func (h *Handler) ApproveDocumentUpload(c *fiber.Ctx) error {
+	id := strings.TrimSpace(c.Params("id"))
+	if id == "" {
+		return respondError(c, 400, "validation", "upload id is required", nil)
+	}
+	var req struct {
+		DocTypeCode string `json:"doc_type_code"`
+		Reason      string `json:"reason"`
+	}
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return respondError(c, 400, "invalid_request", "invalid json", err.Error())
+		}
+	}
+	req.DocTypeCode = strings.TrimSpace(req.DocTypeCode)
+	req.Reason = strings.TrimSpace(req.Reason)
+	if req.DocTypeCode == "" {
+		return respondError(c, 400, "validation", "doc_type_code is required", nil)
+	}
+
+	upload, err := h.Store.GetDocumentUpload(c.Context(), id)
+	if err != nil {
+		return h.respondDocumentUploadActionError(c, err, "failed to load document upload")
+	}
+	if upload.Status != "classification_low_confidence" && upload.Status != "needs_review" {
+		return respondError(c, 409, "invalid_state", "upload is not waiting for review approval", fiber.Map{"status": upload.Status})
+	}
+	if upload.DocumentVersionID != nil {
+		return respondError(c, 409, "invalid_state", "upload already has a document version", fiber.Map{"document_version_id": *upload.DocumentVersionID})
+	}
+
+	docType, err := h.Store.GetDocTypeByCode(c.Context(), req.DocTypeCode)
+	if err != nil {
+		return respondError(c, 404, "not_found", "doc type not found", err.Error())
+	}
+	actor := documentUploadActionActor(c)
+	analysisJSON := mergeDocumentUploadAnalysis(upload.AnalysisJSON, map[string]interface{}{
+		"approved_at":            time.Now().UTC().Format(time.RFC3339),
+		"approved_by":            actor,
+		"approved_doc_type_code": docType.Code,
+		"approved_doc_type_name": docType.Name,
+		"review_reason":          req.Reason,
+		"status_reason":          "approved_by_operator",
+	})
+	promotion, err := h.Store.ApproveDocumentUpload(c.Context(), id, docType, analysisJSON, actor, req.Reason)
+	if err != nil {
+		return h.respondDocumentUploadActionError(c, err, "failed to approve document upload")
+	}
+	updated, err := h.Store.GetDocumentUpload(c.Context(), id)
+	if err != nil {
+		return h.respondDocumentUploadActionError(c, err, "failed to reload document upload")
+	}
+	created := true
+	return c.JSON(documentUploadActionResponse{
+		Status:         "indexing",
+		Summary:        "document upload approved and queued for indexing",
+		DocumentUpload: ptrDocumentUploadResponse(toDocumentUploadResponse(updated)),
+		IngestJob: &ingestJobResponse{
+			ID:                promotion.IngestJobID,
+			DocumentVersionID: promotion.DocumentVersionID,
+			Status:            "queued",
+		},
+		Created: &created,
+	})
+}
+
+func (h *Handler) ReindexDocumentUpload(c *fiber.Ctx) error {
+	id := strings.TrimSpace(c.Params("id"))
+	if id == "" {
+		return respondError(c, 400, "validation", "upload id is required", nil)
+	}
+	reason, err := parseDocumentUploadActionReason(c)
+	if err != nil {
+		return respondError(c, 400, "invalid_request", "invalid json", err.Error())
+	}
+	job, created, err := h.Store.ReindexDocumentUpload(c.Context(), id, documentUploadActionActor(c), reason)
+	if err != nil {
+		return h.respondDocumentUploadActionError(c, err, "failed to reindex document upload")
+	}
+	updated, err := h.Store.GetDocumentUpload(c.Context(), id)
+	if err != nil {
+		return h.respondDocumentUploadActionError(c, err, "failed to reload document upload")
+	}
+	return c.JSON(documentUploadActionResponse{
+		Status:         "indexing",
+		Summary:        "document upload reindex requested",
+		DocumentUpload: ptrDocumentUploadResponse(toDocumentUploadResponse(updated)),
+		IngestJob:      ptrIngestJobResponse(toIngestJobResponse(job)),
+		Created:        &created,
+	})
+}
+
+func (h *Handler) RejectDocumentUpload(c *fiber.Ctx) error {
+	return h.updateDocumentUploadReviewStatus(c, "rejected", "reject")
+}
+
+func (h *Handler) ArchiveDocumentUpload(c *fiber.Ctx) error {
+	return h.updateDocumentUploadReviewStatus(c, "archived", "archive")
+}
+
+func (h *Handler) updateDocumentUploadReviewStatus(c *fiber.Ctx, status, action string) error {
+	id := strings.TrimSpace(c.Params("id"))
+	if id == "" {
+		return respondError(c, 400, "validation", "upload id is required", nil)
+	}
+	reason, err := parseDocumentUploadActionReason(c)
+	if err != nil {
+		return respondError(c, 400, "invalid_request", "invalid json", err.Error())
+	}
+	upload, err := h.Store.UpdateDocumentUploadReviewStatus(c.Context(), id, status, action, documentUploadActionActor(c), reason)
+	if err != nil {
+		return h.respondDocumentUploadActionError(c, err, "failed to update document upload")
+	}
+	resp := toDocumentUploadResponse(upload)
+	return c.JSON(documentUploadActionResponse{
+		Status:         status,
+		Summary:        "document upload marked as " + status,
+		DocumentUpload: &resp,
+	})
+}
+
+func (h *Handler) respondDocumentUploadActionError(c *fiber.Ctx, err error, message string) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return respondError(c, 404, "not_found", "document upload not found", nil)
+	}
+	if errors.Is(err, infra.ErrInvalidDocumentUploadAction) {
+		return respondError(c, 409, "invalid_state", "document upload action is not valid for the current state", nil)
+	}
+	return respondError(c, 500, "db_error", message, err.Error())
+}
+
+func parseDocumentUploadActionReason(c *fiber.Ctx) (string, error) {
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if len(c.Body()) == 0 {
+		return "", nil
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(req.Reason), nil
+}
+
+func documentUploadActionActor(c *fiber.Ctx) string {
+	if actor := strings.TrimSpace(c.Get("X-Admin-Actor")); actor != "" {
+		return actor
+	}
+	if userID := currentUserID(c); userID != nil && strings.TrimSpace(*userID) != "" {
+		return *userID
+	}
+	return "operator"
+}
+
+func mergeDocumentUploadAnalysis(raw []byte, values map[string]interface{}) []byte {
+	analysis := map[string]interface{}{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &analysis)
+	}
+	for key, value := range values {
+		if value == "" {
+			continue
+		}
+		analysis[key] = value
+	}
+	return documentUploadEventJSON(analysis)
+}
+
+func ptrDocumentUploadResponse(value documentUploadResponse) *documentUploadResponse {
+	return &value
+}
+
+func ptrIngestJobResponse(value ingestJobResponse) *ingestJobResponse {
+	return &value
+}
+
+func (h *Handler) recordDocumentUploadEvent(ctx context.Context, input domain.DocumentUploadEventInput) {
+	if h.Store == nil {
+		return
+	}
+	if _, err := h.Store.CreateDocumentUploadEvent(ctx, input); err != nil && h.Logger != nil {
+		h.Logger.Error("failed to record document upload event", slog.String("stage", input.Stage), slog.String("status", input.Status), slog.String("error", err.Error()))
+	}
+}
+
+func documentUploadEventJSON(value map[string]interface{}) []byte {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return raw
+}
+
+func validateDocumentUploadHeader(fileHeader *multipart.FileHeader) error {
+	fileName := strings.TrimSpace(fileHeader.Filename)
+	if fileName == "" {
+		return errors.New("file name is required")
+	}
+	if filepath.Base(fileName) != fileName {
+		return errors.New("file name must not contain path separators")
+	}
+	ext := strings.ToLower(filepath.Ext(fileName))
+	if _, ok := allowedDocumentUploadExtensions[ext]; !ok {
+		return errors.New("unsupported file type")
+	}
+	if fileHeader.Size > maxDocumentUploadBytes {
+		return errors.New("file exceeds upload limit")
+	}
+	return nil
+}
+
+func validateDocumentUploadContent(fileName string, content []byte) error {
+	ext := strings.ToLower(filepath.Ext(fileName))
+	switch ext {
+	case ".pdf":
+		if !bytes.HasPrefix(content, []byte("%PDF-")) {
+			return errors.New("pdf upload has invalid file signature")
+		}
+	case ".docx":
+		if !zipContains(content, "word/document.xml") {
+			return errors.New("docx upload is missing word/document.xml")
+		}
+	case ".pptx":
+		if !zipContainsPrefixSuffix(content, "ppt/slides/slide", ".xml") {
+			return errors.New("pptx upload is missing slide XML")
+		}
+	case ".txt":
+		if !utf8.Valid(content) {
+			return errors.New("txt upload must be valid UTF-8")
+		}
+	case ".doc":
+		if len(content) < 8 || !bytes.Equal(content[:8], []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}) {
+			return errors.New("doc upload has invalid OLE file signature")
+		}
+	}
+	return nil
+}
+
+func zipContains(content []byte, name string) bool {
+	reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		return false
+	}
+	for _, file := range reader.File {
+		if file.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func zipContainsPrefixSuffix(content []byte, prefix, suffix string) bool {
+	reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		return false
+	}
+	for _, file := range reader.File {
+		if strings.HasPrefix(file.Name, prefix) && strings.HasSuffix(file.Name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func defaultDocumentTitle(fileName string) string {
+	base := strings.TrimSpace(filepath.Base(fileName))
+	if base == "." || base == string(filepath.Separator) || base == "" {
+		return "Untitled document"
+	}
+	ext := filepath.Ext(base)
+	title := strings.TrimSpace(strings.TrimSuffix(base, ext))
+	if title == "" {
+		return base
+	}
+	return title
 }
 
 func (h *Handler) DeleteDocument(c *fiber.Ctx) error {
@@ -612,7 +1249,7 @@ func (h *Handler) Search(c *fiber.Ctx) error {
 	req.Filters.TopK = req.TopK
 	req.Filters.Domain = legalmeta.NormalizeLegalDomain(req.Filters.Domain)
 	req.Filters.DocType = legalmeta.NormalizeDocumentType(req.Filters.DocType)
-	req.Filters.DocumentNumber = strings.TrimSpace(req.Filters.DocumentNumber)
+	req.Filters.DocumentNumber = legalmeta.NormalizeDocumentNumber(req.Filters.DocumentNumber)
 	req.Filters.ArticleNumber = strings.TrimSpace(req.Filters.ArticleNumber)
 	req.Filters.EffectiveStatus = normalizeEffectiveStatus(req.Filters.EffectiveStatus)
 

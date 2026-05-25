@@ -48,7 +48,7 @@ func normalizeAnswerRequest(req answerRequest, tones map[string]string) (string,
 
 	filters.Domain = legalmeta.NormalizeLegalDomain(filters.Domain)
 	filters.DocType = legalmeta.NormalizeDocumentType(filters.DocType)
-	filters.DocumentNumber = strings.TrimSpace(filters.DocumentNumber)
+	filters.DocumentNumber = legalmeta.NormalizeDocumentNumber(filters.DocumentNumber)
 	filters.ArticleNumber = strings.TrimSpace(filters.ArticleNumber)
 	filters.EffectiveStatus = normalizeEffectiveStatus(filters.EffectiveStatus)
 	filters.TopK = normalizeTopK(filters.TopK)
@@ -82,8 +82,8 @@ func normalizeTone(tone string, tones map[string]string) string {
 
 func normalizeEffectiveStatus(status string) string {
 	status = legalmeta.NormalizeEffectiveStatus(status)
-	if status == "archived" {
+	if status == "active" || status == "archived" {
 		return status
 	}
-	return defaultEffectiveStatus
+	return ""
 }

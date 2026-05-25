@@ -244,10 +244,61 @@ entities:
 	if year := extractYear(result.CanonicalQuery, `\b(19\d{2}|20\d{2})\b`); year > 0 {
 		result.Entities["year"] = year
 	}
+	extractLegalReferenceEntities(&result)
 	if result.LegalDomain != "" {
 		result.Filters["legal_domain"] = result.LegalDomain
 	}
 	return result
+}
+
+func extractLegalReferenceEntities(result *QueryUnderstandingResult) {
+	if result == nil {
+		return
+	}
+	normalized := result.NormalizedQuery
+	if normalized == "" {
+		normalized = normalizeQuery(result.OriginalQuery)
+	}
+	if article := extractString(normalized, `\bdieu\s+([0-9]+[a-z]?)\b`); article != "" {
+		result.Entities["article_number"] = article
+	}
+	if clause := extractString(normalized, `\bkhoan\s+([0-9]+[a-z]?)\b`); clause != "" {
+		result.Entities["clause_number"] = clause
+	}
+	if point := extractString(normalized, `\bdiem\s+([a-z])\b`); point != "" {
+		result.Entities["point_marker"] = point
+	}
+	if documentNumber := extractDocumentNumberEntity(result.OriginalQuery); documentNumber != "" {
+		result.Entities["document_number"] = documentNumber
+	}
+	if kind := inferLegalDocKind(normalized, toString(result.Entities["document_number"])); kind != "" {
+		result.Entities["legal_doc_kind"] = kind
+	}
+}
+
+func extractDocumentNumberEntity(query string) string {
+	documentNumber := extractString(query, `(?i)([0-9]{1,4}/[0-9]{4}/[0-9A-ZĐđ-]+)`)
+	documentNumber = strings.Trim(documentNumber, " \t\r\n.,;:()[]{}")
+	if documentNumber == "" {
+		return ""
+	}
+	return strings.ToUpper(documentNumber)
+}
+
+func inferLegalDocKind(normalizedQuery, documentNumber string) string {
+	documentNumber = normalizeQuery(documentNumber)
+	switch {
+	case containsPhrase(normalizedQuery, "nghi dinh") || containsPhrase(normalizedQuery, "nd") || containsPhrase(documentNumber, "nd cp"):
+		return "decree"
+	case containsPhrase(normalizedQuery, "nghi quyet") || containsPhrase(normalizedQuery, "nq") || containsPhrase(documentNumber, "nq"):
+		return "resolution"
+	case containsPhrase(normalizedQuery, "thong tu") || containsPhrase(normalizedQuery, "tt") || containsPhrase(documentNumber, "tt"):
+		return "circular"
+	case containsPhrase(normalizedQuery, "bo luat") || containsPhrase(normalizedQuery, "luat") || containsPhrase(documentNumber, "qh"):
+		return "law"
+	default:
+		return ""
+	}
 }
 
 func buildFollowUpSearchQueryWithIndex(index queryUnderstandingIndex, history []answer.ConversationMessage, currentQuery string) string {

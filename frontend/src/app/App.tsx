@@ -45,7 +45,7 @@ const App = () => {
           <Route element={<PlaygroundAuthGuard />}>
             <Route path="/playground" element={<ChatPage />} />
             <Route path="/tuning" element={<AdminLayout />}>
-              <Route index element={<Navigate to="/tuning/doc-types" replace />} />
+              <Route index element={<Navigate to="/tuning/documents" replace />} />
               <Route path="doc-types" element={<DocTypesPage />} />
               <Route path="documents" element={<DocumentsPage />} />
               <Route path="ingest-jobs" element={<IngestJobsPage />} />

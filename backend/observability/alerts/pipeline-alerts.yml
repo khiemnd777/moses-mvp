@@ -1,0 +1,101 @@
+groups:
+  - name: document-intake-pipeline
+    rules:
+      - alert: PipelineMetricsUnavailable
+        expr: pipeline_metrics_up == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: legal-api
+          component: document-intake-pipeline
+        annotations:
+          summary: "Pipeline metrics are unavailable"
+          description: "pipeline_metrics_up is 0 for 5m. Check API database connectivity and /metrics handler errors."
+
+      - alert: PipelineHealthCritical
+        expr: pipeline_health_status{severity="critical"} == 1
+        for: 5m
+        labels:
+          severity: critical
+          service: legal-api
+          component: document-intake-pipeline
+        annotations:
+          summary: "Document intake pipeline is critical"
+          description: "Pipeline health is critical. Inspect /admin/pipeline/health alerts before accepting new ingestion load."
+
+      - alert: PipelineHealthDegraded
+        expr: pipeline_health_status{severity="degraded"} == 1
+        for: 15m
+        labels:
+          severity: warning
+          service: legal-api
+          component: document-intake-pipeline
+        annotations:
+          summary: "Document intake pipeline is degraded"
+          description: "Pipeline health has been degraded for 15m. Review backlog, failed uploads, security scanner, and ingest jobs."
+
+      - alert: PipelineStaleUploads
+        expr: pipeline_stale_uploads > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: legal-api
+          component: document-intake-pipeline
+        annotations:
+          summary: "Uploads are stuck in processing"
+          description: "pipeline_stale_uploads is above 0 for 5m. Check worker processing, retry policy, and stuck upload stages."
+
+      - alert: PipelineFailedIngestJobs
+        expr: pipeline_failed_ingest_jobs > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: legal-api
+          component: document-intake-pipeline
+        annotations:
+          summary: "Ingest jobs are failing"
+          description: "pipeline_failed_ingest_jobs is above 0 for 5m. Investigate worker logs and failed document versions."
+
+      - alert: PipelineSecurityScannerUnavailable
+        expr: pipeline_security_scan_recent_count{result="unavailable"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: legal-api
+          component: document-intake-pipeline
+        annotations:
+          summary: "Security scanner is unavailable"
+          description: "Recent uploads could not complete security scanning. Keep uploads quarantined until scanner health is restored."
+
+      - alert: PipelineReviewBacklogHigh
+        expr: pipeline_review_uploads > 10
+        for: 30m
+        labels:
+          severity: warning
+          service: legal-api
+          component: document-intake-pipeline
+        annotations:
+          summary: "Pipeline review backlog is high"
+          description: "More than 10 uploads need review for 30m. Increase reviewer capacity or inspect classification validation failures."
+
+      - alert: PipelinePublishLatencyHigh
+        expr: pipeline_publish_latency_p95_seconds > 600
+        for: 15m
+        labels:
+          severity: warning
+          service: legal-api
+          component: document-intake-pipeline
+        annotations:
+          summary: "Pipeline publish latency is high"
+          description: "p95 upload-to-publish latency exceeded 10 minutes for 15m. Check extractor, embedder, Qdrant, and worker throughput."
+
+      - alert: PipelineSecurityBlockedUploads
+        expr: pipeline_security_scan_recent_count{result="blocked"} > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: legal-api
+          component: document-intake-pipeline
+        annotations:
+          summary: "Uploads were blocked by security scan"
+          description: "Security scan blocked at least one recent upload. Review the rejected file and source before allowing more uploads from the same origin."

@@ -48,7 +48,7 @@ func (s *Service) BuildConversationMessages(history []ConversationMessage, quest
 	currentPrompt := strings.TrimSpace(strings.Join([]string{
 		"Retrieved Legal Context:\n" + contextBlock,
 		"Current User Question:\n" + question,
-		"Instructions:\nAnswer in Vietnamese. Use only retrieved legal context for legal claims. Cite legal provisions explicitly from sources. If legal evidence is insufficient, refuse clearly. Follow exactly this structure: 1. Legal Issue 2. Applicable Law 3. Legal Analysis 4. Conclusion.",
+		"Instructions:\nAnswer in Vietnamese. Use only retrieved legal context for legal claims. Cite legal provisions explicitly from sources. If the retrieved context is relevant but incomplete, answer the supported part and state what extra facts or sources are still needed. Only refuse when no retrieved source supports the legal question. Follow exactly this structure: 1. Legal Issue 2. Applicable Law 3. Legal Analysis 4. Conclusion.",
 	}, "\n\n"))
 
 	msgs := []message{{Role: "system", Content: systemPrompt}}

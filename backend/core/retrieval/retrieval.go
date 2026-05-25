@@ -306,26 +306,25 @@ func (s *Service) searchWithFallback(ctx context.Context, vector []float64, limi
 		return results, []FallbackStage{{Attempt: 1, Reason: "no_filter", HitCount: len(results)}}, err
 	}
 
-	attempts := []*infra.SearchFilter{
-		filter,
-		withoutLegalDomain(filter),
-		withoutDocumentType(withoutLegalDomain(filter)),
-	}
-	reasons := []string{
-		"initial",
-		"removed_legal_domain",
-		"removed_document_type",
-	}
+	withoutDomain := withoutLegalDomain(filter)
+	withoutDomainDocType := withoutDocumentType(withoutDomain)
+	attempts := uniqueSearchAttempts([]searchFallbackAttempt{
+		{reason: "initial", filter: filter},
+		{reason: "removed_legal_domain", filter: withoutDomain},
+		{reason: "removed_document_type", filter: withoutDomainDocType},
+		{reason: "removed_effective_status", filter: withoutEffectiveStatus(withoutDomainDocType)},
+	})
 	stages := make([]FallbackStage, 0, len(attempts))
 
-	for idx, candidate := range uniqueSearchFilters(attempts) {
+	for idx, attempt := range attempts {
+		candidate := attempt.filter
 		matches, err := s.Qdrant.Search(ctx, vector, limit, candidate)
 		if err != nil {
 			return nil, stages, err
 		}
 		stage := FallbackStage{
 			Attempt:  idx + 1,
-			Reason:   reasons[min(idx, len(reasons)-1)],
+			Reason:   attempt.reason,
 			HitCount: len(matches),
 		}
 		if candidate != nil {
@@ -351,16 +350,21 @@ func (s *Service) searchWithFallback(ctx context.Context, vector []float64, limi
 	return []infra.SearchResult{}, stages, nil
 }
 
-func uniqueSearchFilters(filters []*infra.SearchFilter) []*infra.SearchFilter {
-	out := make([]*infra.SearchFilter, 0, len(filters))
+type searchFallbackAttempt struct {
+	reason string
+	filter *infra.SearchFilter
+}
+
+func uniqueSearchAttempts(attempts []searchFallbackAttempt) []searchFallbackAttempt {
+	out := make([]searchFallbackAttempt, 0, len(attempts))
 	seen := map[string]struct{}{}
-	for _, filter := range filters {
-		key := searchFilterKey(filter)
+	for _, attempt := range attempts {
+		key := searchFilterKey(attempt.filter)
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		out = append(out, filter)
+		out = append(out, attempt)
 	}
 	return out
 }
@@ -412,6 +416,19 @@ func withoutDocumentType(filter *infra.SearchFilter) *infra.SearchFilter {
 	}
 }
 
+func withoutEffectiveStatus(filter *infra.SearchFilter) *infra.SearchFilter {
+	if filter == nil {
+		return nil
+	}
+	return &infra.SearchFilter{
+		LegalDomain:     append([]string{}, filter.LegalDomain...),
+		DocumentType:    append([]string{}, filter.DocumentType...),
+		EffectiveStatus: nil,
+		DocumentNumber:  append([]string{}, filter.DocumentNumber...),
+		ArticleNumber:   append([]string{}, filter.ArticleNumber...),
+	}
+}
+
 func BuildRetrievalPlan(qu QueryUnderstandingResult, opts SearchOptions, cfg runtimeConfig) RetrievalPlan {
 	topK := opts.TopK
 	if topK <= 0 {
@@ -442,14 +459,11 @@ func BuildRetrievalPlan(qu QueryUnderstandingResult, opts SearchOptions, cfg run
 	if v := legalmeta.NormalizeEffectiveStatus(opts.EffectiveStatus); v != "" {
 		filters["effective_status"] = v
 	}
-	if v := strings.TrimSpace(opts.DocumentNumber); v != "" {
+	if v := legalmeta.NormalizeDocumentNumber(opts.DocumentNumber); v != "" {
 		filters["document_number"] = v
 	}
 	if v := strings.TrimSpace(opts.ArticleNumber); v != "" {
 		filters["article_number"] = v
-	}
-	if pickString(filters, "effective_status") == "" {
-		filters["effective_status"] = cfg.DefaultEffectiveStatus
 	}
 
 	preferred := append([]string{}, cfg.PreferredDocTypes...)
@@ -488,7 +502,7 @@ func rerankCandidates(candidates []RetrievalCandidate, qu QueryUnderstandingResu
 	for i := range candidates {
 		lexical := lexicalOverlapScore(queryTokens, tokenize(normalizeQuery(candidates[i].Chunk.Text)))
 		metaScore := metadataMatchScore(candidates[i].Metadata, plan.Filters)
-		articleScore := articleBonus(candidates[i].Metadata, qu)
+		articleScore := legalReferenceBonus(candidates[i].Metadata, candidates[i].Chunk.Text, qu)
 		finalScore := cfg.RerankWeights.Vector*candidates[i].VectorScore +
 			cfg.RerankWeights.Keyword*lexical +
 			cfg.RerankWeights.Metadata*metaScore +
@@ -688,24 +702,27 @@ func (s *Service) loadRuntimeConfig(ctx context.Context) runtimeConfig {
 
 func defaultRuntimeConfig() runtimeConfig {
 	return runtimeConfig{
-		DefaultTopK:            5,
+		DefaultTopK:            8,
 		DefaultEffectiveStatus: "active",
 		RerankEnabled:          true,
 		AdjacentChunkEnabled:   true,
 		AdjacentChunkWindow:    1,
-		MaxContextChunks:       12,
-		MaxContextChars:        12000,
+		MaxContextChunks:       16,
+		MaxContextChars:        30000,
 		CandidateMultiplier:    3,
-		PreferredDocTypes:      []string{"law", "resolution", "decree"},
+		PreferredDocTypes:      []string{"law", "resolution", "decree", "circular"},
 		DomainDefaults: map[string]domainRuntimeDefault{
-			"marriage_family": {TopK: 6, PreferredDocTypes: []string{"law", "resolution"}},
-			"criminal_law":    {TopK: 8, PreferredDocTypes: []string{"law", "decree"}},
+			"marriage_family": {TopK: 10, PreferredDocTypes: []string{"law", "resolution", "decree"}},
+			"civil":           {TopK: 10, PreferredDocTypes: []string{"law", "decree", "circular"}},
+			"land":            {TopK: 10, PreferredDocTypes: []string{"law", "decree", "circular"}},
+			"labor":           {TopK: 10, PreferredDocTypes: []string{"law", "decree", "circular"}},
+			"criminal_law":    {TopK: 10, PreferredDocTypes: []string{"law", "resolution", "decree"}},
 		},
 		RerankWeights: rerankWeights{
-			Vector:   0.55,
-			Keyword:  0.25,
+			Vector:   0.45,
+			Keyword:  0.30,
 			Metadata: 0.15,
-			Article:  0.05,
+			Article:  0.10,
 		},
 	}
 }
@@ -788,20 +805,79 @@ func metadataMatchScore(meta map[string]interface{}, filters map[string]interfac
 	return matches / total
 }
 
-func articleBonus(meta map[string]interface{}, qu QueryUnderstandingResult) float64 {
-	article := pickString(meta, "article_number", "article", "dieu")
-	if article == "" {
-		return 0
-	}
-	if v, ok := qu.Entities["article_number"]; ok {
-		if strings.EqualFold(strings.TrimSpace(article), strings.TrimSpace(toString(v))) {
-			return 1
+func legalReferenceBonus(meta map[string]interface{}, text string, qu QueryUnderstandingResult) float64 {
+	normalizedText := normalizeQuery(text)
+	score := 0.0
+	if docNumber := entityString(qu, "document_number"); docNumber != "" {
+		metaDocNumber := pickString(meta, "document_number", "number", "doc_number", "doc_code")
+		switch {
+		case sameLegalReference(metaDocNumber, docNumber):
+			score += 1.5
+		case containsPhrase(normalizedText, normalizeQuery(docNumber)):
+			score += 1.0
 		}
 	}
-	if strings.Contains(qu.NormalizedQuery, "dieu "+strings.TrimSpace(article)) {
-		return 1
+	if article := entityString(qu, "article_number"); article != "" {
+		metaArticle := pickString(meta, "article_number", "article", "dieu")
+		switch {
+		case sameSimpleReference(metaArticle, article):
+			score += 1.25
+		case containsPhrase(normalizedText, "dieu "+strings.TrimSpace(strings.ToLower(article))):
+			score += 0.9
+		}
 	}
-	return 0
+	if clause := entityString(qu, "clause_number"); clause != "" {
+		metaClause := pickString(meta, "clause_number", "clause", "khoan")
+		switch {
+		case sameSimpleReference(metaClause, clause):
+			score += 0.9
+		case containsPhrase(normalizedText, "khoan "+strings.TrimSpace(strings.ToLower(clause))):
+			score += 0.65
+		}
+	}
+	if point := entityString(qu, "point_marker"); point != "" {
+		metaPoint := pickString(meta, "point_marker", "point", "diem")
+		switch {
+		case sameSimpleReference(metaPoint, point):
+			score += 0.6
+		case containsPhrase(normalizedText, "diem "+strings.TrimSpace(strings.ToLower(point))):
+			score += 0.4
+		}
+	}
+	if kind := entityString(qu, "legal_doc_kind"); kind != "" {
+		metaKind := legalmeta.NormalizeDocumentType(pickString(meta, "legal_doc_kind", "document_type", "doc_type"))
+		if metaKind == strings.TrimSpace(strings.ToLower(kind)) {
+			score += 0.35
+		}
+	}
+	return score
+}
+
+func entityString(qu QueryUnderstandingResult, key string) string {
+	if qu.Entities == nil {
+		return ""
+	}
+	return strings.TrimSpace(toString(qu.Entities[key]))
+}
+
+func sameSimpleReference(actual, expected string) bool {
+	actual = strings.TrimSpace(strings.ToLower(actual))
+	expected = strings.TrimSpace(strings.ToLower(expected))
+	return actual != "" && expected != "" && actual == expected
+}
+
+func sameLegalReference(actual, expected string) bool {
+	actual = normalizeReferenceID(actual)
+	expected = normalizeReferenceID(expected)
+	return actual != "" && expected != "" && actual == expected
+}
+
+func normalizeReferenceID(value string) string {
+	normalized := normalizeQuery(value)
+	if normalized == "" {
+		return ""
+	}
+	return strings.ReplaceAll(normalized, " ", "")
 }
 
 func lexicalOverlapScore(queryTokens, textTokens map[string]struct{}) float64 {

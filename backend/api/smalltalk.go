@@ -9,18 +9,29 @@ import (
 
 const (
 	smallTalkPromptType  = "smalltalk"
-	defaultGreetingReply = "Chào bạn! Nếu bạn có câu hỏi pháp lý cụ thể, vui lòng gửi tình huống hoặc điều khoản cần tra cứu."
+	defaultGreetingReply = "Chào bạn, mình có thể giúp tra cứu văn bản, tóm tắt căn cứ và phân tích tình huống pháp lý Việt Nam dựa trên tài liệu đã ingest. Bạn cứ mô tả vụ việc hoặc hỏi văn bản cần kiểm tra."
 )
 
 var (
 	smallTalkExactPhrases = map[string]struct{}{
-		"xin chao": {},
-		"chao":     {},
-		"chao ban": {},
-		"hello":    {},
-		"hi":       {},
-		"hey":      {},
-		"alo":      {},
+		"xin chao":                {},
+		"chao":                    {},
+		"chao ban":                {},
+		"hello":                   {},
+		"hi":                      {},
+		"hey":                     {},
+		"alo":                     {},
+		"help":                    {},
+		"giup toi voi":            {},
+		"ban lam duoc gi":         {},
+		"ban co the lam gi":       {},
+		"ban giup duoc gi":        {},
+		"huong dan su dung":       {},
+		"bat dau nhu the nao":     {},
+		"toi nen bat dau tu dau":  {},
+		"toi can tu van phap ly":  {},
+		"toi muon tu van phap ly": {},
+		"can tu van phap ly":      {},
 	}
 	smallTalkAllowedTokens = map[string]struct{}{
 		"xin": {}, "chao": {}, "ban": {}, "anh": {}, "chi": {}, "em": {}, "ad": {}, "admin": {},
@@ -34,19 +45,25 @@ func (h *Handler) detectSmallTalkDecision(ctx context.Context, content string) (
 	if normalized == "" {
 		return guardDecision{}, false, normalized
 	}
+	if _, ok := smallTalkExactPhrases[normalized]; ok {
+		return h.smallTalkDecision(ctx), true, normalized
+	}
 	if len(analysis.MatchedDocTypes) > 0 || analysis.LegalDomain != "" || analysis.Intent != "" && analysis.Intent != "legal_basis_lookup" || h.Retriever.HasLegalSignal(ctx, content) {
 		return guardDecision{}, false, normalized
 	}
-	if _, ok := smallTalkExactPhrases[normalized]; ok {
-		return smallTalkDecision(defaultGreetingReply), true, normalized
-	}
 	if isGreetingTokenSequence(normalized) {
-		return smallTalkDecision(defaultGreetingReply), true, normalized
+		return h.smallTalkDecision(ctx), true, normalized
 	}
 	return guardDecision{}, false, normalized
 }
 
-func smallTalkDecision(message string) guardDecision {
+func (h *Handler) smallTalkDecision(ctx context.Context) guardDecision {
+	message := defaultGreetingReply
+	if h != nil {
+		if promptCfg, _, found, err := h.getRuntimePromptExact(ctx, smallTalkPromptType); err == nil && found {
+			message = sanitizeGuardMessage(promptCfg.SystemPrompt, defaultGreetingReply)
+		}
+	}
 	return guardDecision{
 		Decision:   guard.Decision("SMALLTALK"),
 		PromptType: smallTalkPromptType,

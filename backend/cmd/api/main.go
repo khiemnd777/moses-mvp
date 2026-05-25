@@ -13,6 +13,7 @@ import (
 	"github.com/khiemnd777/legal_api/core/answer"
 	"github.com/khiemnd777/legal_api/core/embedding"
 	"github.com/khiemnd777/legal_api/core/ingest"
+	"github.com/khiemnd777/legal_api/core/uploadscan"
 	"github.com/khiemnd777/legal_api/infra"
 	"github.com/khiemnd777/legal_api/internal/auth"
 	envconfig "github.com/khiemnd777/legal_api/internal/config"
@@ -120,6 +121,17 @@ func main() {
 		TokenTTL:        15 * time.Minute,
 		RefreshTokenTTL: 7 * 24 * time.Hour,
 	})
+	uploadScanner, err := uploadscan.New(uploadscan.Config{
+		Mode:        cfg.UploadAV.ScanMode,
+		ClamDAddr:   cfg.UploadAV.ClamDAddr,
+		ScanTimeout: cfg.UploadAV.ScanTimeout,
+		FailClosed:  cfg.UploadAV.FailClosed,
+	}, logger)
+	if err != nil {
+		logger.Error("failed to configure upload malware scanner", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	logger.Info("upload malware scanner configured", slog.String("mode", cfg.UploadAV.ScanMode), slog.Bool("fail_closed", cfg.UploadAV.FailClosed))
 	if err := auth.BootstrapAdmin(context.Background(), store, envCfg.AdminBootstrapPassword, logger); err != nil {
 		logger.Error("failed to bootstrap admin user", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -139,6 +151,7 @@ func main() {
 		api.ServerOptions{
 			PublicBaseURL: envCfg.PublicBaseURL,
 			SigningSecret: envCfg.JWTSecret,
+			UploadScanner: uploadScanner,
 		},
 	)
 	addr := fmt.Sprintf("%s:%s", cfg.Server.Host, envCfg.ServerPort)

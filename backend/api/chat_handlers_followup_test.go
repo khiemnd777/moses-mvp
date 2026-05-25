@@ -16,6 +16,7 @@ import (
 type followupStore struct {
 	*fakeStore
 	messagesByConversation map[string][]domain.Message
+	enabledPrompts         []domain.AIPrompt
 }
 
 func (s *followupStore) ListMessagesByConversation(ctx context.Context, conversationID string) ([]domain.Message, error) {
@@ -23,6 +24,13 @@ func (s *followupStore) ListMessagesByConversation(ctx context.Context, conversa
 		return nil, nil
 	}
 	return append([]domain.Message{}, s.messagesByConversation[conversationID]...), nil
+}
+
+func (s *followupStore) ListEnabledAIPrompts(ctx context.Context) ([]domain.AIPrompt, error) {
+	if s.enabledPrompts != nil {
+		return append([]domain.AIPrompt{}, s.enabledPrompts...), nil
+	}
+	return s.fakeStore.ListEnabledAIPrompts(ctx)
 }
 
 type queryCapturingRetriever struct {
@@ -206,6 +214,77 @@ func TestPrepareChatResponseSkipsRetrievalForGreeting(t *testing.T) {
 	}
 }
 
+func TestPrepareChatResponseUsesRuntimeSmalltalkPrompt(t *testing.T) {
+	runtimeGreeting := "Chào bạn, mình có thể giúp tra cứu nguồn pháp lý đã ingest. Bạn cứ gửi tình huống hoặc văn bản cần kiểm tra."
+	store := &followupStore{
+		fakeStore: &fakeStore{},
+		enabledPrompts: []domain.AIPrompt{
+			{
+				Name:         "production_smalltalk_vi",
+				PromptType:   smallTalkPromptType,
+				SystemPrompt: runtimeGreeting,
+				Temperature:  0.2,
+				MaxTokens:    160,
+				Retry:        0,
+				Enabled:      true,
+				UpdatedAt:    time.Now(),
+			},
+		},
+	}
+	retriever := &queryCapturingRetriever{
+		results: []retrieval.Result{
+			{ChunkID: "chunk-1", Text: "unexpected", VersionID: "version-1", Score: 0.99},
+		},
+	}
+	handler := NewHandler(
+		store,
+		nil,
+		nil,
+		retriever,
+		answer.NewClient("test-key", "gpt-test"),
+		map[string]string{"default": "Tra loi bang tieng Viet."},
+		nil,
+		logging.New(),
+		newMemoryTraceRepo(),
+	)
+
+	traceSvc, err := observability.NewTraceService(context.Background(), newMemoryTraceRepo(), logging.New(), "trace-smalltalk", "answer", "Bạn làm được gì?")
+	if err != nil {
+		t.Fatalf("NewTraceService() error = %v", err)
+	}
+
+	_, _, decision, _, _, _, err := handler.prepareChatResponse(
+		context.Background(),
+		"convo-smalltalk",
+		"Bạn làm được gì?",
+		ChatFilters{Tone: "default", TopK: 5},
+		runtimeAnswerConfig{
+			Policy: domain.AIGuardPolicy{
+				Enabled:            true,
+				MinRetrievedChunks: 1,
+				MinSimilarityScore: 0,
+				OnEmptyRetrieval:   "refuse",
+				OnLowConfidence:    "refuse",
+			},
+			Tone: "Tra loi bang tieng Viet.",
+		},
+		traceSvc,
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("prepareChatResponse() error = %v", err)
+	}
+	if decision.Allow() {
+		t.Fatalf("expected smalltalk to bypass legal answer flow")
+	}
+	if decision.Message != runtimeGreeting {
+		t.Fatalf("expected runtime greeting %q, got %q", runtimeGreeting, decision.Message)
+	}
+	if retriever.calls != 0 {
+		t.Fatalf("expected retriever not to be called, got %d", retriever.calls)
+	}
+}
+
 func TestRunChatTurnReturnsNoCitationsForGreeting(t *testing.T) {
 	store := &followupStore{fakeStore: &fakeStore{}}
 	retriever := &queryCapturingRetriever{}
@@ -231,7 +310,7 @@ func TestRunChatTurnReturnsNoCitationsForGreeting(t *testing.T) {
 	if got := string(result.AssistantMessage.CitationsJSON); got != "[]" {
 		t.Fatalf("expected empty citations json, got %q", got)
 	}
-	if !strings.Contains(result.AssistantMessage.Content, "Chào bạn!") {
+	if !strings.Contains(result.AssistantMessage.Content, "Chào bạn") {
 		t.Fatalf("expected greeting response, got %q", result.AssistantMessage.Content)
 	}
 }

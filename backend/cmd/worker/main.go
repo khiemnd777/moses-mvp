@@ -131,9 +131,29 @@ func main() {
 		if recovered > 0 {
 			logger.Info("stale_ingest_jobs_reset", slog.Int64("job_count", recovered))
 		}
+		recoveredUploads, err := store.ResetStaleDocumentUploads(rootCtx, time.Now().Add(-processingTimeout))
+		if err != nil {
+			logger.Error("failed to reset stale document uploads", slog.String("error", err.Error()))
+			if !sleepOrDone(rootCtx, pollInterval) {
+				break
+			}
+			continue
+		}
+		if recoveredUploads > 0 {
+			logger.Info("stale_document_uploads_reset", slog.Int64("upload_count", recoveredUploads))
+		}
 
 		if err := requeueFailedJobs(rootCtx, logger, store, retryScanLimit, maxAttempts); err != nil {
 			logger.Error("failed to requeue failed jobs", slog.String("error", err.Error()))
+			if !sleepOrDone(rootCtx, pollInterval) {
+				break
+			}
+			continue
+		}
+
+		processedUpload, err := processNextDocumentUpload(rootCtx, logger, store, storage)
+		if err != nil {
+			logger.Error("failed to process document upload", slog.String("error", err.Error()))
 			if !sleepOrDone(rootCtx, pollInterval) {
 				break
 			}
@@ -149,6 +169,9 @@ func main() {
 			continue
 		}
 		if !claimed {
+			if processedUpload {
+				continue
+			}
 			if !sleepOrDone(rootCtx, pollInterval) {
 				break
 			}

@@ -17,3 +17,13 @@ Use this checklist for pre-Phase-3 sign-off.
 - [ ] Operational runbook reviewed by on-call.
 - [ ] Audit logs for admin operations are usable (operation, actor, route, result).
 - [ ] Endpoint and integration tests pass in CI (`go test ./...`).
+
+## Production RAG Gate Addendum
+
+- [ ] OpenAI key rotated if any committed or shared key was exposed.
+- [ ] `install/backend/install.sh` rejects placeholder `OPENAI_API_KEY` before rendering production `backend/.env`.
+- [ ] `install/backend/verify_rag.sh` passes on the VPS after deploy and reindex.
+- [ ] Payload indexes verified for `legal_domain`, `document_type`, `effective_status`, `document_number`, `article_number`, `issuing_authority`, and `signed_year`.
+- [ ] Sample `search_debug` query returns chunk-backed hits with routing payload metadata.
+- [ ] Upload proxy limit (`CLIENT_MAX_BODY_SIZE`) is explicitly reviewed. Backend MIME/type enforcement is not a deploy-time control today.
+- [ ] Rollout/rollback checklist reviewed in `backend/docs/production/rag-production-rollout-runbook.md`.

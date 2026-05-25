@@ -13,6 +13,7 @@ import (
 	"github.com/khiemnd777/legal_api/core/embedding"
 	"github.com/khiemnd777/legal_api/core/ingest"
 	"github.com/khiemnd777/legal_api/core/retrieval"
+	"github.com/khiemnd777/legal_api/core/uploadscan"
 	"github.com/khiemnd777/legal_api/infra"
 	"github.com/khiemnd777/legal_api/internal/auth"
 	"github.com/khiemnd777/legal_api/observability"
@@ -36,11 +37,13 @@ type Server struct {
 	AuthService *auth.Service
 	Options     ServerOptions
 	Telegram    *TelegramManager
+	UploadScan  uploadscan.Scanner
 }
 
 type ServerOptions struct {
 	PublicBaseURL string
 	SigningSecret string
+	UploadScanner uploadscan.Scanner
 }
 
 func NewServer(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, authService *auth.Service, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config) *Server {
@@ -52,7 +55,7 @@ func NewServerWithCORS(store *infra.Store, storage *infra.Storage, embedder *emb
 }
 
 func NewServerWithCORSAndOptions(store *infra.Store, storage *infra.Storage, embedder *embedding.Client, qdrant *infra.QdrantClient, ans *answer.Client, authService *auth.Service, tones map[string]string, logger *slog.Logger, ingestCfg ingest.Config, allowedOrigins []string, opts ServerOptions) *Server {
-	app := fiber.New()
+	app := fiber.New(fiber.Config{BodyLimit: int(maxDocumentUploadBytes)})
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     strings.Join(allowedOrigins, ","),
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
@@ -76,6 +79,7 @@ func NewServerWithCORSAndOptions(store *infra.Store, storage *infra.Storage, emb
 		TraceRepo:   observability.NewSQLTraceRepository(store.DB),
 		AuthService: authService,
 		Options:     opts,
+		UploadScan:  opts.UploadScanner,
 	}
 }
 
@@ -83,6 +87,7 @@ func (s *Server) RegisterRoutes() {
 	h := NewHandler(s.Store, s.Storage, s.Qdrant, s.Retriever, s.Answer, s.Tones, s.Ingest, s.Logger, s.TraceRepo)
 	h.PublicBaseURL = s.Options.PublicBaseURL
 	h.SigningSecret = s.Options.SigningSecret
+	h.UploadScanner = s.UploadScan
 	traceMiddleware := answerTraceMiddleware(s.Logger)
 	authMiddleware := auth.RequireAuth(s.AuthService.JWTManager(), s.Store)
 	authHandlers := auth.NewHandlers(s.AuthService, auth.NewLoginRateLimiter(5, time.Minute))
@@ -96,7 +101,7 @@ func (s *Server) RegisterRoutes() {
 	s.App.Post("/chat", traceMiddleware, h.Answer)
 	s.App.Post("/search", h.Search)
 	s.App.Get("/health", s.Health)
-	s.App.Get("/metrics", observability.MetricsHandler)
+	s.App.Get("/metrics", h.Metrics)
 	s.App.Post("/answer", traceMiddleware, h.Answer)
 	s.App.Post("/answer/stream", traceMiddleware, h.AnswerStream)
 	s.App.Get("/public/citations/:token", h.GetPublicCitation)
@@ -111,6 +116,12 @@ func (s *Server) RegisterRoutes() {
 	protectedGroup.Put("/doc-types/:id/form", h.UpdateDocTypeForm)
 	protectedGroup.Delete("/doc-types/:id", h.DeleteDocType)
 	protectedGroup.Post("/doc-types/query-debug", h.DebugDocTypeQuery)
+	protectedGroup.Get("/document-uploads", h.ListDocumentUploads)
+	protectedGroup.Post("/document-uploads", h.UploadDocument)
+	protectedGroup.Post("/document-uploads/:id/actions/approve", h.ApproveDocumentUpload)
+	protectedGroup.Post("/document-uploads/:id/actions/reindex", h.ReindexDocumentUpload)
+	protectedGroup.Post("/document-uploads/:id/actions/reject", h.RejectDocumentUpload)
+	protectedGroup.Post("/document-uploads/:id/actions/archive", h.ArchiveDocumentUpload)
 	protectedGroup.Get("/documents", h.ListDocuments)
 	protectedGroup.Post("/documents", h.CreateDocument)
 	protectedGroup.Delete("/documents/:id", h.DeleteDocument)
@@ -152,6 +163,7 @@ func (s *Server) RegisterRoutes() {
 	telegramManager := NewTelegramManager(telegramRepo, h, s.Logger)
 	s.Telegram = telegramManager
 	telegramHandler := adminapi.NewTelegramBotHandler(telegramSvc, telegramManager)
+	adminGroup.Get("/pipeline/health", h.GetPipelineHealth)
 	adminapi.RegisterRoutes(adminGroup, guardHandler, promptHandler, retrievalConfigHandler, answerTraceHandler, qdrantHandler, telegramHandler)
 }
 

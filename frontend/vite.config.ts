@@ -7,6 +7,7 @@ const apiProxyPaths = [
   '/auth/',
   '/admin/',
   '/documents',
+  '/document-uploads',
   '/document-versions/',
   '/doc-types',
   '/ingest-jobs',

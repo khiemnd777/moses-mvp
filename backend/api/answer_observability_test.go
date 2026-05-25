@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -55,7 +56,28 @@ func (f *fakeStore) GetDocument(ctx context.Context, id string) (domain.Document
 	return domain.Document{}, nil
 }
 func (f *fakeStore) ListDocuments(ctx context.Context) ([]domain.Document, error) { return nil, nil }
-func (f *fakeStore) DeleteDocument(ctx context.Context, id string) (bool, error)  { return false, nil }
+func (f *fakeStore) CreateDocumentUpload(ctx context.Context, input domain.DocumentUploadInput) (domain.DocumentUpload, error) {
+	return domain.DocumentUpload{}, nil
+}
+func (f *fakeStore) CreateDocumentUploadEvent(ctx context.Context, input domain.DocumentUploadEventInput) (domain.DocumentUploadEvent, error) {
+	return domain.DocumentUploadEvent{}, nil
+}
+func (f *fakeStore) GetDocumentUpload(ctx context.Context, id string) (domain.DocumentUpload, error) {
+	return domain.DocumentUpload{}, nil
+}
+func (f *fakeStore) ListDocumentUploads(ctx context.Context, limit int) ([]domain.DocumentUpload, error) {
+	return nil, nil
+}
+func (f *fakeStore) ApproveDocumentUpload(ctx context.Context, id string, docType domain.DocType, analysisJSON []byte, actor, reason string) (domain.DocumentUploadPromotion, error) {
+	return domain.DocumentUploadPromotion{}, nil
+}
+func (f *fakeStore) ReindexDocumentUpload(ctx context.Context, id, actor, reason string) (domain.IngestJob, bool, error) {
+	return domain.IngestJob{}, false, nil
+}
+func (f *fakeStore) UpdateDocumentUploadReviewStatus(ctx context.Context, id, status, action, actor, reason string) (domain.DocumentUpload, error) {
+	return domain.DocumentUpload{}, nil
+}
+func (f *fakeStore) DeleteDocument(ctx context.Context, id string) (bool, error) { return false, nil }
 func (f *fakeStore) ListDocumentVersionIDsByDocument(ctx context.Context, documentID string) ([]string, error) {
 	return nil, nil
 }
@@ -491,6 +513,44 @@ func TestValidateGeneratedLegalAnswerPreservesParaphrasedTerminalMessages(t *tes
 	}
 }
 
+func TestValidateGeneratedLegalAnswerDoesNotTreatStructuredAnswerAsTerminalClarification(t *testing.T) {
+	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
+	sources := []answer.Source{
+		{
+			Text: "Điều 54. Hòa giải tại Tòa án.",
+			Citation: answer.Citation{
+				ID:            "citation-54",
+				ChunkID:       "chunk-54",
+				DocumentTitle: "Luật Hôn nhân và gia đình 2014",
+				LawName:       "Luật Hôn nhân và gia đình 2014",
+				DocumentType:  "LUẬT",
+				Article:       "54",
+			},
+		},
+	}
+
+	answerText := "1. Vấn đề pháp lý\nXác định bước xử lý khi yêu cầu ly hôn.\n\n" +
+		"2. Áp dụng pháp luật\nLuật Hôn nhân và gia đình 2014: Điều 54.\n\n" +
+		"3. Phân tích pháp lý\nĐiều 54 yêu cầu Tòa án tiến hành hòa giải sau khi thụ lý đơn yêu cầu ly hôn.\n\n" +
+		"4. Kết luận\nCó căn cứ áp dụng Điều 54. Vui lòng cung cấp thêm thông tin về việc thuận tình hay đơn phương để kiểm tra bước tiếp theo."
+	got, citations, valid, err := handler.validateGeneratedLegalAnswer(context.Background(), answerText, sources)
+	if err != nil {
+		t.Fatalf("validate legal answer: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected structured answer to be valid, got %q", got)
+	}
+	if got != answerText {
+		t.Fatalf("expected answer to be preserved, got %q", got)
+	}
+	if len(citations) != 1 {
+		t.Fatalf("expected supporting citation, got %#v", citations)
+	}
+	if citations[0].Article != "54" {
+		t.Fatalf("expected citation article 54, got %q", citations[0].Article)
+	}
+}
+
 func TestValidateGeneratedLegalAnswerReturnsOnlySupportingCitations(t *testing.T) {
 	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
 	sources := []answer.Source{
@@ -622,6 +682,190 @@ func TestValidateGeneratedLegalAnswerSuppressesCitationsForNegativeFinding(t *te
 	}
 	if len(citations) != 0 {
 		t.Fatalf("expected no citations for negative finding answer, got %d", len(citations))
+	}
+}
+
+func TestValidateGeneratedLegalAnswerHandlesUnsupportedLegalReferencesByMode(t *testing.T) {
+	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
+	sources := []answer.Source{
+		{
+			Text: "Điều 54. Hòa giải tại Tòa án.",
+			Citation: answer.Citation{
+				ID:            "citation-54",
+				ChunkID:       "chunk-54",
+				DocumentTitle: "Luật Hôn nhân và gia đình 2014",
+				LawName:       "Luật Hôn nhân và gia đình 2014",
+				DocumentType:  "LUẬT",
+				Article:       "54",
+			},
+		},
+		{
+			Text: "Điều 6. Giá trị pháp lý của Giấy khai sinh theo Nghị định 123/2015/NĐ-CP.",
+			Citation: answer.Citation{
+				ID:             "citation-6",
+				ChunkID:        "chunk-6",
+				DocumentTitle:  "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				LawName:        "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				DocumentNumber: "123/2015/NĐ-CP",
+				DocumentType:   "NGHỊ ĐỊNH",
+				Article:        "6",
+			},
+		},
+	}
+	cases := []struct {
+		name string
+		text string
+	}{
+		{
+			name: "unsupported article",
+			text: "1. Vấn đề pháp lý\nXác định căn cứ hộ tịch.\n\n2. Áp dụng pháp luật\nNghị định 123/2015/NĐ-CP: Điều 999.\n\n3. Phân tích pháp lý\nĐiều 999 Nghị định 123/2015/NĐ-CP điều chỉnh vấn đề này.\n\n4. Kết luận\nÁp dụng Điều 999.",
+		},
+		{
+			name: "unsupported document",
+			text: "1. Vấn đề pháp lý\nXác định quyền, nghĩa vụ sau ly hôn.\n\n2. Áp dụng pháp luật\nNghị định 999/2020/NĐ-CP: Điều 54.\n\n3. Phân tích pháp lý\nĐiều 54 Nghị định 999/2020/NĐ-CP điều chỉnh vấn đề này.\n\n4. Kết luận\nÁp dụng Điều 54.",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, citations, valid, err := handler.validateGeneratedLegalAnswer(context.Background(), tt.text, sources)
+			if err != nil {
+				t.Fatalf("validate non-stream: %v", err)
+			}
+			if valid {
+				t.Fatalf("expected non-stream answer to be invalid")
+			}
+			if got == tt.text {
+				t.Fatalf("expected non-stream answer to be replaced")
+			}
+			if len(citations) != 0 {
+				t.Fatalf("expected no non-stream citations, got %d", len(citations))
+			}
+
+			streamGot, streamCitations, streamValid, err := handler.validateGeneratedLegalAnswerForStream(context.Background(), tt.text, sources)
+			if err != nil {
+				t.Fatalf("validate stream: %v", err)
+			}
+			if streamValid {
+				t.Fatalf("expected stream answer to be invalid")
+			}
+			if streamGot != tt.text {
+				t.Fatalf("expected stream answer to be preserved, got %q", streamGot)
+			}
+			if len(streamCitations) != 0 {
+				t.Fatalf("expected no stream citations, got %d", len(streamCitations))
+			}
+		})
+	}
+}
+
+func TestValidateGeneratedLegalAnswerAcceptsSupportedNoDiacriticDocumentNumber(t *testing.T) {
+	handler := newTestHandler("http://example.invalid", newMemoryTraceRepo())
+	sources := []answer.Source{
+		{
+			Text: "Điều 6. Giá trị pháp lý của Giấy khai sinh theo Nghị định 123/2015/NĐ-CP.",
+			Citation: answer.Citation{
+				ID:             "citation-6",
+				ChunkID:        "chunk-6",
+				DocumentTitle:  "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				LawName:        "Nghị định số 123/2015/NĐ-CP ngày 15 tháng 11 năm 2015 quy định chi tiết một số điều và biện pháp thi hành Luật Hộ tịch",
+				DocumentNumber: "123/2015/NĐ-CP",
+				DocumentType:   "NGHỊ ĐỊNH",
+				Article:        "6",
+			},
+		},
+	}
+
+	answerText := "1. Vấn đề pháp lý\nXác định giá trị pháp lý giấy khai sinh.\n\n2. Áp dụng pháp luật\nNghị định 123/2015/ND-CP: Điều 6.\n\n3. Phân tích pháp lý\nĐiều 6 Nghị định 123/2015/ND-CP quy định về giá trị pháp lý của Giấy khai sinh.\n\n4. Kết luận\nÁp dụng Điều 6 Nghị định 123/2015/ND-CP."
+	got, citations, valid, err := handler.validateGeneratedLegalAnswer(context.Background(), answerText, sources)
+	if err != nil {
+		t.Fatalf("validate legal answer: %v", err)
+	}
+	if !valid {
+		t.Fatalf("expected answer to be valid")
+	}
+	if got != answerText {
+		t.Fatalf("expected answer to be preserved, got %q", got)
+	}
+	if len(citations) != 1 {
+		t.Fatalf("expected exactly 1 supporting citation, got %d", len(citations))
+	}
+	if citations[0].DocumentNumber != "123/2015/NĐ-CP" || citations[0].Article != "6" {
+		t.Fatalf("unexpected citation: %#v", citations[0])
+	}
+}
+
+func TestStreamMessagePreservesStreamedContentOnUnsupportedReference(t *testing.T) {
+	streamed := "1. Vấn đề pháp lý\nXác định quyền, nghĩa vụ sau ly hôn.\n\n" +
+		"2. Áp dụng pháp luật\nNghị định 999/2020/NĐ-CP: Điều 54.\n\n" +
+		"3. Phân tích pháp lý\nĐiều 54 Nghị định 999/2020/NĐ-CP điều chỉnh vấn đề này.\n\n" +
+		"4. Kết luận\nÁp dụng Điều 54."
+	openAIServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":" + strconv.Quote(streamed) + "}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer openAIServer.Close()
+
+	store := &fakeStore{}
+	traceRepo := newMemoryTraceRepo()
+	client := answer.NewClient("test-key", "gpt-test")
+	client.BaseURL = openAIServer.URL
+	handler := NewHandler(
+		store,
+		nil,
+		nil,
+		&fakeRetriever{results: []retrieval.Result{{
+			ChunkID:    "chunk-54",
+			Text:       "Điều 54. Hòa giải tại Tòa án.",
+			VersionID:  "version-1",
+			ChunkIndex: 1,
+			Score:      0.99,
+			Metadata: map[string]interface{}{
+				"document_title": "Luật Hôn nhân và gia đình 2014",
+				"article":        "54",
+				"document_type":  "law",
+			},
+		}}},
+		client,
+		map[string]string{"default": "Tra loi bang tieng Viet."},
+		nil,
+		logging.New(),
+		traceRepo,
+	)
+
+	app := fiber.New()
+	app.Post("/messages/stream", answerTraceMiddleware(logging.New()), handler.StreamMessage)
+
+	req := httptest.NewRequest(http.MethodPost, "/messages/stream", strings.NewReader(`{"content":"thu tuc ly hon","filters":{"tone":"default","topK":5}}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, int(5*time.Second/time.Millisecond))
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	raw := string(body)
+
+	if !strings.Contains(raw, "Nghị định 999/2020") {
+		t.Fatalf("expected streamed content in response, got %s", raw)
+	}
+	if strings.Contains(raw, "Mình chưa thấy căn cứ pháp lý phù hợp") ||
+		strings.Contains(raw, "Không đủ căn cứ pháp lý trong dữ liệu truy xuất") {
+		t.Fatalf("did not expect refusal fallback in streamed response, got %s", raw)
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.updatedMessages) == 0 {
+		t.Fatalf("expected message update to be recorded")
+	}
+	updated := store.updatedMessages[len(store.updatedMessages)-1]
+	if updated.Content != streamed {
+		t.Fatalf("expected persisted content to match streamed content, got %q", updated.Content)
+	}
+	if got := string(updated.CitationsJSON); got != "[]" {
+		t.Fatalf("expected unsupported reference to persist without citations, got %q", got)
 	}
 }
 

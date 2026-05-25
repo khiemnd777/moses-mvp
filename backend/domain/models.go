@@ -21,6 +21,74 @@ type Document struct {
 	UpdatedAt   time.Time
 }
 
+type DocumentUpload struct {
+	ID                string
+	Title             string
+	FileName          string
+	ContentType       string
+	StoragePath       string
+	FileSizeBytes     int64
+	SHA256            string
+	Status            string
+	AnalysisJSON      []byte
+	ErrorMessage      *string
+	DocumentID        *string
+	DocumentAssetID   *string
+	DocumentVersionID *string
+	Events            []DocumentUploadEvent
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type DocumentUploadInput struct {
+	Title         string
+	FileName      string
+	ContentType   string
+	StoragePath   string
+	FileSizeBytes int64
+	SHA256        string
+	Status        string
+	AnalysisJSON  []byte
+	Events        []DocumentUploadEventInput
+}
+
+type DocumentUploadEvent struct {
+	ID            string
+	UploadID      *string
+	EventType     string
+	Stage         string
+	Status        string
+	Message       string
+	EvidenceJSON  []byte
+	Actor         string
+	FileName      string
+	ContentType   string
+	FileSizeBytes int64
+	SHA256        string
+	CreatedAt     time.Time
+}
+
+type DocumentUploadEventInput struct {
+	UploadID      *string
+	EventType     string
+	Stage         string
+	Status        string
+	Message       string
+	EvidenceJSON  []byte
+	Actor         string
+	FileName      string
+	ContentType   string
+	FileSizeBytes int64
+	SHA256        string
+}
+
+type DocumentUploadPromotion struct {
+	DocumentID        string
+	DocumentAssetID   string
+	DocumentVersionID string
+	IngestJobID       string
+}
+
 type DocumentAsset struct {
 	ID          string
 	DocumentID  string
@@ -65,6 +133,90 @@ type IngestJob struct {
 	ErrorMessage      *string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+type PipelineHealthOptions struct {
+	RecentSince time.Time
+	StaleBefore time.Time
+	Limit       int
+}
+
+type PipelineHealth struct {
+	GeneratedAt       time.Time
+	RecentSince       time.Time
+	StaleBefore       time.Time
+	Severity          string
+	Alerts            []PipelineHealthAlert
+	Summary           PipelineHealthSummary
+	UploadStatusCount []PipelineStatusCount
+	JobStatusCount    []PipelineStatusCount
+	StageStatusCount  []PipelineStageStatusCount
+	Security          PipelineSecurityStats
+	Latency           PipelineLatencyStats
+	StaleUploads      []PipelineHealthIssue
+	RecentIssues      []PipelineHealthIssue
+}
+
+type PipelineHealthAlert struct {
+	Code      string
+	Severity  string
+	Message   string
+	Value     float64
+	Threshold float64
+}
+
+type PipelineHealthSummary struct {
+	TotalUploads        int
+	ProcessingUploads   int
+	ReviewUploads       int
+	FailedUploads       int
+	PublishedUploads    int
+	ActiveJobs          int
+	FailedJobs          int
+	StaleUploads        int
+	RecentIssues        int
+	SecurityBlocked     int
+	SecurityUnavailable int
+}
+
+type PipelineStatusCount struct {
+	Status string
+	Count  int
+}
+
+type PipelineStageStatusCount struct {
+	Stage  string
+	Status string
+	Count  int
+}
+
+type PipelineSecurityStats struct {
+	Passed      int
+	Blocked     int
+	Unavailable int
+}
+
+type PipelineLatencyStats struct {
+	CompletedCount int
+	AverageSeconds float64
+	P50Seconds     float64
+	P95Seconds     float64
+	MaxSeconds     float64
+}
+
+type PipelineHealthIssue struct {
+	UploadID       *string
+	Title          string
+	FileName       string
+	Status         string
+	Stage          string
+	EventStatus    string
+	Message        string
+	ErrorMessage   string
+	AgeSeconds     int64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	EventCreatedAt *time.Time
 }
 
 type QueryLog struct {

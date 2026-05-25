@@ -40,6 +40,7 @@ Do not casually edit:
 - Local dev compose: `docker-compose.dev.yml`
 - Backend migrate: `backend/migrate.sh`
 - Backend verify: `backend/verify.sh`
+- Production RAG verify: `backend/verify_rag.sh`
 - Container Nginx config render: `nginx/install.sh`
 - SSL issuance: `nginx/issue-ssl.sh`
 - Nginx verify: `nginx/verify.sh`
@@ -70,6 +71,7 @@ Do not casually edit:
 - Compose up only: `cd install && ./compose/up.sh`
 - Backend migrate only: `cd install && ./backend/migrate.sh`
 - Backend verify only: `cd install && ./backend/verify.sh`
+- Production RAG verify only: `cd install && ./backend/verify_rag.sh`
 - Nginx config render only: `cd install && ./nginx/install.sh`
 - Nginx verify only: `cd install && ./nginx/verify.sh`
 - Secret sync only: `cd install && ./sync-secrets.sh`

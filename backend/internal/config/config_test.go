@@ -38,6 +38,10 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("VECTOR_REPAIR_ENABLED", "true")
 	t.Setenv("VECTOR_REPAIR_INTERVAL", "30s")
 	t.Setenv("VECTOR_REPAIR_MAX_TASKS_PER_PASS", "20")
+	t.Setenv("UPLOAD_AV_SCAN_MODE", "")
+	t.Setenv("UPLOAD_AV_CLAMD_ADDR", "")
+	t.Setenv("UPLOAD_AV_SCAN_TIMEOUT", "")
+	t.Setenv("UPLOAD_AV_FAIL_CLOSED", "")
 	t.Setenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173")
 }
 
@@ -64,8 +68,45 @@ func TestLoadSuccessWithDefaults(t *testing.T) {
 	if cfg.VectorRepair.Interval != 30*time.Second {
 		t.Fatalf("expected default repair interval 30s, got %s", cfg.VectorRepair.Interval)
 	}
+	if cfg.UploadAV.ScanMode != "disabled" {
+		t.Fatalf("expected default upload AV mode disabled, got %q", cfg.UploadAV.ScanMode)
+	}
+	if cfg.UploadAV.ClamDAddr != "tcp://127.0.0.1:3310" {
+		t.Fatalf("expected default clamd address, got %q", cfg.UploadAV.ClamDAddr)
+	}
+	if cfg.UploadAV.ScanTimeout != 30*time.Second {
+		t.Fatalf("expected default upload AV timeout 30s, got %s", cfg.UploadAV.ScanTimeout)
+	}
+	if !cfg.UploadAV.FailClosed {
+		t.Fatal("expected upload AV to fail closed by default")
+	}
 	if len(cfg.CORSAllowedOrigins) != 1 || cfg.CORSAllowedOrigins[0] != "http://localhost:5173" {
 		t.Fatalf("expected default CORS origin localhost:5173, got %#v", cfg.CORSAllowedOrigins)
+	}
+}
+
+func TestLoadParsesUploadAVConfig(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("UPLOAD_AV_SCAN_MODE", "clamd")
+	t.Setenv("UPLOAD_AV_CLAMD_ADDR", "tcp://clamav:3310")
+	t.Setenv("UPLOAD_AV_SCAN_TIMEOUT", "45s")
+	t.Setenv("UPLOAD_AV_FAIL_CLOSED", "false")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.UploadAV.ScanMode != "clamd" {
+		t.Fatalf("scan mode = %q", cfg.UploadAV.ScanMode)
+	}
+	if cfg.UploadAV.ClamDAddr != "tcp://clamav:3310" {
+		t.Fatalf("clamd addr = %q", cfg.UploadAV.ClamDAddr)
+	}
+	if cfg.UploadAV.ScanTimeout != 45*time.Second {
+		t.Fatalf("scan timeout = %s", cfg.UploadAV.ScanTimeout)
+	}
+	if cfg.UploadAV.FailClosed {
+		t.Fatal("expected fail_closed=false")
 	}
 }
 
@@ -137,6 +178,10 @@ func TestLoadReadsDotEnvWhenEnvironmentIsEmpty(t *testing.T) {
 		"VECTOR_REPAIR_ENABLED=true\n" +
 		"VECTOR_REPAIR_INTERVAL=30s\n" +
 		"VECTOR_REPAIR_MAX_TASKS_PER_PASS=20\n" +
+		"UPLOAD_AV_SCAN_MODE=clamd\n" +
+		"UPLOAD_AV_CLAMD_ADDR=tcp://clamav:3310\n" +
+		"UPLOAD_AV_SCAN_TIMEOUT=45s\n" +
+		"UPLOAD_AV_FAIL_CLOSED=true\n" +
 		"CORS_ALLOWED_ORIGINS=http://localhost:5173\n"
 	if err := os.WriteFile(filepath.Join(tempDir, ".env"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write .env: %v", err)
@@ -187,6 +232,12 @@ func TestRenderAppConfigWritesDerivedConfigYAML(t *testing.T) {
 			Interval:        30 * time.Second,
 			MaxTasksPerPass: 20,
 		},
+		UploadAV: UploadAVConfig{
+			ScanMode:    "clamd",
+			ClamDAddr:   "tcp://clamav:3310",
+			ScanTimeout: 45 * time.Second,
+			FailClosed:  true,
+		},
 	}
 
 	if err := RenderAppConfig(cfg); err != nil {
@@ -203,6 +254,9 @@ func TestRenderAppConfigWritesDerivedConfigYAML(t *testing.T) {
 		`url: "http://qdrant:16333"`,
 		`root_dir: "/app/data/uploads"`,
 		`interval: 30s`,
+		`scan_mode: "clamd"`,
+		`clamd_addr: "tcp://clamav:3310"`,
+		`scan_timeout: 45s`,
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("rendered config missing %q:\n%s", fragment, text)
@@ -263,6 +317,16 @@ func TestLoadFailsWhenPortInvalid(t *testing.T) {
 func TestLoadFailsWhenRepairIntervalInvalid(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("VECTOR_REPAIR_INTERVAL", "tomorrow")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestLoadFailsWhenUploadAVModeInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("UPLOAD_AV_SCAN_MODE", "magic")
 
 	_, err := Load()
 	if err == nil {

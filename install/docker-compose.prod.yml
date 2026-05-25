@@ -26,6 +26,19 @@ services:
     volumes:
       - ${QDRANT_STORAGE_DIR}:/qdrant/storage
 
+  clamav:
+    image: ${CLAMAV_IMAGE:-clamav/clamav:1.5_base}
+    container_name: ${COMPOSE_PROJECT_NAME:-legal}-clamav
+    restart: unless-stopped
+    environment:
+      CLAMAV_NO_CLAMD: "false"
+      CLAMAV_NO_FRESHCLAMD: "false"
+      CLAMAV_NO_MILTERD: "true"
+      CLAMD_STARTUP_TIMEOUT: ${CLAMD_STARTUP_TIMEOUT:-1800}
+      FRESHCLAM_CHECKS: ${FRESHCLAM_CHECKS:-12}
+    volumes:
+      - ${CLAMAV_DB_DIR:-../backend/data/clamav}:/var/lib/clamav
+
   api:
     image: ${COMPOSE_PROJECT_NAME:-legal}-api
     container_name: ${COMPOSE_PROJECT_NAME:-legal}-api
@@ -46,6 +59,7 @@ services:
     depends_on:
       - postgres
       - qdrant
+      - clamav
     volumes:
       - ${UPLOADS_DATA_DIR}:/app/data/uploads
 

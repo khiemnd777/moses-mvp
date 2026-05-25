@@ -52,3 +52,19 @@ func TestNormalizeEffectiveStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeDocumentNumberCanonicalizesVietnameseLegalAbbreviations(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "123/2015/ND-CP", want: "123/2015/NĐ-CP"},
+		{in: "01/2024/NQ-HDTP", want: "01/2024/NQ-HĐTP"},
+		{in: "02a/2015/tt-btp", want: "02a/2015/TT-BTP"},
+	}
+	for _, tt := range tests {
+		if got := NormalizeDocumentNumber(tt.in); got != tt.want {
+			t.Fatalf("NormalizeDocumentNumber(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

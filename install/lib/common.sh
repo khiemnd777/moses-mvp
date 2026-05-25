@@ -31,6 +31,32 @@ require_vars() {
   done
 }
 
+require_non_placeholder_var() {
+  local name="$1"
+  local value normalized
+
+  value="${!name:-}"
+  [[ -n "$value" ]] || err "Missing required variable: $name"
+
+  normalized="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+  case "$normalized" in
+    replace-with-*|your_*|your-*|changeme|change-me|placeholder|example|sample)
+      err "$name is set to a placeholder; set a real production value outside git before deploy"
+      ;;
+  esac
+}
+
+require_min_length_var() {
+  local name="$1"
+  local min_length="$2"
+  local value="${!name:-}"
+
+  [[ -n "$value" ]] || err "Missing required variable: $name"
+  if (( ${#value} < min_length )); then
+    err "$name must be at least $min_length characters"
+  fi
+}
+
 load_install_config() {
   local install_dir="$1"
   local config_file="${INSTALL_CONFIG_FILE:-$install_dir/config.sh}"

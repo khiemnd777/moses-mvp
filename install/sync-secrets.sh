@@ -17,6 +17,11 @@ source "$SECRET_FILE"
 source "$CONFIG_FILE"
 
 require_vars SERVER_IP REMOTE_USER APP_ROOT
+require_non_placeholder_var JWT_SECRET
+require_min_length_var JWT_SECRET 32
+require_non_placeholder_var ADMIN_BOOTSTRAP_PASSWORD
+require_min_length_var ADMIN_BOOTSTRAP_PASSWORD 12
+require_non_placeholder_var OPENAI_API_KEY
 
 SSH_PORT="${SSH_PORT:-22}"
 REMOTE_CONFIG_PATH="${REMOTE_CONFIG_PATH:-$APP_ROOT/install/config.sh}"

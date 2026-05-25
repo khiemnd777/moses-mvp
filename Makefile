@@ -6,10 +6,10 @@ LOCAL_COMPOSE := ./install/local-compose.sh
 
 help:
 	@echo "Available root targets:"
-	@echo "  make up       Build/start local Docker Compose stack"
+	@echo "  make up       Build/start local Docker Compose stack and run migrations"
 	@echo "  make down     Stop/remove local Docker Compose stack"
 	@echo "  make stop     Stop local Docker Compose stack"
-	@echo "  make restart  Restart local Docker Compose stack"
+	@echo "  make restart  Build/restart local Docker Compose stack and run migrations"
 	@echo "  make log      Tail local Compose logs"
 	@echo "  make ps       Show local Compose services"
 	@echo "  make migrate  Run local database migrations"
