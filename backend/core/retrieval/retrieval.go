@@ -306,26 +306,25 @@ func (s *Service) searchWithFallback(ctx context.Context, vector []float64, limi
 		return results, []FallbackStage{{Attempt: 1, Reason: "no_filter", HitCount: len(results)}}, err
 	}
 
-	attempts := []*infra.SearchFilter{
-		filter,
-		withoutLegalDomain(filter),
-		withoutDocumentType(withoutLegalDomain(filter)),
-	}
-	reasons := []string{
-		"initial",
-		"removed_legal_domain",
-		"removed_document_type",
-	}
+	withoutDomain := withoutLegalDomain(filter)
+	withoutDomainDocType := withoutDocumentType(withoutDomain)
+	attempts := uniqueSearchAttempts([]searchFallbackAttempt{
+		{reason: "initial", filter: filter},
+		{reason: "removed_legal_domain", filter: withoutDomain},
+		{reason: "removed_document_type", filter: withoutDomainDocType},
+		{reason: "removed_effective_status", filter: withoutEffectiveStatus(withoutDomainDocType)},
+	})
 	stages := make([]FallbackStage, 0, len(attempts))
 
-	for idx, candidate := range uniqueSearchFilters(attempts) {
+	for idx, attempt := range attempts {
+		candidate := attempt.filter
 		matches, err := s.Qdrant.Search(ctx, vector, limit, candidate)
 		if err != nil {
 			return nil, stages, err
 		}
 		stage := FallbackStage{
 			Attempt:  idx + 1,
-			Reason:   reasons[min(idx, len(reasons)-1)],
+			Reason:   attempt.reason,
 			HitCount: len(matches),
 		}
 		if candidate != nil {
@@ -351,16 +350,21 @@ func (s *Service) searchWithFallback(ctx context.Context, vector []float64, limi
 	return []infra.SearchResult{}, stages, nil
 }
 
-func uniqueSearchFilters(filters []*infra.SearchFilter) []*infra.SearchFilter {
-	out := make([]*infra.SearchFilter, 0, len(filters))
+type searchFallbackAttempt struct {
+	reason string
+	filter *infra.SearchFilter
+}
+
+func uniqueSearchAttempts(attempts []searchFallbackAttempt) []searchFallbackAttempt {
+	out := make([]searchFallbackAttempt, 0, len(attempts))
 	seen := map[string]struct{}{}
-	for _, filter := range filters {
-		key := searchFilterKey(filter)
+	for _, attempt := range attempts {
+		key := searchFilterKey(attempt.filter)
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		out = append(out, filter)
+		out = append(out, attempt)
 	}
 	return out
 }
@@ -407,6 +411,19 @@ func withoutDocumentType(filter *infra.SearchFilter) *infra.SearchFilter {
 		LegalDomain:     append([]string{}, filter.LegalDomain...),
 		DocumentType:    nil,
 		EffectiveStatus: append([]string{}, filter.EffectiveStatus...),
+		DocumentNumber:  append([]string{}, filter.DocumentNumber...),
+		ArticleNumber:   append([]string{}, filter.ArticleNumber...),
+	}
+}
+
+func withoutEffectiveStatus(filter *infra.SearchFilter) *infra.SearchFilter {
+	if filter == nil {
+		return nil
+	}
+	return &infra.SearchFilter{
+		LegalDomain:     append([]string{}, filter.LegalDomain...),
+		DocumentType:    append([]string{}, filter.DocumentType...),
+		EffectiveStatus: nil,
 		DocumentNumber:  append([]string{}, filter.DocumentNumber...),
 		ArticleNumber:   append([]string{}, filter.ArticleNumber...),
 	}
@@ -685,24 +702,27 @@ func (s *Service) loadRuntimeConfig(ctx context.Context) runtimeConfig {
 
 func defaultRuntimeConfig() runtimeConfig {
 	return runtimeConfig{
-		DefaultTopK:            5,
+		DefaultTopK:            8,
 		DefaultEffectiveStatus: "active",
 		RerankEnabled:          true,
 		AdjacentChunkEnabled:   true,
 		AdjacentChunkWindow:    1,
-		MaxContextChunks:       12,
-		MaxContextChars:        12000,
+		MaxContextChunks:       16,
+		MaxContextChars:        30000,
 		CandidateMultiplier:    3,
-		PreferredDocTypes:      []string{"law", "resolution", "decree"},
+		PreferredDocTypes:      []string{"law", "resolution", "decree", "circular"},
 		DomainDefaults: map[string]domainRuntimeDefault{
-			"marriage_family": {TopK: 6, PreferredDocTypes: []string{"law", "resolution"}},
-			"criminal_law":    {TopK: 8, PreferredDocTypes: []string{"law", "decree"}},
+			"marriage_family": {TopK: 10, PreferredDocTypes: []string{"law", "resolution", "decree"}},
+			"civil":           {TopK: 10, PreferredDocTypes: []string{"law", "decree", "circular"}},
+			"land":            {TopK: 10, PreferredDocTypes: []string{"law", "decree", "circular"}},
+			"labor":           {TopK: 10, PreferredDocTypes: []string{"law", "decree", "circular"}},
+			"criminal_law":    {TopK: 10, PreferredDocTypes: []string{"law", "resolution", "decree"}},
 		},
 		RerankWeights: rerankWeights{
-			Vector:   0.55,
-			Keyword:  0.25,
+			Vector:   0.45,
+			Keyword:  0.30,
 			Metadata: 0.15,
-			Article:  0.05,
+			Article:  0.10,
 		},
 	}
 }

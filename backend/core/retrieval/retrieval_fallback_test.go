@@ -10,7 +10,7 @@ import (
 	"github.com/khiemnd777/legal_api/infra"
 )
 
-func TestSearchWithFallbackPreservesEffectiveStatusAndExactFilters(t *testing.T) {
+func TestSearchWithFallbackRelaxesBroadFiltersBeforeExactReferences(t *testing.T) {
 	t.Parallel()
 
 	captured := []map[string]struct{}{}
@@ -54,21 +54,48 @@ func TestSearchWithFallbackPreservesEffectiveStatusAndExactFilters(t *testing.T)
 	if err != nil {
 		t.Fatalf("searchWithFallback returned error: %v", err)
 	}
-	if len(stages) != 3 {
-		t.Fatalf("expected 3 fallback stages, got %d", len(stages))
+	if len(stages) != 4 {
+		t.Fatalf("expected 4 fallback stages, got %d", len(stages))
 	}
-	if len(captured) != 3 {
-		t.Fatalf("expected 3 search requests, got %d", len(captured))
+	if len(captured) != 4 {
+		t.Fatalf("expected 4 search requests, got %d", len(captured))
 	}
-	for idx, keys := range captured {
-		if _, ok := keys["effective_status"]; !ok {
-			t.Fatalf("request %d dropped effective_status: %#v", idx+1, keys)
+
+	assertHasKey := func(idx int, key string) {
+		t.Helper()
+		if _, ok := captured[idx][key]; !ok {
+			t.Fatalf("request %d missing %s: %#v", idx+1, key, captured[idx])
 		}
-		if _, ok := keys["document_number"]; !ok {
-			t.Fatalf("request %d dropped document_number: %#v", idx+1, keys)
+	}
+	assertNoKey := func(idx int, key string) {
+		t.Helper()
+		if _, ok := captured[idx][key]; ok {
+			t.Fatalf("request %d still had %s: %#v", idx+1, key, captured[idx])
 		}
-		if _, ok := keys["article_number"]; !ok {
-			t.Fatalf("request %d dropped article_number: %#v", idx+1, keys)
+	}
+
+	assertHasKey(0, "legal_domain")
+	assertHasKey(0, "document_type")
+	assertHasKey(0, "effective_status")
+	assertNoKey(1, "legal_domain")
+	assertHasKey(1, "document_type")
+	assertHasKey(1, "effective_status")
+	assertNoKey(2, "legal_domain")
+	assertNoKey(2, "document_type")
+	assertHasKey(2, "effective_status")
+	assertNoKey(3, "legal_domain")
+	assertNoKey(3, "document_type")
+	assertNoKey(3, "effective_status")
+
+	for idx := range captured {
+		if _, ok := captured[idx]["document_number"]; !ok {
+			t.Fatalf("request %d dropped document_number: %#v", idx+1, captured[idx])
 		}
+		if _, ok := captured[idx]["article_number"]; !ok {
+			t.Fatalf("request %d dropped article_number: %#v", idx+1, captured[idx])
+		}
+	}
+	if stages[3].Reason != "removed_effective_status" {
+		t.Fatalf("expected final fallback to remove effective_status, got %q", stages[3].Reason)
 	}
 }

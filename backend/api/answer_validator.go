@@ -41,6 +41,9 @@ func (h *Handler) validateGeneratedLegalAnswerWithMode(ctx context.Context, answ
 	}
 
 	if !referencesExistInSources(trimmedText, sources) {
+		if !replaceOnFailure {
+			return originalText, []answer.Citation{}, false, nil
+		}
 		refusal, err := h.validationRefusalMessage(ctx)
 		return refusal, []answer.Citation{}, false, err
 	}
@@ -88,6 +91,9 @@ func (h *Handler) validationFailureResponse(ctx context.Context, answerText stri
 func (h *Handler) isTerminalLegalResponse(ctx context.Context, answerText string) bool {
 	normalized := normalizeValidationText(answerText)
 	if normalized == "" {
+		return false
+	}
+	if hasLegalAnswerStructure(answerText) {
 		return false
 	}
 	candidates := []string{
